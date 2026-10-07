@@ -450,3 +450,14 @@ def test_planner_repairs_short_episode_before_any_gpu_render(monkeypatch):
     assert "70" in requests[1][-1]["content"]
     assert "5" in requests[1][-1]["content"]
     assert len(result["scenes"][0]["shots"]) == 14
+
+
+def test_dialogue_free_shots_do_not_export_unscripted_native_speech():
+    from calliope.studio.series_planner import normalize_plan
+
+    plan = planned_episode({})
+    shot = plan["scenes"][0]["shots"][0]
+    shot["dialogue"] = ""
+    shot["speaker"] = ""
+    result = normalize_plan(plan, {"entities": []})
+    assert result["scenes"][0]["shots"][0]["audio_mode"] == "silent"

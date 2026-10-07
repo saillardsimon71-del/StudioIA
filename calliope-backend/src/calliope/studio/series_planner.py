@@ -166,7 +166,7 @@ def normalize_plan(result, context):
             shot["duration_sec"] = duration
             total_duration += duration
             shot["dialogue"] = dialogue
-            shot["audio_mode"] = "native"
+            shot["audio_mode"] = "native" if dialogue else "silent"
             shot["prompt"] = re.sub(r"<d>.*?</d>", "", str(shot["prompt"]), flags=re.S).strip()
             shot["prompt"] += (
                 "\nOne continuous shot, preserve the reference identity, clothing, "

@@ -104,7 +104,7 @@
 			<label>Ou importer une vidéo<input type="file" accept="video/*" disabled={!!busy} onchange={(event) => upload(event, 'video')} /></label>
 		</section>
 		<TakeGallery takes={shot.takes} kind="image" selectedId={shot.selected_image_id} busy={!!busy} onselect={select} />
-		<TakeGallery takes={shot.takes} kind="video" selectedId={shot.selected_video_id} busy={!!busy} onselect={select} />
+		<TakeGallery takes={shot.takes} kind="video" selectedId={shot.selected_video_id} busy={!!busy} muted={draft.audio_mode === 'silent'} onselect={select} />
 		<section class="approval stack"><h3>Choix pour le montage</h3>{#if chosenVideo?.url}<p>Vidéo choisie: prise {chosenVideo.id}</p><button class:primary={!shot.approved} disabled={!!busy || dirty} onclick={approve}>{shot.approved ? 'Retirer l\'approbation' : 'Approuver ce plan'}</button>{#if dirty}<p class="hint">Enregistrez vos changements avant d'approuver.</p>{/if}{:else}<p class="hint">Choisissez une vidéo dans les prises avant d'approuver le plan.</p>{/if}</section>
 	</div>
 </aside>

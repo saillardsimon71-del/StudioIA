@@ -1,7 +1,7 @@
 <script lang="ts">
 	import CompareDialog from './CompareDialog.svelte';
 	import { statusLabel, isActive, type Take, type MediaKind } from './api';
-	let { takes, kind, selectedId, busy, onselect }: { takes: Take[]; kind: MediaKind; selectedId: number | null; busy: boolean; onselect: (take: Take) => void } = $props();
+	let { takes, kind, selectedId, busy, muted = false, onselect }: { takes: Take[]; kind: MediaKind; selectedId: number | null; busy: boolean; muted?: boolean; onselect: (take: Take) => void } = $props();
 	let compared = $state<number[]>([]);
 	let compareOpen = $state(false);
 	let items = $derived(takes.filter((take) => take.kind === kind));
@@ -16,7 +16,7 @@
 		<div class:selected={selectedId === take.id} class="take">
 			<div class="take-preview media">
 				{#if take.url && take.kind === 'image'}<img src={take.url} alt={`Image de référence, prise ${take.id}`} loading="lazy" />
-				{:else if take.url}<!-- svelte-ignore a11y_media_has_caption (Les prises importées ou générées n'ont pas de sous-titres.) --><video src={take.url} controls playsinline preload="metadata"></video>
+				{:else if take.url}<!-- svelte-ignore a11y_media_has_caption (Les prises importées ou générées n'ont pas de sous-titres.) --><video src={take.url} {muted} controls playsinline preload="metadata"></video>
 				{:else}<span class="media-empty">{statusLabel(take.status)}</span>{/if}
 			</div>
 			<div class="take-copy stack">
@@ -28,7 +28,7 @@
 		</div>
 	{/each}</div>{/if}
 </div>
-{#if compareOpen}<CompareDialog takes={compareTakes} onclose={() => compareOpen = false} />{/if}
+{#if compareOpen}<CompareDialog takes={compareTakes} {muted} onclose={() => compareOpen = false} />{/if}
 
 <style>
 	.gallery { display: grid; gap: 12px; }
