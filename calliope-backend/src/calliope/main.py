@@ -30,6 +30,7 @@ from calliope.routers import (
     shots,
     story,
     workflows,
+    studio,
 )
 
 logging.basicConfig(
@@ -89,6 +90,9 @@ async def lifespan(app: FastAPI):
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.assets_dir.mkdir(parents=True, exist_ok=True)
     await migrate_db(settings.db_path)
+    from calliope.studio.schema import migrate_studio
+
+    migrate_studio(settings.db_path)
     # Folder moved? Stored asset paths still point at the old install root —
     # rebase them onto the current data dir before serving anything.
     conn = get_db(settings.db_path)
@@ -140,6 +144,7 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
     app.include_router(shots.router, prefix="/api/shots", tags=["shots"])
     app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
     app.include_router(events.router, prefix="/api/events", tags=["events"])
+    app.include_router(studio.router, prefix="/api/studio", tags=["studio"])
 
     @app.get("/api/health")
     async def health() -> dict:

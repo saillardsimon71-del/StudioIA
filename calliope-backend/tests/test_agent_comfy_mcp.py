@@ -360,7 +360,7 @@ def test_comfy_mcp_tools_not_in_full_harness():
     assert "comfy_run_template" not in names
 
 
-def test_comfy_server_info_scoping():
+def test_comfy_server_info_scoping(client):
     """Native health check stays visible in both blind and linked sessions."""
     from calliope.agent.harness import tools as harness_tools
 

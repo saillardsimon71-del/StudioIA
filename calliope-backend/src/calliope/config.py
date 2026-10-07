@@ -186,6 +186,11 @@ class Settings(BaseSettings):
     agent_llm_assignments: dict[str, str | None] = Field(default_factory=dict)
 
     comfyui_base_url: str = "http://127.0.0.1:8188"
+    studio_modal_app: str = "studio-ia-h3"
+    studio_modal_function: str = "render_clip"
+    studio_image_base_url: str = "https://apihub.agnes-ai.com/v1"
+    studio_image_model: str = "agnes-image-2.5-flash"
+    studio_image_api_key: str | None = None
     # Comfy is HTTP-only (upload / prompt / history / view). No local input/output dirs.
 
     queue_concurrency: int = 1
@@ -634,6 +639,11 @@ class Settings(BaseSettings):
             "llm_active_id": self.llm_active_id,
             "agent_llm_assignments": dict(self.agent_llm_assignments or {}),
             "comfyui_base_url": self.comfyui_base_url,
+            "studio_modal_app": self.studio_modal_app,
+            "studio_modal_function": self.studio_modal_function,
+            "studio_image_base_url": self.studio_image_base_url,
+            "studio_image_model": self.studio_image_model,
+            "studio_image_api_key": self.studio_image_api_key,
             "queue_concurrency": self.queue_concurrency,
             "queue_poll_interval_sec": self.queue_poll_interval_sec,
             "queue_poll_timeout_sec": self.queue_poll_timeout_sec,

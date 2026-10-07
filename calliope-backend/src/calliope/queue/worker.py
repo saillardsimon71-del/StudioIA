@@ -175,7 +175,9 @@ class QueueWorker:
                 try:
                     outputs = await self._run_job(job)
                     queue_manager.mark_done(job["id"], outputs)
-                    if job["kind"] == "export":
+                    if job["kind"] == "export" and not json.loads(
+                        job["payload_json"] or "{}"
+                    ).get("studio_export_id"):
                         self._mark_project_completed(job["project_id"])
                     # Prompt snippet for canvas artifact labels: users
                     # compare multiple generations of the same scene
@@ -252,6 +254,14 @@ class QueueWorker:
         project_id = job["project_id"]
         kind = job["kind"]
         use_dry = bool(config.settings.dry_run)
+
+        if payload.get("studio_take_id") or payload.get("studio_export_id"):
+            from calliope.studio.service import StudioCancelledError, run_studio_job
+
+            try:
+                return await run_studio_job(job, payload, self._stop.is_set)
+            except StudioCancelledError:
+                raise _CancelledByUser() from None
 
         if kind == "export":
             # Export stitches local clips with ffmpeg — never touches ComfyUI,
