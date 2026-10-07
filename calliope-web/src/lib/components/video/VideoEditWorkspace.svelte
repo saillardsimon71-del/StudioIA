@@ -7,7 +7,7 @@
 	import type { Clip, Job, Scene, Workflow } from '$lib/api';
 	import OmniComposer from '$lib/components/OmniComposer.svelte';
 	import type { AssetOption } from '$lib/assetPicker';
-	import { carryValuesAcrossWorkflows, sanitizeWorkflowValues } from '$lib/comfy/carryValues';
+	import { carryValuesAcrossWorkflows, sanitizeWorkflowValues, type WorkflowValues } from '$lib/comfy/carryValues';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import ClipMonitor from './ClipMonitor.svelte';
 	import JobInputsDrawer from './JobInputsDrawer.svelte';
@@ -43,7 +43,7 @@ import { t } from '$lib/i18n.svelte';
 	clipJobs?: Job[];
 		workflow: Workflow | undefined;
 		workflows: Workflow[];
-		formValues: Record<string, string | number>;
+		formValues: WorkflowValues;
 		assetOptions: AssetOption[];
 		allowUpload?: boolean;
 		/** HITL prompt review before Generate: caller resolves + shows the modal. */
@@ -56,7 +56,7 @@ import { t } from '$lib/i18n.svelte';
 		onSelectClip: (clipId: number) => void;
 		onStep: (dir: -1 | 1) => void;
 	onWorkflowChange: (id: number) => void;
-	onFormChange?: (values: Record<string, string | number>) => void;
+	onFormChange?: (values: WorkflowValues) => void;
 	onGenerate: () => void;
 	/** Render-history versioning: apply an older job's output to the clip. */
 	onApplyToClip?: (job: Job, path: string) => void;

@@ -111,13 +111,19 @@
 		onChange?.(values);
 	}
 
+	function numberValue(value: string | number | boolean | undefined, fallback: number): number {
+		if (typeof value === 'boolean' || value === undefined || value === '') return fallback;
+		const number = Number(value);
+		return Number.isFinite(number) ? number : fallback;
+	}
+
 	// ── Resolution pill ───────────────────────────────────────────────────
 
 	const resPair = $derived(classified.resolutionPair);
 
 	const currentResLabel = $derived(
 		resPair
-			? resolutionLabel(values[resPair.width.input.nodeId], values[resPair.height.input.nodeId])
+			? resolutionLabel(numberValue(values[resPair.width.input.nodeId], 0), numberValue(values[resPair.height.input.nodeId], 0))
 			: null,
 	);
 
@@ -139,8 +145,8 @@
 
 	const currentResValue = $derived.by(() => {
 		if (!resPair) return null;
-		const w = values[resPair.width.input.nodeId];
-		const h = values[resPair.height.input.nodeId];
+		const w = numberValue(values[resPair.width.input.nodeId], 0);
+		const h = numberValue(values[resPair.height.input.nodeId], 0);
 		return w && h ? `${w}x${h}` : null;
 	});
 
@@ -232,7 +238,7 @@
 				class="prompt-area"
 				placeholder={t('omni.promptPlaceholder')}
 				rows="12"
-				value={values[promptNode.nodeId] ?? ''}
+				value={String(values[promptNode.nodeId] ?? '')}
 				oninput={(e) => setValue(promptNode.nodeId, e.currentTarget.value)}
 				onkeydown={onPromptKeydown}
 				aria-label={t('omni.promptAria')}
@@ -253,7 +259,7 @@
 						class="negative-area"
 						placeholder={t('omni.negativePlaceholder')}
 						rows="2"
-						value={values[negativeNode.nodeId] ?? ''}
+						value={String(values[negativeNode.nodeId] ?? '')}
 						oninput={(e) => setValue(negativeNode.nodeId, e.currentTarget.value)}
 						onkeydown={onPromptKeydown}
 						aria-label={t('omni.negativeAria')}
@@ -297,7 +303,7 @@
 			{@const nodeId = ctrl.input.nodeId}
 			<PillStepper
 				label={ctrl.input.label}
-				value={Number(values[nodeId]) || 0}
+				value={numberValue(values[nodeId], 0)}
 				min={256}
 				max={4096}
 				step={64}
@@ -310,7 +316,7 @@
 			{@const nodeId = ctrl.input.nodeId}
 			<PillStepper
 				label={t('omni.duration')}
-				value={values[nodeId] ?? ctrl.input.defaultValue ?? 5}
+				value={numberValue(values[nodeId], numberValue(ctrl.input.defaultValue, 5))}
 				min={1}
 				max={30}
 				step={1}
@@ -324,7 +330,7 @@
 			{@const nodeId = ctrl.input.nodeId}
 			<PillStepper
 				label={t('omni.seed')}
-				value={values[nodeId] ?? ctrl.input.defaultValue ?? 0}
+				value={numberValue(values[nodeId], numberValue(ctrl.input.defaultValue, 0))}
 				min={0}
 				max={999999999}
 				step={1}
@@ -349,7 +355,7 @@
 					<input
 						class="adv-inline-input"
 						type={ctrl.input.kind === 'number' ? 'number' : 'text'}
-						value={values[nodeId] ?? ctrl.input.defaultValue ?? ''}
+						value={ctrl.input.kind === 'number' ? numberValue(values[nodeId] ?? ctrl.input.defaultValue, 0) : String(values[nodeId] ?? ctrl.input.defaultValue ?? '')}
 						oninput={(e) =>
 							setValue(
 								nodeId,

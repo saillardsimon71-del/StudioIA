@@ -4,5 +4,5 @@ export const prerender = false;
 export const ssr = false;
 
 export function load() {
-	redirect(302, '/agents');
+	redirect(302, '/studio');
 }

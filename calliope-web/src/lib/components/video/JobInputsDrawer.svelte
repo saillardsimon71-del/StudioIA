@@ -8,6 +8,7 @@
 	 * back into the live form via the caller-provided callback.
 	 */
 	import type { Job, Workflow } from '$lib/api';
+	import type { WorkflowValues } from '$lib/comfy/carryValues';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
@@ -24,7 +25,7 @@
 		workflow?: Workflow | null;
 		/** Load a job's input_values back into the video form (with the job's workflow, so the
 		 *  form can remap nodeIds if that job used a different workflow). */
-		onCopySettings?: (values: Record<string, string | number>, workflowId: number | null) => void;
+		onCopySettings?: (values: WorkflowValues, workflowId: number | null) => void;
 		/** The scene's current video_path — marks which render is live. */
 		sceneVideoPath?: string | null;
 		/** Make this job's output the scene's current clip. */
@@ -141,9 +142,9 @@ function applyToScene() {
 		if (!onCopySettings || !activeJob) return;
 		const raw = activeJob.payload?.input_values;
 		if (!raw || typeof raw !== 'object') return;
-		const values: Record<string, string | number> = {};
+		const values: WorkflowValues = {};
 		for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-			if (typeof v === 'string' || typeof v === 'number') values[k] = v;
+			if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') values[k] = v;
 		}
 		onCopySettings(values, activeJob.workflow_id ?? null);
 		open = false;

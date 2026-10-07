@@ -11,6 +11,7 @@
 	import { jobsApi, projects, type Clip, type Scene, type Workflow } from '$lib/api';
 	import { normalizeInputRole } from '$lib/comfy/parser';
 	import { compactInputValues } from '$lib/comfy/promptInput';
+	import type { WorkflowValues } from '$lib/comfy/carryValues';
 	import Button from '$lib/components/ui/Button.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
@@ -27,7 +28,7 @@
 		scene: Scene | null;
 		workflow?: Workflow | null;
 		/** Extra form values to pass through on confirm. */
-		inputValues?: Record<string, string | number>;
+		inputValues?: WorkflowValues;
 		/** Fallback enqueue path when the modal confirms. */
 		onConfirm: (prompt: string) => void;
 		onclose?: () => void;

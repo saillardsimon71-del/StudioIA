@@ -16,7 +16,7 @@
 	} from '$lib/api';
 	import { compactInputValues } from '$lib/comfy/promptInput';
 	import { normalizeInputRole } from '$lib/comfy/parser';
-	import { carryValuesAcrossWorkflows, sanitizeWorkflowValues } from '$lib/comfy/carryValues';
+	import { carryValuesAcrossWorkflows, sanitizeWorkflowValues, type WorkflowValues } from '$lib/comfy/carryValues';
 	import type { AssetOption } from '$lib/assetPicker';
 	import { shotApi } from '$lib/shot/api';
 	import { progressFor } from '$lib/jobProgress';
@@ -40,7 +40,7 @@
 	let view = $state<'edit' | 'film'>('edit');
 	/** Selected render unit = a clip id (flattened playback order). */
 	let selectedClipId = $state<number | null>(null);
-	let formValues = $state<Record<string, string | number>>({});
+	let formValues = $state<WorkflowValues>({});
 	// Workflow choice is per CLIP (issue #66): two clips of one scene may use
 	// different workflows (e.g. image→video then video→video extend). Keys are
 	// clip ids; hydrated from clip.workflow_id / saved video_settings.
@@ -48,7 +48,7 @@
 	let lastFormScene = $state<number | null>(null);
 
 	// Per-scene input cache — switching scenes no longer wipes the form.
-	const formCache = new Map<number, Record<string, string | number>>();
+	const formCache = new Map<number, WorkflowValues>();
 
 	const scenesQuery = createQuery(
 		toStore(() => ({
@@ -315,8 +315,8 @@
 	// workflow's static defaults must not override these). Duration-role inputs
 	// seed from the clip's duration (falling back to the scene's estimate);
 	// ComfyDynamicForm's own prefill only applies to fields still undefined.
-	function seedClipDefaults(entry: { clip: Clip; scene: Scene }): Record<string, string | number> {
-		const seed: Record<string, string | number> = {};
+	function seedClipDefaults(entry: { clip: Clip; scene: Scene }): WorkflowValues {
+		const seed: WorkflowValues = {};
 		if (!entry) return seed;
 		const wf = workflowForClip(entry.clip, entry.scene);
 		const secs = entry.clip.duration_sec ?? entry.scene.duration_sec;
