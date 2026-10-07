@@ -475,11 +475,7 @@ def enqueue_takes(shot_id, data):
         if not prompt.strip():
             raise HTTPException(422, "Saisissez un prompt pour ce plan avant de générer.")
         if kind == "video" and shot["dialogue"].strip() and shot["audio_mode"] == "native":
-            prompt += (
-                "\nSpoken dialogue, original language, say exactly: <d>"
-                + shot["dialogue"].strip()
-                + "</d>"
-            )
+            prompt += "\n<d>" + shot["dialogue"].strip() + "</d>"
         parameters = {
             "prompt": prompt,
             "aspect_ratio": aspect,

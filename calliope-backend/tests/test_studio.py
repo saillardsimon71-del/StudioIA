@@ -108,6 +108,35 @@ def test_script_becomes_persistent_scenes_and_shots(client):
     assert client.get(f"/api/studio/projects/{project_id}").json() == board
 
 
+@pytest.mark.parametrize("audio_mode", ["native", "silent"])
+def test_video_request_preserves_dialogue_without_spoken_instructions(client, audio_mode):
+    import json
+
+    project_id, board = new_board(client)
+    shot_id = board["scenes"][0]["shots"][0]["id"]
+    visual_prompt = "A pear in a dark interrogation room."
+    dialogue = "Who am I going to kill?"
+    client.patch(
+        f"/api/studio/projects/{project_id}/shots/{shot_id}",
+        json={"prompt": visual_prompt, "dialogue": dialogue, "audio_mode": audio_mode},
+    ).raise_for_status()
+    result = client.post(
+        f"/api/studio/shots/{shot_id}/generate",
+        json={"kind": "video", "request_id": str(uuid.uuid4()), "n_takes": 1},
+    ).json()
+    take = result["takes"][0]
+    prompt = take["prompt"]
+    assert prompt.startswith(visual_prompt)
+    assert "say exactly" not in prompt
+    assert "Spoken dialogue" not in prompt
+    assert (f"<d>{dialogue}</d>" in prompt) is (audio_mode == "native")
+    with closing(get_db(settings.db_path)) as conn:
+        saved = conn.execute(
+            "SELECT request_json FROM studio_takes WHERE id=?", (take["id"],)
+        ).fetchone()[0]
+    assert json.loads(saved)["prompt"] == prompt
+
+
 def test_rerender_keeps_selected_video_and_request_is_idempotent(client, tmp_path):
     _, board = new_board(client)
     shot = board["scenes"][0]["shots"][0]
