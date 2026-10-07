@@ -164,7 +164,17 @@ def board(project_id):
             export.pop("snapshot_json", None)
             exports.append(export)
         conn.commit()
-        return {"project": project, "scenes": scenes, "jobs": jobs, "exports": exports}
+        from calliope.studio.audio import get_audio
+        from calliope.studio.series import episode_meta
+        production = conn.execute(
+            "SELECT * FROM studio_productions WHERE project_id=?", (project_id,)
+        ).fetchone()
+        return {
+            "project": project, "scenes": scenes, "jobs": jobs, "exports": exports,
+            "episode": episode_meta(conn, project_id),
+            "production": dict(production) if production else None,
+            "audio": get_audio(conn, project_id),
+        }
 
 
 def list_projects():
@@ -463,6 +473,7 @@ def enqueue_takes(shot_id, data):
             "SELECT aspect_ratio FROM studio_projects WHERE project_id=?", (project["id"],)
         ).fetchone()[0]
         kind = data["kind"]
+        from calliope.studio.production import image_references
         source = None
         if kind == "video" and shot["continue_from_previous"]:
             source = _previous_video(conn, shot_id)
@@ -490,6 +501,9 @@ def enqueue_takes(shot_id, data):
             "image_base_url": settings.studio_image_base_url,
             "image_model": settings.studio_image_model,
         }
+        references = image_references(conn, shot_id) if kind == "image" else []
+        if references:
+            parameters["reference_paths"] = references
         fingerprint = hashlib.sha256(
             json.dumps(
                 {"parameters": parameters, "n_takes": data["n_takes"], "seed": data.get("seed")},
@@ -627,6 +641,8 @@ def enqueue_export(project_id, request_id):
             "clips": clips,
             "revision": meta["revision"],
         }
+        from calliope.studio.audio import snapshot_audio
+        snapshot["audio"] = snapshot_audio(conn, project_id)
         cur = conn.execute(
             "INSERT INTO studio_exports(project_id,request_id,revision,aspect_ratio,snapshot_json) "
             "VALUES(?,?,?,?,?)",
@@ -663,16 +679,38 @@ async def _generate_image(request):
     )
     size = {"16:9": "1792x1024", "9:16": "1024x1792", "1:1": "1024x1024"}[request["aspect_ratio"]]
     async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
-        response = await client.post(
-            request["image_base_url"].rstrip("/") + "/images/generations",
-            headers=headers,
-            json={
-                "model": request["image_model"],
-                "prompt": request["prompt"],
-                "size": size,
-                "n": 1,
-            },
-        )
+        payload = {
+            "model": request["image_model"], "prompt": request["prompt"], "size": size, "n": 1,
+        }
+        references = request.get("reference_paths", [])
+        if request["image_model"].startswith("agnes-image-"):
+            payload.update(size="1K", ratio=request["aspect_ratio"])
+            payload["extra_body"] = {"response_format": "b64_json"}
+            if references:
+                payload["extra_body"]["image"] = [
+                    "data:image/png;base64," + base64.b64encode(Path(path).read_bytes()).decode()
+                    for path in references
+                ]
+            else:
+                payload["return_base64"] = True
+            response = await client.post(
+                request["image_base_url"].rstrip("/") + "/images/generations",
+                headers=headers, json=payload,
+            )
+        elif references:
+            files = [
+                ("image", (Path(path).name, Path(path).read_bytes(), "image/png"))
+                for path in references
+            ]
+            response = await client.post(
+                request["image_base_url"].rstrip("/") + "/images/edits", headers=headers,
+                data={key: str(value) for key, value in payload.items()}, files=files,
+            )
+        else:
+            response = await client.post(
+                request["image_base_url"].rstrip("/") + "/images/generations",
+                headers=headers, json=payload,
+            )
         if response.status_code >= 400:
             raise ValueError(
                 f"Service d'images HTTP {response.status_code}: {safe_error(response.text)}"
@@ -887,4 +925,6 @@ async def _run_export(job, payload, should_stop):
             (job["project_id"], job["project_id"], payload["revision"]),
         )
         conn.commit()
+    from calliope.studio.production import commit_episode
+    await commit_episode(job["project_id"], payload["revision"])
     return [str(path)]

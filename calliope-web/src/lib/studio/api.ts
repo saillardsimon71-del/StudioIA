@@ -103,6 +103,86 @@ export interface Board {
   scenes: Scene[];
   jobs: StudioJob[];
   exports: StudioExport[];
+  episode?: {
+    series_id: number;
+    number: number;
+    series_title: string;
+    summary: string;
+    ongoing_plot: string;
+  } | null;
+  production?: {
+    status: string;
+    stage: string;
+    progress: number;
+    message: string;
+    error: string | null;
+    pause_requested: number;
+  } | null;
+  audio: AudioSettings;
+}
+
+export interface AudioCue {
+  effect: string;
+  shot_index: number;
+  at_sec: number;
+  gain_db: number;
+  asset_id?: number | null;
+}
+export interface AudioAsset {
+  id: number;
+  name: string;
+  kind: string;
+  url: string;
+  duration_sec: number;
+}
+export interface AudioSettings {
+  enabled: boolean;
+  music: string;
+  music_gain_db: number;
+  voice_gain_db: number;
+  tempo: number;
+  ducking: boolean;
+  ambience: string;
+  ambience_gain_db: number;
+  music_asset_id: number | null;
+  sfx: AudioCue[];
+  assets?: AudioAsset[];
+}
+export interface SeriesEntity {
+  id: number;
+  key: string;
+  name: string;
+  kind: string;
+  description: string;
+  url: string | null;
+}
+export interface Episode {
+  project_id: number;
+  number: number;
+  title: string;
+  idea: string;
+  status: string;
+  stage: string;
+  progress: number;
+  message: string;
+  error: string | null;
+  url: string | null;
+  summary: string;
+  events: string[];
+  ongoing_plot: string;
+  canon_revision: number | null;
+  continuity_stale: boolean;
+}
+export interface Series {
+  id: number;
+  title: string;
+  concept: string;
+  bible: Record<string, string>;
+  aspect_ratio: AspectRatio;
+  language: string;
+  target_seconds: number;
+  entities: SeriesEntity[];
+  episodes: Episode[];
 }
 
 export interface StudioConfig {
@@ -179,9 +259,66 @@ export const studio = {
     payload: Partial<StudioConfig> & {
       llm_api_key?: string;
       image_api_key?: string;
+      use_agnes_for_text?: boolean;
     },
   ) => request<StudioConfig>("/config", "PATCH", payload),
   preflight: () => request<Preflight>("/preflight"),
+  series: () => request<{ series: Series[] }>("/series"),
+  getSeries: (id: number) => request<Series>(`/series/${id}`),
+  createSeries: (payload: {
+    title: string;
+    concept: string;
+    aspect_ratio: AspectRatio;
+    language: string;
+    target_seconds: number;
+  }) => request<Series>("/series", "POST", payload),
+  saveSeries: (id: number, payload: Partial<Series>) =>
+    request<Series>(`/series/${id}`, "PATCH", payload),
+  createEpisode: (
+    id: number,
+    payload: { idea: string; objective: string; request_id: string },
+  ) =>
+    request<{ project_id: number; job_id: number }>(
+      `/series/${id}/episodes`,
+      "POST",
+      payload,
+    ),
+  pauseProduction: (id: number) =>
+    request<Board>(`/projects/${id}/production/pause`, "POST"),
+  resumeProduction: (id: number) =>
+    request<Board>(`/projects/${id}/production/resume`, "POST"),
+  saveAudio: (id: number, payload: Partial<AudioSettings>) =>
+    request<AudioSettings>(`/projects/${id}/audio`, "PATCH", payload),
+  saveScript: (
+    id: number,
+    shots: {
+      id: number;
+      description: string;
+      dialogue: string;
+      prompt: string;
+      image_prompt: string;
+    }[],
+  ) => request<Board>(`/projects/${id}/script`, "PATCH", { shots }),
+  previewAudio: (id: number) =>
+    request<{ music_url: string; effects_url: string }>(
+      `/projects/${id}/audio/preview`,
+      "POST",
+    ),
+  uploadAudio: (id: number, kind: string, file: File) => {
+    const body = new FormData();
+    body.append("kind", kind);
+    body.append("file", file);
+    return request<AudioAsset>(`/projects/${id}/audio/upload`, "POST", body);
+  },
+  uploadSeriesReference: (id: number, entityId: number, file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request<Series>(
+      `/series/${id}/entities/${entityId}/reference`,
+      "POST",
+      body,
+    );
+  },
   projects: () => request<{ projects: StudioProject[] }>("/projects"),
   create: (payload: {
     title: string;

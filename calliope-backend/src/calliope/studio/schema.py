@@ -55,6 +55,69 @@ CREATE TABLE IF NOT EXISTS studio_exports (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(project_id,request_id)
 );
+CREATE TABLE IF NOT EXISTS studio_series (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    concept TEXT NOT NULL,
+    bible_json TEXT NOT NULL DEFAULT '{}',
+    aspect_ratio TEXT NOT NULL DEFAULT '9:16',
+    language TEXT NOT NULL DEFAULT 'en',
+    target_seconds INTEGER NOT NULL DEFAULT 70,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS studio_episodes (
+    project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    series_id INTEGER NOT NULL REFERENCES studio_series(id) ON DELETE CASCADE,
+    number INTEGER NOT NULL,
+    idea TEXT NOT NULL,
+    objective TEXT NOT NULL DEFAULT '',
+    request_id TEXT NOT NULL,
+    context_json TEXT NOT NULL,
+    plan_json TEXT NOT NULL DEFAULT '{}',
+    summary TEXT NOT NULL DEFAULT '',
+    events_json TEXT NOT NULL DEFAULT '[]',
+    ongoing_plot TEXT NOT NULL DEFAULT '',
+    canon_revision INTEGER,
+    UNIQUE(series_id,number),
+    UNIQUE(series_id,request_id)
+);
+CREATE TABLE IF NOT EXISTS studio_entities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    series_id INTEGER NOT NULL REFERENCES studio_series(id) ON DELETE CASCADE,
+    entity_key TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('character','location')),
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    reference_path TEXT,
+    UNIQUE(series_id,entity_key)
+);
+CREATE TABLE IF NOT EXISTS studio_shot_context (
+    clip_id INTEGER PRIMARY KEY REFERENCES clips(id) ON DELETE CASCADE,
+    context_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS studio_productions (
+    project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    stage TEXT NOT NULL DEFAULT 'writing',
+    progress REAL NOT NULL DEFAULT 0,
+    message TEXT NOT NULL DEFAULT 'Écriture en attente',
+    error TEXT,
+    pause_requested INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS studio_audio (
+    project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    settings_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS studio_audio_assets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL,
+    duration_sec REAL NOT NULL
+);
 """
 
 

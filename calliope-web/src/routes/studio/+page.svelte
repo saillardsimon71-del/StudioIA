@@ -1,109 +1,249 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
-	import ConfigDialog from '$lib/studio/ConfigDialog.svelte';
-	import { studio, errorMessage, type StudioProject, type AspectRatio, type Preflight } from '$lib/studio/api';
-	let projects = $state<StudioProject[]>([]);
-	let loading = $state(true);
-	let busy = $state('');
-	let error = $state('');
-	let title = $state('');
-	let idea = $state('');
-	let aspect = $state<AspectRatio>('16:9');
-	let configOpen = $state(false);
-	let preflight = $state<Preflight | null>(null);
-	let diagnosticError = $state('');
-	let testing = $state(false);
-	let dryRun = $state(false);
-	const checks = [{ key: 'modal', label: 'Génération vidéo' }, { key: 'ffmpeg', label: 'Assemblage MP4' }, { key: 'llm', label: 'Écriture IA (facultatif)' }, { key: 'image', label: 'Images IA (facultatif)' }] as const;
-
-	onMount(() => {
-		load();
-		studio.config().then((value) => dryRun = value.dry_run).catch(() => {});
-	});
-	async function load() {
-		loading = true;
-		error = '';
-		try { projects = (await studio.projects()).projects; }
-		catch (err) { error = errorMessage(err); }
-		finally { loading = false; }
-	}
-	async function create(event: SubmitEvent) {
-		event.preventDefault();
-		if (busy) return;
-		busy = 'create'; error = '';
-		try { const project = await studio.create({ title: title.trim(), idea: idea.trim(), aspect_ratio: aspect }); await goto(`/studio/${project.id}`); }
-		catch (err) { error = errorMessage(err); }
-		finally { busy = ''; }
-	}
-	async function example() {
-		if (busy) return;
-		busy = 'example'; error = '';
-		try { const project = await studio.example(); await goto(`/studio/${project.id}`); }
-		catch (err) { error = errorMessage(err); }
-		finally { busy = ''; }
-	}
-	async function testServices() {
-		if (testing) return;
-		testing = true; diagnosticError = '';
-		try { preflight = await studio.preflight(); }
-		catch (err) { diagnosticError = errorMessage(err); }
-		finally { testing = false; }
-	}
-	function configSaved() { preflight = null; studio.config().then((value) => dryRun = value.dry_run).catch((err) => diagnosticError = errorMessage(err)); }
-	function date(value: string) { return new Date(value).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }); }
+  import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
+  import ConfigDialog from "$lib/studio/ConfigDialog.svelte";
+  import {
+    studio,
+    errorMessage,
+    type Series,
+    type AspectRatio,
+  } from "$lib/studio/api";
+  let series = $state<Series[]>([]);
+  let title = $state("");
+  let concept = $state("");
+  let aspect = $state<AspectRatio>("9:16");
+  let language = $state("en");
+  let seconds = $state(70);
+  let error = $state("");
+  let loading = $state(true);
+  let busy = $state(false);
+  let configOpen = $state(false);
+  let servicesReady = $state(false);
+  onMount(load);
+  async function load() {
+    try {
+      series = (await studio.series()).series;
+      const config = await studio.config();
+      servicesReady =
+        config.llm_configured && config.image_configured && !config.dry_run;
+    } catch (err) {
+      error = errorMessage(err);
+    } finally {
+      loading = false;
+    }
+  }
+  async function create(event: SubmitEvent) {
+    event.preventDefault();
+    if (busy) return;
+    busy = true;
+    error = "";
+    try {
+      const item = await studio.createSeries({
+        title: title.trim(),
+        concept: concept.trim(),
+        aspect_ratio: aspect,
+        language,
+        target_seconds: seconds,
+      });
+      await goto("/studio/series/" + item.id);
+    } catch (err) {
+      error = errorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
 </script>
 
-<svelte:head><title>Studio IA - Projets</title><meta name="description" content="Un atelier vidéo de votre idée au montage final." /></svelte:head>
-
-<header class="page-header between"><a class="brand" href="/studio">Studio IA</a><div class="row"><button onclick={() => configOpen = true}>Configurer les services</button><a href="/settings">Options avancées</a></div></header>
-<main class="home">
-	<div class="intro"><h1>Vos projets vidéo</h1><p class="muted">Préparez les scènes, choisissez vos prises et assemblez le film.</p></div>
-	{#if dryRun}<p class="error" role="status">La simulation est active. Aucun média ne sera généré. Désactivez-la dans les services pour produire un film.</p>{/if}
-	{#if error}<div class="error" role="alert">{error}{#if !loading && !projects.length}<button class="small retry" onclick={load}>Réessayer</button>{/if}</div>{/if}
-	<div class="home-grid">
-		<section class="project-section" aria-labelledby="projects-title">
-			<div class="between section-heading"><h2 id="projects-title">Projets</h2><button class="small subtle" onclick={load} disabled={loading}>Actualiser</button></div>
-			{#if loading}<p class="muted">Chargement des projets...</p>
-			{:else if !projects.length}<div class="empty"><h3>Le premier projet commence ici.</h3><p class="muted">Créez un projet avec votre idée ou ouvrez un exemple pour découvrir le découpage.</p><button onclick={example} disabled={!!busy}>{busy === 'example' ? 'Création...' : 'Ouvrir un exemple'}</button></div>
-			{:else}<div class="project-list">{#each projects as project (project.id)}
-				<a class="project-link" href={`/studio/${project.id}`}>
-					<div class="project-cover media" style={`aspect-ratio: ${project.aspect_ratio.replace(':', '/')}`}>
-						{#if project.cover_url}<img src={project.cover_url} alt="" loading="lazy" />{:else}<span>{project.aspect_ratio}</span>{/if}
-					</div>
-					<div class="project-copy"><h3>{project.title}</h3><p class="muted idea">{project.idea || 'Projet en préparation'}</p><p class="project-details">{project.scene_count ?? 0} scènes, {project.shot_count ?? 0} plans{#if project.shot_count}, {project.approved_count ?? 0} approuvés{/if}</p></div>
-					<span class="project-date">{date(project.updated_at)}</span>
-				</a>
-			{/each}</div><button class="small example" onclick={example} disabled={!!busy}>{busy === 'example' ? 'Création...' : 'Créer un projet exemple'}</button>{/if}
-		</section>
-		<aside class="new-project" aria-labelledby="new-title">
-			<form onsubmit={create} class="stack"><h2 id="new-title">Nouveau projet</h2><label>Titre<input required maxlength="200" bind:value={title} placeholder="Le nom de votre film" /></label><label>Idée ou intention<textarea bind:value={idea} placeholder="Le sujet, les personnages, l'ambiance..." rows="4"></textarea></label><label>Format<select bind:value={aspect}><option value="16:9">16:9 - Paysage</option><option value="9:16">9:16 - Portrait</option><option value="1:1">1:1 - Carré</option></select></label><button class="primary" disabled={!!busy || !title.trim()}>{busy === 'create' ? 'Création...' : 'Créer le projet'}</button><p class="hint">Vous pourrez ensuite coller un script ou préparer les scènes avec l'IA.</p></form>
-			<div class="services stack"><div class="between"><h3>Services</h3><button class="small" onclick={testServices} disabled={testing}>{testing ? 'Vérification...' : 'Vérifier'}</button></div>
-				{#if diagnosticError}<p class="error" role="alert">{diagnosticError}</p>{/if}
-				{#if preflight}{#each checks as check}<div class="service"><div class="between"><span>{check.label}</span><span class:approved={preflight[check.key].ok} class:pending={!preflight[check.key].ok} class="badge">{preflight[check.key].ok ? 'Prêt' : 'À configurer'}</span></div><p class="hint">{preflight[check.key].message}</p></div>{/each}<p class="hint">Moteur: {preflight.engine}</p>{:else}<p class="hint">Vérifiez la connexion vidéo et l'assemblage avant de lancer vos prises. L'écriture et les images IA sont facultatives.</p>{/if}
-			</div>
-		</aside>
-	</div>
+<svelte:head><title>Studio IA - Séries</title></svelte:head>
+<header class="page-header between">
+  <a class="brand" href="/studio">Studio IA</a>
+  <div class="row">
+    <a href="/studio/projects">Projets indépendants</a><button
+      onclick={() => (configOpen = true)}>Services</button
+    >
+  </div>
+</header>
+<main class="series-home">
+  <div class="stack intro">
+    <p class="eyebrow">SÉRIES</p>
+    <h1>Une idée. Le prochain épisode.</h1>
+    <p class="muted">
+      Chaque série conserve son univers, ses personnages et son histoire. Donnez
+      une idée directrice : le studio prépare et produit l'épisode.
+    </p>
+  </div>
+  {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if !servicesReady && !loading}<div class="notice between">
+      <p>
+        Configurez l'écriture et les images dans Services pour la production
+        automatique.
+      </p>
+      <button onclick={() => (configOpen = true)}
+        >Configurer les services</button
+      >
+    </div>{/if}
+  <div class="series-grid">
+    <section class="stack" aria-labelledby="series-list-title">
+      <div class="between">
+        <h2 id="series-list-title">Vos séries</h2>
+        <button class="small subtle" onclick={load}>Actualiser</button>
+      </div>
+      {#if loading}<p>Chargement...</p>{:else if !series.length}<div
+          class="empty"
+        >
+          <h3>Créez votre première série.</h3>
+          <p class="muted">
+            Fiction, humour, horreur, réalisme, publicité narrative ou animation
+            : votre concept donne la direction.
+          </p>
+        </div>{:else}
+        <div class="series-list">
+          {#each series as item (item.id)}
+            <a class="series-card" href={"/studio/series/" + item.id}
+              ><div class="between">
+                <h3>{item.title}</h3>
+                <span class="badge">{item.aspect_ratio}</span>
+              </div>
+              <p class="muted">{item.concept}</p>
+              <div class="between">
+                <span class="hint"
+                  >{item.episodes.length} épisode{item.episodes.length > 1
+                    ? "s"
+                    : ""} - {item.entities.filter((e) => e.kind === "character")
+                    .length} personnages</span
+                ><span>Ouvrir la série</span>
+              </div></a
+            >
+          {/each}
+        </div>
+      {/if}
+    </section>
+    <aside class="new-series">
+      <form onsubmit={create} class="stack">
+        <h2>Créer une nouvelle série</h2>
+        <label
+          >Titre<input
+            required
+            maxlength="200"
+            bind:value={title}
+            placeholder="Le nom de votre série"
+          /></label
+        ><label
+          >Concept de la série<textarea
+            required
+            rows="6"
+            maxlength="30000"
+            bind:value={concept}
+            placeholder="Décrivez l'univers, le ton, les personnages et le style souhaité. L'IA développera les détails manquants."
+          ></textarea></label
+        >
+        <div class="columns">
+          <label
+            >Format<select bind:value={aspect}
+              ><option value="9:16">Vertical</option><option value="16:9"
+                >Paysage</option
+              ><option value="1:1">Carré</option></select
+            ></label
+          ><label
+            >Langue des dialogues<select bind:value={language}
+              ><option value="en">English</option><option value="fr"
+                >Français</option
+              ><option value="es">Español</option><option value="de"
+                >Deutsch</option
+              ><option value="it">Italiano</option><option value="ja"
+                >日本語</option
+              ></select
+            ></label
+          >
+        </div>
+        <label
+          >Durée habituelle d'un épisode (secondes)<input
+            type="number"
+            required
+            min="10"
+            max="120"
+            step="5"
+            bind:value={seconds}
+          /></label
+        >
+        <p class="hint">
+          Durée indicative. Le montage conserve les prises entières.
+        </p>
+        <button
+          class="primary"
+          disabled={busy || !title.trim() || !concept.trim()}
+          >{busy ? "Création..." : "Créer la série"}</button
+        >
+        <p class="hint">
+          Son contexte et ses références restent séparés de toutes les autres
+          séries.
+        </p>
+      </form>
+    </aside>
+  </div>
 </main>
-{#if configOpen}<ConfigDialog onclose={() => configOpen = false} onsaved={configSaved} />{/if}
+{#if configOpen}<ConfigDialog
+    onclose={() => (configOpen = false)}
+    onsaved={load}
+  />{/if}
 
 <style>
-	.home { max-width: 1360px; margin: auto; padding: 38px 32px 60px; display: grid; gap: 28px; }
-	.intro { display: grid; gap: 9px; }
-	.home-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 40px; align-items: start; }
-	.section-heading { margin-bottom: 18px; }
-	.project-list { display: grid; border-top: 1px solid var(--line); }
-	.project-link { display: grid; grid-template-columns: 128px minmax(0, 1fr) auto; align-items: center; gap: 20px; padding: 18px 0; border-bottom: 1px solid var(--line); text-decoration: none; color: var(--ink); }
-	.project-link:hover h3 { text-decoration: underline; }
-	.project-cover { height: 80px; border-radius: 3px; width: 128px; color: #a5b9ab; font-size: 13px; }
-	.project-copy { display: grid; gap: 5px; }
-	.idea { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; font-size: 14px; }
-	.project-details, .project-date { color: var(--muted); font-size: 12px; }
-	.new-project { border: 1px solid var(--line); border-top: 4px solid var(--green); background: var(--white); padding: 24px; border-radius: 5px; }
-	.services { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--line); }
-	.service { display: grid; gap: 5px; font-size: 13px; }
-	.example { margin-top: 18px; }
-	.retry { margin-left: 14px; }
-	@media (max-width: 900px) { .home-grid { grid-template-columns: 1fr; gap: 28px; } .new-project { max-width: 600px; width: 100%; } }
-	@media (max-width: 650px) { .home { padding: 24px 16px; } .project-link { grid-template-columns: 90px minmax(0, 1fr); gap: 13px; } .project-cover { width: 90px; height: 64px; } .project-date { display: none; } }
+  .series-home {
+    max-width: 1380px;
+    margin: auto;
+    padding: 40px 32px 70px;
+    display: grid;
+    gap: 30px;
+  }
+  .intro {
+    max-width: 850px;
+    gap: 10px;
+  }
+  .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    color: var(--green);
+    font-weight: 700;
+  }
+  .series-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 380px;
+    align-items: start;
+    gap: 36px;
+  }
+  .new-series {
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-top: 4px solid var(--green);
+    border-radius: 5px;
+    padding: 24px;
+  }
+  .series-list {
+    display: grid;
+    gap: 14px;
+  }
+  .series-card {
+    color: var(--ink);
+    text-decoration: none;
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 24px;
+    display: grid;
+    gap: 16px;
+  }
+  .series-card:hover {
+    border-color: var(--green);
+  }
+  .series-card p {
+    white-space: pre-line;
+  }
+  @media (max-width: 900px) {
+    .series-grid {
+      grid-template-columns: 1fr;
+    }
+    .series-home {
+      padding: 24px 16px;
+    }
+  }
 </style>

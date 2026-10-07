@@ -255,6 +255,10 @@ class QueueWorker:
         kind = job["kind"]
         use_dry = bool(config.settings.dry_run)
 
+        if payload.get("studio_production_id"):
+            from calliope.studio.production import run_production
+            return await run_production(job, payload, self._stop.is_set)
+
         if payload.get("studio_take_id") or payload.get("studio_export_id"):
             from calliope.studio.service import StudioCancelledError, run_studio_job
 

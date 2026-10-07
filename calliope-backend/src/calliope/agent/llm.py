@@ -825,7 +825,7 @@ def extract_json(text: str) -> dict[str, Any]:
 
 
 async def generate_structured(
-    messages: list[dict[str, str]], temperature: float = 0.7
+    messages: list[dict[str, str]], temperature: float = 0.7, max_tokens: int | None = None
 ) -> dict[str, Any]:
     client = LLMClient()
     try:
@@ -837,13 +837,15 @@ async def generate_structured(
             # the whole completion streaming reasoning and accumulates no
             # content — that must reach the retry below, so it lives inside
             # this try alongside the parse.
-            text = await client.chat(messages, temperature=temperature)
+            options = {"max_tokens": max_tokens} if max_tokens is not None else {}
+            text = await client.chat(messages, temperature=temperature, **options)
             return extract_json(text)
         except ValueError as exc:
             # One retry with JSON mode requested, for servers that support it
             logger.warning("LLM reply unusable (%s); retrying with json_object mode", exc)
             text = await client.chat(
-                messages, temperature=temperature, response_format={"type": "json_object"}
+                messages, temperature=temperature, response_format={"type": "json_object"},
+                **options,
             )
             return extract_json(text)
     finally:

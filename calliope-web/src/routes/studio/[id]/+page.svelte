@@ -6,6 +6,8 @@
 	import SceneDialog from '$lib/studio/SceneDialog.svelte';
 	import ConfigDialog from '$lib/studio/ConfigDialog.svelte';
 	import JobList from '$lib/studio/JobList.svelte';
+	import AudioDialog from '$lib/studio/AudioDialog.svelte';
+	import ScriptDialog from '$lib/studio/ScriptDialog.svelte';
 	import { studio, isActive, statusLabel, selectedTake, newRequestId, errorMessage, type Board, type Shot, type Scene } from '$lib/studio/api';
 	let { data }: { data: { id: number } } = $props();
 	let projectId = $derived(data.id);
@@ -23,6 +25,9 @@
 	let sceneOpen = $state(false);
 	let sceneToEdit = $state<Scene | null>(null);
 	let configOpen = $state(false);
+	let audioOpen = $state(false);
+	let scriptOpen = $state(false);
+	let productionActive = $derived(!!board?.production && ['pending','running'].includes(board.production.status));
 	let dryRun = $state(false);
 	let compact = $state(false);
 	let shots = $derived(board?.scenes.flatMap((scene) => scene.shots) ?? []);
@@ -31,7 +36,7 @@
 	let exportReady = $derived(shots.length > 0 && approvedCount === shots.length);
 	let pendingExport = $derived(board?.exports.some((item) => isActive(item.status)) ?? false);
 	let completedExports = $derived([...(board?.exports ?? [])].filter((item) => item.url).sort((a, b) => b.id - a.id));
-	let active = $derived(board ? board.jobs.some((job) => isActive(job.status)) || board.exports.some((item) => isActive(item.status)) || shots.some((shot) => shot.takes.some((take) => isActive(take.status))) : false);
+	let active = $derived(productionActive || (board ? board.jobs.some((job) => isActive(job.status)) || board.exports.some((item) => isActive(item.status)) || shots.some((shot) => shot.takes.some((take) => isActive(take.status))) : false));
 	let duration = $derived(shots.reduce((sum, shot) => sum + shot.duration_sec, 0));
 	beforeNavigate((navigation) => {
 		if (navigation.from?.url.pathname === navigation.to?.url.pathname && navigation.from?.url.search === navigation.to?.url.search) return;
@@ -69,7 +74,7 @@
 		finally { refreshPromise = null; }
 	}
 	function discardEdits() { return !editorDirty || confirm('Des changements du plan ne sont pas enregistrés. Les abandonner ?'); }
-	function openShot(shot: Shot) { if (selectedId === shot.id || !discardEdits()) return; editorDirty = false; selectedId = shot.id; }
+	function openShot(shot: Shot) { if (productionActive) { error = 'Mettez la production en pause pour modifier un plan.'; return; } if (selectedId === shot.id || !discardEdits()) return; editorDirty = false; selectedId = shot.id; }
 	function closeShot() { if (!discardEdits()) return; selectedId = null; editorDirty = false; }
 	async function action(name: string, task: () => Promise<void>) {
 		if (busy) return;
@@ -115,7 +120,7 @@
 </script>
 
 <svelte:head><title>{board?.project.title ?? 'Projet'} - Studio IA</title></svelte:head>
-<header class="page-header between" inert={!!selected && compact}><div class="row"><a class="brand" href="/studio">Studio IA</a><a class="back-link" href="/studio">Tous les projets</a></div><div class="row"><button class="small" onclick={() => configOpen = true}>Services</button><a href="/settings">Options avancées</a></div></header>
+<header class="page-header between" inert={!!selected && compact}><div class="row"><a class="brand" href="/studio">Studio IA</a>{#if board?.episode}<a class="back-link" href={'/studio/series/' + board.episode.series_id}>{board.episode.series_title}</a>{:else}<a class="back-link" href="/studio/projects">Tous les projets</a>{/if}</div><div class="row"><button class="small" onclick={() => configOpen = true}>Services</button><a href="/settings">Options avancées</a></div></header>
 
 {#if loading}<main class="loading"><p class="muted">Ouverture du projet...</p></main>
 {:else if !board}<main class="loading"><p class="error" role="alert">{connectionError || error || 'Projet introuvable.'}</p><button onclick={() => refresh()}>Réessayer</button></main>
@@ -123,19 +128,22 @@
 	<div class:with-editor={!!selected} class="workspace">
 		<nav class="scene-nav" aria-label="Scènes du projet" inert={!!selected && compact}><div class="project-label"><span class="badge">{board.project.aspect_ratio}</span><h2>{board.project.title}</h2><p class="hint">{shots.length} plans, environ {duration.toFixed(1).replace('.0', '')} s</p></div>
 			<div class="scene-links">{#each board.scenes as scene, index (scene.id)}<a href={`#scene-${scene.id}`}><span>{index + 1}</span><div>{scene.heading}<small>{scene.shots.length} plans</small></div></a>{/each}</div>
-			<button class="small" onclick={() => editScene(null)} disabled={!!busy}>Ajouter une scène</button>
+			<button class="small" onclick={() => editScene(null)} disabled={productionActive || !!busy}>Ajouter une scène</button>
 			<div class="nav-footer"><p class="hint">{approvedCount} / {shots.length} plans approuvés</p><a href="#export">Voir le montage final</a></div>
 		</nav>
 		<main class="board" inert={!!selected && compact}>
-			<div class="between board-heading"><div class="stack title-stack"><h1>{board.project.title}</h1>{#if board.project.idea}<p class="muted project-idea">{board.project.idea}</p>{/if}</div><div class="row"><button class="small" disabled={!!board.scenes.length || !!busy} onclick={() => plannerOpen = true}>Préparer les scènes</button><button class="small subtle" onclick={() => refresh()}>Actualiser</button></div></div>
+			{#if board.production}<section class="production-panel stack" aria-label="Production automatique"><div class="between"><div><p class="hint">Épisode {board.episode?.number} - Production automatique</p><h2>{board.production.message}</h2></div><div class="row">{#if productionActive}<button disabled={!!board.production.pause_requested || !!busy} onclick={() => action('pause',async()=>{await studio.pauseProduction(projectId);})}>{board.production.pause_requested ? 'Pause demandée' : 'Mettre en pause'}</button>{:else if board.production.status === 'paused' || board.production.status === 'failed'}<button class="primary" disabled={productionActive || !!busy} onclick={() => action('resume',async()=>{await studio.resumeProduction(projectId);})}>Reprendre la production</button>{/if}{#if board.episode}<a href={'/studio/series/' + board.episode.series_id}>Retour à la série</a>{/if}</div></div><progress max="1" value={board.production.progress}></progress>{#if board.production.error}<p class="error">{board.production.error}</p>{/if}{#if productionActive}<p class="hint">Vous pouvez fermer cette page. La production et les prises sont conservées. La pause prend effet après l'opération en cours.</p>{:else}<p class="hint">Vous pouvez modifier le scénario, les plans, les prises et le son, puis réexporter.</p>{/if}</section>{/if}
+			<div class="row"><button disabled={productionActive || !shots.length} onclick={() => scriptOpen = true}>Modifier le scénario</button><button disabled={productionActive} onclick={() => audioOpen = true}>Musique et bruitages</button></div>
+			<div class="between board-heading"><div class="stack title-stack"><h1>{board.project.title}</h1>{#if board.project.idea}<p class="muted project-idea">{board.project.idea}</p>{/if}</div><div class="row"><button class="small" disabled={productionActive || !!board.scenes.length || !!busy} onclick={() => plannerOpen = true}>Préparer les scènes</button><button class="small subtle" onclick={() => refresh()}>Actualiser</button></div></div>
 			{#if dryRun}<p class="error">Simulation active: aucun média réel ne sera généré. Désactivez-la dans les services.</p>{/if}
 			{#if error}<p class="error" role="alert">{error}</p>{/if}{#if notice}<p class="notice" role="status">{notice}</p>{/if}
 			{#if connectionError}<p class="error" role="alert">{connectionError}</p>{/if}
-			{#if !board.scenes.length}<div class="empty"><h2>Préparez votre premier découpage.</h2><p class="muted">Partez d'une idée avec l'IA, collez un script pour le découper localement ou ajoutez une scène.</p><div class="row"><button class="primary" onclick={() => plannerOpen = true}>Préparer les scènes</button><button onclick={() => editScene(null)}>Ajouter une scène</button></div></div>
-			{:else}<p class="hint">Ouvrez un plan, générez ou importez ses médias, puis choisissez et approuvez une vidéo. Pour un nouveau découpage complet, créez un nouveau projet.</p>{/if}
+			{#if !board.scenes.length && board.production}<div class="empty"><h2>L'IA prépare votre épisode.</h2><p class="muted">Le scénario, les plans et les dialogues apparaîtront ici.</p></div>
+			{:else if !board.scenes.length}<div class="empty"><h2>Préparez votre premier découpage.</h2><p class="muted">Partez d'une idée avec l'IA, collez un script pour le découper localement ou ajoutez une scène.</p><div class="row"><button class="primary" onclick={() => plannerOpen = true}>Préparer les scènes</button><button onclick={() => editScene(null)}>Ajouter une scène</button></div></div>
+			{:else if !productionActive}<p class="hint">Ouvrez un plan pour modifier ses images, ses prises ou son dialogue, puis réexportez.</p>{/if}
 			<div class="scenes">{#each board.scenes as scene, sceneIndex (scene.id)}
 				<section class="scene" id={`scene-${scene.id}`} aria-labelledby={`scene-title-${scene.id}`}>
-					<div class="between scene-heading"><div class="row"><span class="scene-number">{sceneIndex + 1}</span><h2 id={`scene-title-${scene.id}`}>{scene.heading}</h2></div><div class="row"><button class="small subtle" onclick={() => editScene(scene)}>Modifier</button><button class="small" aria-label={`Déplacer la scène ${sceneIndex + 1} vers le haut`} disabled={!!busy || sceneIndex === 0} onclick={() => moveScene(scene.id, -1)}>Monter</button><button class="small" aria-label={`Déplacer la scène ${sceneIndex + 1} vers le bas`} disabled={!!busy || sceneIndex === board!.scenes.length - 1} onclick={() => moveScene(scene.id, 1)}>Descendre</button></div></div>
+					<div class="between scene-heading"><div class="row"><span class="scene-number">{sceneIndex + 1}</span><h2 id={`scene-title-${scene.id}`}>{scene.heading}</h2></div><div class="row"><button class="small subtle" disabled={productionActive} onclick={() => editScene(scene)}>Modifier</button><button class="small" aria-label={`Déplacer la scène ${sceneIndex + 1} vers le haut`} disabled={productionActive || !!busy || sceneIndex === 0} onclick={() => moveScene(scene.id, -1)}>Monter</button><button class="small" aria-label={`Déplacer la scène ${sceneIndex + 1} vers le bas`} disabled={productionActive || !!busy || sceneIndex === board!.scenes.length - 1} onclick={() => moveScene(scene.id, 1)}>Descendre</button></div></div>
 					{#if scene.action}<p class="scene-action muted">{scene.action}</p>{/if}{#if scene.dialog}<details class="scene-dialog"><summary>Dialogue de la scène</summary><p>{scene.dialog}</p></details>{/if}
 					<div class="shot-list">{#each scene.shots as shot, shotIndex (shot.id)}
 						{@const video = selectedTake(shot, 'video')}{@const image = selectedTake(shot, 'image')}
@@ -143,21 +151,21 @@
 							<div class="shot-preview media" style={`aspect-ratio: ${board.project.aspect_ratio.replace(':', '/')}`}>
 								{#if video?.url}<!-- svelte-ignore a11y_media_has_caption (Les prises importées ou générées n'ont pas de sous-titres.) --><video src={video.url} poster={video.poster_url ?? undefined} controls playsinline preload="metadata"></video>{:else if image?.url}<img src={image.url} alt={`Référence du plan ${sceneIndex + 1}.${shotIndex + 1}`} loading="lazy" />{:else}<span class="media-empty">{shot.takes.some((take) => take.kind === 'video' && take.url) ? 'Une prise est prête à choisir' : 'Aucune vidéo choisie'}</span>{/if}
 							</div>
-							<div class="shot-copy"><div class="row"><span class="shot-number">Plan {sceneIndex + 1}.{shotIndex + 1}</span><span class:approved={shot.approved} class:pending={!shot.approved && !!shot.selected_video_id} class="badge">{shotStatus(shot)}</span></div><h3>{shot.description || 'Plan sans titre'}</h3><p class="shot-prompt muted">{shot.prompt || 'Décrivez ce plan dans l\'éditeur.'}</p><p class="hint">{shot.duration_sec} s - {shot.audio_mode === 'silent' ? 'Sans son' : 'Son natif'} - {shot.takes.filter((take) => take.kind === 'video').length} prises vidéo{#if video} - Prise {video.id} choisie{/if}</p><button class:primary={selectedId !== shot.id} onclick={() => openShot(shot)}>{selectedId === shot.id ? 'Plan ouvert' : 'Ouvrir le plan'}</button></div>
-							<div class="shot-order"><button class="small subtle" aria-label={`Monter le plan ${sceneIndex + 1}.${shotIndex + 1}`} disabled={!!busy || shotIndex === 0} onclick={() => moveShot(scene, shot.id, -1)}>Monter</button><button class="small subtle" aria-label={`Descendre le plan ${sceneIndex + 1}.${shotIndex + 1}`} disabled={!!busy || shotIndex === scene.shots.length - 1} onclick={() => moveShot(scene, shot.id, 1)}>Descendre</button><button class="small subtle danger" disabled={!!busy || scene.shots.length <= 1} onclick={() => deleteShot(shot)}>Supprimer</button></div>
+							<div class="shot-copy"><div class="row"><span class="shot-number">Plan {sceneIndex + 1}.{shotIndex + 1}</span><span class:approved={shot.approved} class:pending={!shot.approved && !!shot.selected_video_id} class="badge">{shotStatus(shot)}</span></div><h3>{shot.description || 'Plan sans titre'}</h3><p class="shot-prompt muted">{shot.prompt || 'Décrivez ce plan dans l\'éditeur.'}</p><p class="hint">{shot.duration_sec} s - {shot.audio_mode === 'silent' ? 'Sans son' : 'Son natif'} - {shot.takes.filter((take) => take.kind === 'video').length} prises vidéo{#if video} - Prise {video.id} choisie{/if}</p><button class:primary={selectedId !== shot.id} disabled={productionActive} onclick={() => openShot(shot)}>{selectedId === shot.id ? 'Plan ouvert' : 'Ouvrir le plan'}</button></div>
+							<div class="shot-order"><button class="small subtle" aria-label={`Monter le plan ${sceneIndex + 1}.${shotIndex + 1}`} disabled={productionActive || !!busy || shotIndex === 0} onclick={() => moveShot(scene, shot.id, -1)}>Monter</button><button class="small subtle" aria-label={`Descendre le plan ${sceneIndex + 1}.${shotIndex + 1}`} disabled={productionActive || !!busy || shotIndex === scene.shots.length - 1} onclick={() => moveShot(scene, shot.id, 1)}>Descendre</button><button class="small subtle danger" disabled={productionActive || !!busy || scene.shots.length <= 1} onclick={() => deleteShot(shot)}>Supprimer</button></div>
 						</article>
 					{/each}</div>
-					<button class="small add-shot" disabled={!!busy} onclick={() => addShot(scene)}>Ajouter un plan à cette scène</button>
+					<button class="small add-shot" disabled={productionActive || !!busy} onclick={() => addShot(scene)}>Ajouter un plan à cette scène</button>
 				</section>
 			{/each}</div>
-			<section id="export" class="export-section stack" aria-labelledby="export-title"><div class="between"><div class="stack title-stack"><h2 id="export-title">Montage final</h2><p class="hint">{approvedCount} / {shots.length} plans choisis et approuvés</p></div><button class="primary" disabled={!exportReady || !!busy || pendingExport || editorDirty} onclick={exportFilm}>{busy === 'export' || pendingExport ? 'Assemblage en cours...' : 'Exporter le film MP4'}</button></div>
+			<section id="export" class="export-section stack" aria-labelledby="export-title"><div class="between"><div class="stack title-stack"><h2 id="export-title">Montage final</h2><p class="hint">{approvedCount} / {shots.length} plans choisis et approuvés</p></div><button class="primary" disabled={productionActive || !exportReady || !!busy || pendingExport || editorDirty} onclick={exportFilm}>{busy === 'export' || pendingExport ? 'Assemblage en cours...' : 'Exporter le film MP4'}</button></div>
 				{#if !exportReady}<p class="hint">Choisissez une vidéo et approuvez chaque plan pour exporter le film dans l'ordre des scènes.</p>{/if}
 				{#each [...board.exports].filter((item) => !item.url && item.error).reverse() as item (item.id)}<p class="error">Export {item.id}: {item.error}</p>{/each}
 				{#if completedExports.length}{@const latest = completedExports[0]}<div class="final-export stack"><div class="media final-preview" style={`aspect-ratio: ${board.project.aspect_ratio.replace(':', '/')}`}><!-- svelte-ignore a11y_media_has_caption (Le film ne dispose pas de sous-titres.) --><video src={latest.url!} controls playsinline preload="metadata"></video></div><div class="between"><div><p>Export du {new Date(latest.created_at).toLocaleString('fr-FR')}</p>{#if latest.stale}<p class="hint">Le projet a changé depuis cet export.</p>{/if}{#if latest.metadata?.duration_sec}<p class="hint">{latest.metadata.duration_sec.toFixed(1)} s{#if latest.metadata.width} - {latest.metadata.width} x {latest.metadata.height}{/if}</p>{/if}</div><a class="button primary" href={latest.url!} download={`${board.project.title}.mp4`}>Télécharger le MP4</a></div></div>
 					{#if completedExports.length > 1}<details><summary>Exports précédents ({completedExports.length - 1})</summary><div class="older-exports">{#each completedExports.slice(1) as item (item.id)}<div class="between"><span>{new Date(item.created_at).toLocaleString('fr-FR')}{#if item.stale} - Version précédente{/if}</span><a href={item.url!} download>Télécharger MP4</a></div>{/each}</div></details>{/if}
 				{:else if !pendingExport}<p class="muted">Le film exporté apparaîtra ici, avec son lecteur et son téléchargement.</p>{/if}
 			</section>
-			<JobList jobs={board.jobs} onrefresh={refresh} />
+			<JobList jobs={board.jobs} {productionActive} onrefresh={refresh} />
 		</main>
 		{#if selected}{#key selected.id}<ShotEditor shot={selected} {projectId} onrefresh={refresh} onclose={closeShot} ondirty={(dirty) => editorDirty = dirty} />{/key}{/if}
 	</div>
@@ -165,8 +173,12 @@
 {#if plannerOpen && board}<PlannerDialog project={board.project} onclose={() => plannerOpen = false} onrefresh={refresh} />{/if}
 {#if sceneOpen}<SceneDialog {projectId} scene={sceneToEdit} onclose={() => sceneOpen = false} onrefresh={refresh} />{/if}
 {#if configOpen}<ConfigDialog onclose={() => configOpen = false} onsaved={configSaved} />{/if}
+{#if audioOpen && board}<AudioDialog {projectId} initial={board.audio} shotNames={shots.map(shot=>shot.description)} onclose={() => audioOpen = false} onrefresh={refresh} />{/if}
+{#if scriptOpen && board}<ScriptDialog {board} onclose={() => scriptOpen = false} onrefresh={refresh} />{/if}
 
 <style>
+	.production-panel { border: 1px solid var(--line); border-left: 4px solid var(--green); padding: 20px; background: var(--white); }
+	.production-panel progress { width: 100%; accent-color: var(--green); }
 	.back-link { font-size: 13px; margin-left: 15px; }
 	.loading { padding: 40px; display: grid; justify-items: start; gap: 20px; }
 	.workspace { display: grid; grid-template-columns: 215px minmax(0, 1fr); align-items: start; }

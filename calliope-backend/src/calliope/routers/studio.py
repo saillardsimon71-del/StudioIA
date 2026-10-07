@@ -10,10 +10,12 @@ from pydantic import BaseModel, Field
 
 from calliope.config import settings
 from calliope.queue.manager import queue_manager
-from calliope.studio import service
+from calliope.routers.studio_series import router as series_router
+from calliope.studio import series, service
 from calliope.studio.planner import parse_script, plan_with_llm
 
 router = APIRouter()
+router.include_router(series_router)
 
 
 class ProjectCreate(BaseModel):
@@ -82,6 +84,7 @@ class ReorderRequest(BaseModel):
 
 
 class ConfigUpdate(BaseModel):
+    use_agnes_for_text: bool = False
     modal_app: str | None = Field(default=None, min_length=1, max_length=200)
     modal_function: str | None = Field(default=None, min_length=1, max_length=200)
     llm_base_url: str | None = None
@@ -123,6 +126,13 @@ async def get_config():
 @router.patch("/config")
 async def update_config(payload: ConfigUpdate):
     data = payload.model_dump(exclude_unset=True, exclude_none=True)
+    use_agnes = data.pop("use_agnes_for_text", False)
+    if use_agnes:
+        image_key = data.get("image_api_key") or settings.studio_image_api_key
+        if not image_key:
+            raise HTTPException(422, "Enregistrez d'abord votre clé Agnes pour les images.")
+        data.update(llm_base_url=data.get("image_base_url") or settings.studio_image_base_url,
+                    llm_model="agnes-2.5-flash", llm_api_key=image_key)
     mapping = {
         "modal_app": "studio_modal_app",
         "modal_function": "studio_modal_function",
@@ -205,6 +215,7 @@ async def get_board(project_id: int):
 
 @router.post("/projects/{project_id}/plan")
 async def prepare(project_id: int, payload: PlanRequest):
+    series.require_editable(project_id)
     existing = service.board(project_id)
     if existing["scenes"]:
         raise HTTPException(
@@ -224,6 +235,7 @@ async def prepare(project_id: int, payload: PlanRequest):
 
 @router.post("/projects/{project_id}/scenes")
 async def new_scene(project_id: int, payload: SceneData):
+    series.require_editable(project_id)
     with service.database() as conn:
         scene_id = service.add_scene(conn, project_id, payload.model_dump())
         conn.commit()
@@ -232,6 +244,7 @@ async def new_scene(project_id: int, payload: SceneData):
 
 @router.patch("/projects/{project_id}/scenes/{scene_id}")
 async def edit_scene(project_id: int, scene_id: int, payload: SceneUpdate):
+    series.require_editable(project_id)
     with service.database() as conn:
         service.require_project(conn, project_id)
         if not conn.execute(
@@ -249,6 +262,7 @@ async def edit_scene(project_id: int, scene_id: int, payload: SceneUpdate):
 
 @router.post("/projects/{project_id}/scenes/{scene_id}/shots")
 async def new_shot(project_id: int, scene_id: int, payload: ShotCreate):
+    series.require_editable(project_id)
     with service.database() as conn:
         service.require_project(conn, project_id)
         if not conn.execute(
@@ -263,6 +277,7 @@ async def new_shot(project_id: int, scene_id: int, payload: ShotCreate):
 
 @router.patch("/projects/{project_id}/shots/{shot_id}")
 async def edit_shot(project_id: int, shot_id: int, payload: ShotUpdate):
+    series.require_editable(project_id)
     return service.update_shot(
         project_id, shot_id, payload.model_dump(exclude_unset=True, exclude_none=True)
     )
@@ -270,6 +285,7 @@ async def edit_shot(project_id: int, shot_id: int, payload: ShotUpdate):
 
 @router.delete("/projects/{project_id}/shots/{shot_id}")
 async def delete_shot(project_id: int, shot_id: int):
+    series.require_editable(project_id)
     with service.database() as conn:
         shot = service.require_shot(conn, shot_id, project_id)
         if (
@@ -291,6 +307,7 @@ async def delete_shot(project_id: int, shot_id: int):
 
 @router.post("/projects/{project_id}/reorder")
 async def reorder(project_id: int, payload: ReorderRequest):
+    series.require_editable(project_id)
     with service.database() as conn:
         service.require_project(conn, project_id)
         if payload.scene_ids is not None:
@@ -325,6 +342,9 @@ async def reorder(project_id: int, payload: ReorderRequest):
 
 @router.post("/shots/{shot_id}/generate")
 async def generate(shot_id: int, payload: GenerateRequest):
+    with service.database() as conn:
+        shot = service.require_shot(conn, shot_id)
+    series.require_editable(shot["project_id"])
     return service.enqueue_takes(shot_id, payload.model_dump())
 
 
@@ -332,6 +352,9 @@ async def generate(shot_id: int, payload: GenerateRequest):
 async def import_take(
     shot_id: int, file: UploadFile = File(...), kind: Literal["image", "video"] = Form("image")
 ):
+    with service.database() as conn:
+        shot = service.require_shot(conn, shot_id)
+    series.require_editable(shot["project_id"])
     maximum = 25 * 1024 * 1024 if kind == "image" else 300 * 1024 * 1024
     content = await file.read(maximum + 1)
     if len(content) > maximum:
@@ -344,11 +367,18 @@ async def import_take(
 
 @router.post("/takes/{take_id}/select")
 async def choose(take_id: int):
+    with service.database() as conn:
+        take = conn.execute("SELECT project_id FROM studio_takes WHERE id=?", (take_id,)).fetchone()
+    if take:
+        series.require_editable(take[0])
     return service.select_take(take_id)
 
 
 @router.post("/shots/{shot_id}/approve")
 async def approve(shot_id: int, payload: ApproveRequest):
+    with service.database() as conn:
+        shot = service.require_shot(conn, shot_id)
+    series.require_editable(shot["project_id"])
     return service.approve_shot(shot_id, payload.approved)
 
 
@@ -392,11 +422,13 @@ async def resume(job_id: int):
         )
     if not (payload.get("studio_take_id") or payload.get("studio_export_id")):
         raise HTTPException(404, "Travail Studio introuvable.")
+    series.require_editable(job["project_id"])
     return service.public_job(queue_manager.retry(job_id))
 
 
 @router.post("/projects/{project_id}/export")
 async def export(project_id: int, payload: ExportRequest):
+    series.require_editable(project_id)
     return service.enqueue_export(project_id, payload.request_id)
 
 

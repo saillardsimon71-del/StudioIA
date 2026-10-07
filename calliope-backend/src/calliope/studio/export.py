@@ -193,7 +193,7 @@ async def assemble(
                 "-pix_fmt",
                 "yuv420p",
                 "-c:a",
-                "pcm_s16le",
+                "pcm_f32le" if frozen.get("audio", {}).get("enabled") else "pcm_s16le",
                 "-ar",
                 "48000",
                 "-ac",
@@ -217,7 +217,8 @@ async def assemble(
             "".join(f"file 'segment-{index:06d}.mov'\n" for index in range(len(clips))),
             encoding="utf-8",
         )
-        ready = work / "ready.mp4"
+        mixed_audio = frozen.get("audio", {}).get("enabled", False)
+        ready = work / ("voice.mov" if mixed_audio else "ready.mp4")
         command = base + [
             "-f",
             "concat",
@@ -232,7 +233,7 @@ async def assemble(
             "-c:v",
             "copy",
             "-c:a",
-            "aac",
+            "pcm_f32le" if mixed_audio else "aac",
             "-b:a",
             "192k",
             "-ar",
@@ -252,6 +253,18 @@ async def assemble(
             progress_callback,
             cancel_check,
         )
+        if mixed_audio:
+            from calliope.studio.audio import mix_command
+
+            mixed = work / "ready.mp4"
+            command = await asyncio.to_thread(
+                mix_command, base, ready, frozen["audio"], durations, work, mixed,
+            )
+            await _run_ffmpeg(
+                command, total_duration, 0.95, 0.99, "Mix voix, musique et bruitages",
+                progress_callback, cancel_check,
+            )
+            ready = mixed
         metadata = await asyncio.to_thread(inspect_media, ready)
         metadata.pop("has_video")
         metadata["clip_count"] = len(clips)
