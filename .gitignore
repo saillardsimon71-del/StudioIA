@@ -40,6 +40,8 @@ ScreenShots/
 docs/*
 !docs/changelogs/
 !docs/changelogs/**
+!docs/studio/
+!docs/studio/**
 prototype/
 2026-*.md
 !docs/changelogs/*.md
@@ -49,3 +51,4 @@ reference/
 
 # --- Local agent workspace (ZCode) ---
 .zcode/
+work/

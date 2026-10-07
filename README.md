@@ -1,4 +1,68 @@
-# Calliope
+# Studio IA
+
+Studio vidéo généraliste dérivé de Calliope. L'interface principale est en
+français: idée ou script, scènes, plans courts, prises conservées, comparaison,
+choix explicite, approbation et film MP4. Le moteur V1 est FastH3 sur Modal.
+
+## Lancer sous Windows
+
+```powershell
+.\launch.cmd
+```
+
+Le premier lancement installe les dépendances et prépare l'interface. Les suivants
+réutilisent cette installation. Ouvrir http://127.0.0.1:8247/studio si le navigateur
+ne s'ouvre pas. Garder la fenêtre ouverte; Ctrl+C arrête le studio. Après une mise
+à jour du code, utiliser `.\launch.cmd -Rebuild`.
+
+Prérequis: Python 3.12 ou uv, Node.js avec npm, FFmpeg et ffprobe dans le PATH.
+Les dépendances Python et JavaScript sont figées dans requirements-lock.txt et
+calliope-web/package-lock.json.
+
+## Services
+
+- Vidéo: compte Modal authentifié et déploiement `studio-ia-h3.render_clip`.
+  Le déploiement initial est déjà créé sur le compte de l'opérateur.
+  Pour le redéployer: `.venv\Scripts\python.exe -m modal deploy deploy\modal_h3.py`.
+- GPU: un L40S, volume existant `fasth3-models` monté en lecture seule.
+  ComfyUI démarre dans Modal. Aucun ComfyUI ni GPU local à démarrer.
+- Écriture IA et images IA: facultatives. Configurer leurs services compatibles
+  OpenAI dans le bouton Services. Sans ces services, coller un script, saisir les
+  prompts, importer des images ou générer directement les vidéos depuis du texte.
+
+## Premier film
+
+Cliquer sur Créer un projet exemple pour obtenir deux plans prêts à générer.
+Ouvrir un plan, générer une vidéo, la regarder, la choisir et l'approuver.
+Répéter pour le second plan, puis Exporter le film MP4. Une régénération conserve
+les anciennes prises et les choix. Tous les plans doivent être approuvés pour
+exporter. Les paramètres et la sélection sont figés pour chaque export.
+
+Les projets, prises et médias restent dans `calliope-backend/data/`. Sauvegarder
+ce dossier lorsque le studio est arrêté. Les réglages et clés restent dans
+`calliope-backend/calliope_config.json`, ignoré par Git.
+
+## Limites importantes de la V1
+
+- FastH3 produit des plans de 5 à 15 secondes sur sa grille de frames. La durée
+  réelle est affichée. Résolution native: 832x480, 480x832 ou 640x640; l'export
+  normalise le format, sans prétendre générer davantage de détails.
+- Image de départ et dernière image du plan précédent sont prises en charge.
+  Avec ces poids distillés, la référence reste expérimentale. Ref2VA, identité
+  garantie, voix clonées et continuité des latents audio/mouvement ne sont pas
+  intégrés. Le montage conserve les pistes natives et assemble par coupes.
+- Les services texte et images distants nécessitent leurs propres accès. Aucun
+  service de ce type n'était actif lors de la livraison; leurs réponses sont
+  vérifiées localement pour les accès et les erreurs. Aucun rendu distant n'est
+  revendiqué pour ces deux services.
+- La licence publique H3/FastH3 exclut notamment l'UE et requiert une autorisation
+  séparée pour les usages concernés. L'accès Modal ne confirme pas cette
+  autorisation. Voir [la licence H3](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE).
+
+Voir [la validation](docs/studio/VALIDATION.md) et
+[les sources réutilisées](THIRD_PARTY_NOTICES.md).
+
+## Documentation de la base Calliope
 
 Calliope is a local-first story-to-video studio. You type a story idea; Calliope drafts a storyline with beats, characters, and locations, writes a screenplay-faithful per-scene script, then **breaks each scene into shot clips** and generates one video per clip by driving your own ComfyUI install. When the clips are done, one click stitches them into a finished film with crossfades and matched loudness (ffmpeg). Everything runs on your machine: projects live in SQLite, media lives in folders, and no cloud service is involved beyond the LLM endpoint you point it at.
 
