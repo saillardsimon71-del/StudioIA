@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS studio_takes (
     request_json TEXT NOT NULL DEFAULT '{}',
     modal_call_id TEXT,
     submission_state TEXT NOT NULL DEFAULT 'new',
+    render_state_json TEXT NOT NULL DEFAULT '{}',
     output_path TEXT,
     metadata_json TEXT NOT NULL DEFAULT '{}',
     error TEXT,
@@ -62,6 +63,7 @@ CREATE TABLE IF NOT EXISTS studio_series (
     title TEXT NOT NULL,
     concept TEXT NOT NULL,
     bible_json TEXT NOT NULL DEFAULT '{}',
+    directing_profile_json TEXT NOT NULL DEFAULT '{}',
     aspect_ratio TEXT NOT NULL DEFAULT '9:16',
     language TEXT NOT NULL DEFAULT 'en',
     target_seconds INTEGER NOT NULL DEFAULT 65,
@@ -131,6 +133,15 @@ def migrate_studio(db_path):
         for column in ("trim_start_sec", "trim_end_sec"):
             if column not in columns:
                 conn.execute(f"ALTER TABLE studio_shots ADD COLUMN {column} REAL")
+        for table, column in (
+            ("studio_series", "directing_profile_json"),
+            ("studio_takes", "render_state_json"),
+        ):
+            columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if column not in columns:
+                conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT '{{}}'"
+                )
         conn.commit()
     finally:
         conn.close()

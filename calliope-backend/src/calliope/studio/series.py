@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 from calliope.config import settings
 from calliope.studio import service
+from calliope.studio.h3_prompt import directing_profile
 
 BIBLE_FIELDS = (
     "universe",
@@ -27,6 +28,9 @@ def require_series(conn, series_id):
         raise HTTPException(404, "Série introuvable.")
     result = dict(row)
     result["bible"] = {key: "" for key in BIBLE_FIELDS} | json.loads(result.pop("bible_json"))
+    result["directing_profile"] = directing_profile(
+        json.loads(result.pop("directing_profile_json"))
+    )
     return result
 
 
@@ -90,7 +94,7 @@ def create_series(data):
         cur = conn.execute(
             (
                 "INSERT INTO studio_series(title,concept,bible_json,aspect_ratio,language,t"
-                "arget_seconds) VALUES(?,?,?,?,?,?)"
+                "arget_seconds,directing_profile_json) VALUES(?,?,?,?,?,?,?)"
             ),
             (
                 data["title"].strip(),
@@ -99,6 +103,7 @@ def create_series(data):
                 data.get("aspect_ratio", "9:16"),
                 data.get("language", "en"),
                 data.get("target_seconds", 65),
+                json.dumps(directing_profile(data.get("directing_profile"))),
             ),
         )
         conn.commit()
@@ -109,6 +114,14 @@ def create_series(data):
 def update_series(series_id, data):
     with service.database() as conn:
         current = require_series(conn, series_id)
+        if "directing_profile" in data:
+            patch = data.pop("directing_profile")
+            base = {} if "preset" in patch else current["directing_profile"]
+            profile = directing_profile(base | patch)
+            conn.execute(
+                "UPDATE studio_series SET directing_profile_json=? WHERE id=?",
+                (json.dumps(profile), series_id),
+            )
         if "bible" in data:
             bible = current["bible"] | data.pop("bible")
             conn.execute(

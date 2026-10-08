@@ -5,6 +5,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from calliope.studio import audio, series, service
+from calliope.studio.h3_prompt import DirectingProfile
 
 router = APIRouter()
 
@@ -31,6 +32,7 @@ class SeriesCreate(BaseModel):
     language: str = Field(default="en", min_length=1, max_length=40)
     target_seconds: int = Field(default=65, ge=10, le=120)
     bible: BiblePatch = Field(default_factory=BiblePatch)
+    directing_profile: DirectingProfile = Field(default_factory=DirectingProfile)
 
     @field_validator("title", "concept", "language")
     @classmethod
@@ -48,6 +50,7 @@ class SeriesUpdate(BaseModel):
     language: str | None = Field(default=None, min_length=1, max_length=40)
     target_seconds: int | None = Field(default=None, ge=10, le=120)
     bible: BiblePatch | None = None
+    directing_profile: DirectingProfile | None = None
 
     @field_validator("title", "concept", "language")
     @classmethod

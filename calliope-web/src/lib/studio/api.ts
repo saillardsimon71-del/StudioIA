@@ -190,8 +190,21 @@ export interface Series {
   aspect_ratio: AspectRatio;
   language: string;
   target_seconds: number;
+  directing_profile: DirectingProfile;
   entities: SeriesEntity[];
   episodes: Episode[];
+}
+
+export interface DirectingProfile {
+  preset: "generalist" | "fast_dialogue_social_fiction";
+  framing: "story_driven" | "close_preferred";
+  camera: "scene_driven" | "static" | "subtle";
+  dialogue_density: "natural" | "brisk";
+  reactions: "story_driven" | "immediate";
+  active_listening: boolean;
+  continuity: boolean;
+  silences: "story_driven" | "brief";
+  music: "postproduction" | "none";
 }
 
 export interface StudioConfig {
@@ -280,6 +293,7 @@ export const studio = {
     aspect_ratio: AspectRatio;
     language: string;
     target_seconds: number;
+    directing_profile?: Partial<DirectingProfile>;
   }) => request<Series>("/series", "POST", payload),
   saveSeries: (id: number, payload: Partial<Series>) =>
     request<Series>(`/series/${id}`, "PATCH", payload),

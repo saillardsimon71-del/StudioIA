@@ -4,6 +4,7 @@ import re
 
 from calliope.agent.llm import generate_structured
 from calliope.studio.audio import AudioSettings
+from calliope.studio.h3_prompt import directing_profile, validate_h3_prose
 from calliope.studio.series import BIBLE_FIELDS
 
 
@@ -27,17 +28,29 @@ identical blocks. Never stretch a shot to fill time; the edit trims any dead
 footage by itself, so script ZERO dead time. A shot beyond 8 s needs a strong
 reason, never exceed 15 s.
 Alternate story actions and short dialogue; each shot must advance the story.
-Each shot shows at most ONE speaking character. Shot/reverse-shot for dialogue.
-Dialogue is plain speech, without speaker names, quotes or instructions. At most
-2.2 spoken words per second of that shot. No narrator, offscreen voices,
+Each rendered shot has ONE dominant speaking character, with listeners allowed.
+Several sentences by this speaker may belong to one continuous shot. Choose
+shot/reverse-shot or a two-shot when it helps the scene, never one sentence per cut.
+Dialogue is plain speech, without speaker names, quotes or instructions. Keep dialogue
+naturally speakable within the shot duration. Prefer short lines, but do not force
+an exact words-per-second ratio; the final take is validated from the generated audio.
+No narrator, offscreen voices,
 overlapping voices, prompt recitation or music inside the video. Prompts and
 still prompts in English; speech in the series language. Spell out who is
 visible, clothes, location, lighting, camera, expression and quiet native
 ambience. Keep the established visual style; no default cartoon or dystopian
-style. Prefer a stable medium close-up for dialogue, one natural voice with
-synchronized lips, then silence. The renderer only produces the image and the
-native dialogue; music, ambience, sound effects and pacing are handled in
-post-production, so do NOT ask for them in the video prompts.
+style. Apply the directing_profile supplied in the context: it controls realization,
+not story content. A generalist profile follows the scene. The social dialogue
+preset favors close framing, simple camera, brisk naturally spoken exchanges,
+immediate reactions and active listeners. Wider shots and full-body two-shots
+remain useful when the action needs them. Density comes from useful story beats,
+not artificially accelerated words or stretched durations. Keep canon masks,
+helmets and non-human designs; express speech and listening through fitting
+gestures and posture when a mouth is hidden. Preserve screen direction and
+eyelines. Pauses serve the scene, with brief motivated pauses in the social preset.
+Describe visual direction in English; only dialogue uses the series language.
+The renderer produces native dialogue with very faint location ambience.
+Music and additional ambience and sound effects are handled in post-production.
 Reuse a reference_key for the SAME character, location and camera composition;
 change it when the scene really needs a new composition. Existing characters
 and locations have canonical image references used by the image service.
@@ -52,7 +65,9 @@ Return ONLY JSON with these fields:
 "shots":[{"description":"story beat","prompt":"visual motion and native sound",
 "image_prompt":"still composition matching motion prompt", "dialogue":"plain speech",
 "speaker":"character key or empty", "character_keys":["key"], "location_key":"key or empty",
-"reference_key":"composition key", "duration_sec":3.4, "audio_mode":"native"}]}],
+"reference_key":"composition key", "duration_sec":3.4, "audio_mode":"native",
+"action":"simple physical action", "reaction":"listener or speaker reaction",
+"framing":"composition appropriate to the action", "camera":"simple camera behavior"}]}],
 "audio":{"enabled":true,"music":"none/neutral/tension/warm/playful/energetic/horror",
 "tempo":72,"music_gain_db":-28,"voice_gain_db":-5,"ducking":true,
 "ambience":"none/room/wind/rain/cafe/night/city/forest", "ambience_gain_db":-38,
@@ -67,6 +82,7 @@ silences right before a reveal — never under a spoken line. Summary and events
 must describe what the episode actually shows, not future intentions. Never
 claim that a cliffhanger has already been resolved."""
     public_context = {k: v for k, v in context.items() if k != "entities"}
+    public_context["directing_profile"] = directing_profile(context.get("directing_profile"))
     public_context["entities"] = [
         {k: e[k] for k in ("key", "kind", "name", "description")} for e in context["entities"]
     ]
@@ -136,10 +152,9 @@ def normalize_plan(result, context):
         ):
             raise ValueError("Une identité visuelle est incomplète.")
         known.add(entity["key"])
-    count = 0
     total_duration = 0
-    if not 1 <= len(result["scenes"]) <= 24:
-        raise ValueError("L'épisode doit contenir entre 1 et 24 scènes.")
+    if not result["scenes"]:
+        raise ValueError("L'épisode doit contenir au moins une scène.")
     for scene in result["scenes"]:
         if (
             not isinstance(scene, dict)
@@ -148,7 +163,6 @@ def normalize_plan(result, context):
         ):
             raise ValueError("Le scénario contient une scène vide.")
         for shot in scene["shots"]:
-            count += 1
             if (
                 not isinstance(shot, dict)
                 or not str(shot.get("prompt", "")).strip()
@@ -179,8 +193,6 @@ def normalize_plan(result, context):
                         " le scénario avant le rendu."
                     )
                 )
-            if len(dialogue.split()) > int(duration * 2.2):
-                raise ValueError("Une réplique est trop longue pour un dialogue intelligible.")
             keys = shot.get("character_keys") or []
             location = shot.get("location_key") or ""
             if (
@@ -195,24 +207,16 @@ def normalize_plan(result, context):
             total_duration += duration
             shot["dialogue"] = dialogue
             shot["audio_mode"] = "native" if dialogue else "silent"
-            shot["prompt"] = re.sub(r"<d>.*?</d>", "", str(shot["prompt"]), flags=re.S).strip()
-            shot["prompt"] += (
-                "\nOne continuous shot, preserve the reference identity, clothing, "
-                "lighting and screen direction. "
-            )
-            shot["prompt"] += (
-                (
-                    "Only the visible speaker speaks, a single natural voice, synchronized "
-                    "lip movement, then silence. "
-                )
-                if dialogue
-                else "No speech, quiet native ambience. "
-            )
-            shot["prompt"] += (
-                "No narration, no offscreen voices, no overlapping speech, no background music."
-            )
-    if count > 40:
-        raise ValueError("Limitez un épisode à 40 plans.")
+            shot["prompt"] = re.sub(
+                r"<d>.*?</d>", "", str(shot["prompt"]), flags=re.S | re.I
+            ).strip()
+            for field in ("action", "reaction", "framing", "camera"):
+                if field in shot and (
+                    not isinstance(shot[field], str) or len(shot[field]) > 5000
+                ):
+                    raise ValueError("Une directive de réalisation est invalide.")
+                if field in shot:
+                    validate_h3_prose(shot[field])
     if "target_seconds" in context:
         target = float(context["target_seconds"])
         # Le montage coupe mais n'étire jamais : un scénario manifestement plus
@@ -232,6 +236,8 @@ def normalize_plan(result, context):
                 "répliques, sans étirer les plans."
             )
     result["audio"] = AudioSettings.model_validate(result.get("audio") or {}).model_dump()
+    if directing_profile(context.get("directing_profile"))["music"] == "none":
+        result["audio"]["music"] = "none"
     result["bible"] = {
         key: str(value) for key, value in (result.get("bible") or {}).items() if key in BIBLE_FIELDS
     }

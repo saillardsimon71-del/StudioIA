@@ -8,10 +8,12 @@
     errorMessage,
     statusLabel,
     type Series,
+    type DirectingProfile,
   } from "$lib/studio/api";
   let { data }: { data: { id: number } } = $props();
   let item = $state<Series | null>(null);
   let draft = $state<Record<string, string>>({});
+  let profile = $state<DirectingProfile | null>(null);
   let idea = $state("");
   let objective = $state("");
   let error = $state("");
@@ -63,7 +65,10 @@
     try {
       const value = await studio.getSeries(data.id);
       item = value;
-      if (reset) draft = { ...value.bible };
+      if (reset) {
+        draft = { ...value.bible };
+        profile = { ...value.directing_profile };
+      }
     } catch (err) {
       error = errorMessage(err);
     }
@@ -105,6 +110,7 @@
         language: item.language,
         aspect_ratio: item.aspect_ratio,
         target_seconds: item.target_seconds,
+        ...(profile ? { directing_profile: profile } : {}),
       });
       await load(true);
       notice = "Contexte enregistré pour les prochains épisodes.";
@@ -113,6 +119,21 @@
     } finally {
       busy = "";
     }
+  }
+  function chooseProfile(event: Event) {
+    const preset = (event.currentTarget as HTMLSelectElement).value;
+    const social = preset === "fast_dialogue_social_fiction";
+    profile = {
+      preset: social ? "fast_dialogue_social_fiction" : "generalist",
+      framing: social ? "close_preferred" : "story_driven",
+      camera: social ? "subtle" : "scene_driven",
+      dialogue_density: social ? "brisk" : "natural",
+      reactions: social ? "immediate" : "story_driven",
+      active_listening: true,
+      continuity: true,
+      silences: social ? "brief" : "story_driven",
+      music: "postproduction",
+    };
   }
   async function reference(event: Event, entityId: number) {
     const input = event.currentTarget as HTMLInputElement;
@@ -286,6 +307,45 @@
             ></label
           >
         </div>
+        {#if profile}
+          <fieldset class="stack">
+            <legend>Réalisation</legend>
+            <label>Profil<select value={profile.preset} onchange={chooseProfile}>
+              <option value="generalist">Généraliste</option>
+              <option value="fast_dialogue_social_fiction">Fiction sociale à dialogues rapides</option>
+            </select></label>
+            <p class="hint">Le profil guide les cadrages, les échanges et les réactions des prochains épisodes. Les plans larges restent possibles quand l'action en a besoin.</p>
+            <div class="columns">
+              <label>Cadrages<select bind:value={profile.framing}>
+                <option value="story_driven">Selon la scène</option>
+                <option value="close_preferred">Plutôt proches</option>
+              </select></label>
+              <label>Caméra<select bind:value={profile.camera}>
+                <option value="scene_driven">Selon la scène</option>
+                <option value="static">Fixe</option>
+                <option value="subtle">Mouvements discrets</option>
+              </select></label>
+              <label>Dialogue<select bind:value={profile.dialogue_density}>
+                <option value="natural">Rythme naturel</option>
+                <option value="brisk">Échanges vifs</option>
+              </select></label>
+              <label>Réactions<select bind:value={profile.reactions}>
+                <option value="story_driven">Selon la scène</option>
+                <option value="immediate">Immédiates</option>
+              </select></label>
+              <label>Silences<select bind:value={profile.silences}>
+                <option value="story_driven">Selon l'émotion</option>
+                <option value="brief">Courts et motivés</option>
+              </select></label>
+              <label>Musique<select bind:value={profile.music}>
+                <option value="postproduction">Choisie au montage</option>
+                <option value="none">Aucune</option>
+              </select></label>
+            </div>
+            <label><input type="checkbox" bind:checked={profile.active_listening} /> Personnages attentifs et réactifs pendant l'écoute</label>
+            <label><input type="checkbox" bind:checked={profile.continuity} /> Préserver les directions des regards, les tenues et la lumière</label>
+          </fieldset>
+        {/if}
         {#each fields as [key, label]}<label
             >{label}<textarea bind:value={draft[key]} rows="3"
             ></textarea></label
