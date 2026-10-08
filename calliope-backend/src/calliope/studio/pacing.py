@@ -28,16 +28,12 @@ POST_ROLL_SEC = 0.35
 VOICE_MIN_SEC = 0.06
 MERGE_GAP_SEC = 0.35
 
-# Détection de voix par seuil de silence (analyse locale FFmpeg, aucun GPU).
+# Activité sonore par seuil de silence (ce n'est pas une reconnaissance de parole).
 SILENCE_DB = -33.0
 MIN_SILENCE_SEC = 0.28
 
 # Validation tolérante des dialogues : seuils d'échecs manifestes uniquement.
-WORDS_PER_SEC = 2.2
 MIN_HEARD_SEC = 0.15
-MISSING_RATIO = 0.4
-EXTRA_RATIO = 2.3
-EXTRA_SLACK_SEC = 2.5
 SILENT_FLOOR_DB = -48.0
 
 _PROCESS_OPTIONS = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
@@ -63,7 +59,7 @@ def floor_grid(seconds: float) -> float:
 
 
 def detect_voice(path, probe_sec: float = 0.0) -> dict | None:
-    """Intervalles de parole et niveau max d'une prise, mesurés localement.
+    """Intervalles d'activité sonore et niveau max, mesurés localement.
 
     Retourne None quand la mesure est impossible : dans le doute, jamais de
     rejet (principe permissif). Retourne sinon {"intervals": [(début, fin)],
@@ -178,35 +174,39 @@ def explicit_window(trim_start, trim_end, probe_sec) -> tuple[float, float]:
     return start, end
 
 
-def assess_dialogue(dialogue, beat_sec, probe_sec, voice) -> dict:
-    """Verdict tolérant sur la piste native d'une prise à dialogue.
+def speech_window(probe_sec, speech_intervals, post_roll_sec=POST_ROLL_SEC):
+    probe = max(0.0, float(probe_sec))
+    segments = list(speech_intervals or [])
+    if not segments:
+        return 0.0, probe
+    start = max(0.0, floor_grid(min(float(b) for b, _ in segments) - PRE_ROLL_SEC))
+    end = min(probe, math.ceil(
+        (max(float(e) for _, e in segments) + max(0.0, float(post_roll_sec))) * GRID_FPS
+    ) / GRID_FPS)
+    if start >= end:
+        return 0.0, probe
+    return start, end
 
-    Ne signale que les échecs manifestes : réplique attendue absente, parole
-    largement plus longue que la réplique écrite (invention probable) ou audio
-    inexploitable. Tout le reste (début tardif, silence court, images de trop,
-    léger décalage lèvres/voix) reste accepté et corrigé par le trim.
-    """
+
+def assess_dialogue(dialogue, beat_sec, probe_sec, voice) -> dict:
+    """Audibilité seulement; le contenu des mots exige une transcription."""
     words = len(str(dialogue or "").split())
     if not words:
         return {"status": "ok", "reason": ""}
     if voice is None:
-        return {"status": "unknown", "reason": ""}
-    probe = max(0.0, float(probe_sec))
-    expected = min(words / WORDS_PER_SEC, max(0.5, probe * 0.85))
+        return {"status": "unknown", "reason": "Mesure audio indisponible."}
     heard = sum(end - start for start, end in voice["intervals"])
     if voice.get("max_db") is not None and voice["max_db"] < SILENT_FLOOR_DB:
         return {
             "status": "inaudible",
             "reason": "Audio inexploitable : aucun niveau sonore mesurable.",
         }
-    if heard < max(MIN_HEARD_SEC, expected * MISSING_RATIO):
+    if heard < MIN_HEARD_SEC:
         return {
             "status": "missing",
             "reason": "Réplique attendue absente de la piste audio.",
         }
-    if heard > max(expected * EXTRA_RATIO, expected + EXTRA_SLACK_SEC):
-        return {
-            "status": "extra",
-            "reason": "Parole largement plus longue que la réplique écrite.",
-        }
-    return {"status": "ok", "reason": ""}
+    return {
+        "status": "unknown",
+        "reason": "Activité sonore mesurée; mots non vérifiés sans transcription.",
+    }

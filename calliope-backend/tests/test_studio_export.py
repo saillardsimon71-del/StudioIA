@@ -203,6 +203,99 @@ async def test_missing_clip_leaves_destination_untouched(export_module, tmp_path
     assert list(tmp_path.iterdir()) == [destination]
 
 
+@pytest.mark.parametrize("target", [65, 0.1])
+async def test_target_rejects_short_or_long_useful_windows_before_publication(
+    export_module, media, tmp_path, target,
+):
+    native, _ = media
+    destination = tmp_path / "existing.mp4"
+    destination.write_bytes(b"previous film")
+    snapshot = snapshot_for(*[(native, 5, "silent")] * 13)
+    snapshot["target_seconds"] = target
+    with pytest.raises(ValueError, match="Durée.*cible"):
+        await export_module.assemble(snapshot, destination)
+    assert destination.read_bytes() == b"previous film"
+    assert list(tmp_path.iterdir()) == [destination]
+
+
+async def test_export_checks_real_mp4_duration_before_replacing_destination(
+    export_module, media, tmp_path, monkeypatch,
+):
+    native, _ = media
+    replacement = tmp_path / "incorrect-encoding.mp4"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+        "color=c=red:s=160x90:r=24:d=12", "-c:v", "libx264", "-preset", "ultrafast",
+        "-pix_fmt", "yuv420p", str(replacement),
+    ], check=True, capture_output=True)
+    original_run = export_module._run_ffmpeg
+
+    async def encode(*args):
+        await original_run(*args)
+        if args[4] == "Assemblage du film":
+            shutil.copyfile(replacement, args[0][-1])
+
+    monkeypatch.setattr(export_module, "_run_ffmpeg", encode)
+    monkeypatch.setitem(export_module._SIZES, "1:1", (160, 160))
+    snapshot = snapshot_for((native, 1.25, "silent"))
+    snapshot["target_seconds"] = 4
+    destination = tmp_path / "existing.mp4"
+    destination.write_bytes(b"previous film")
+    with pytest.raises(ValueError, match="Durée.*cible"):
+        await export_module.assemble(snapshot, destination)
+    assert destination.read_bytes() == b"previous film"
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "existing.mp4", "incorrect-encoding.mp4"
+    ]
+
+
+async def test_target_accepts_actual_export_in_tolerance(export_module, media, tmp_path):
+    native, _ = media
+    snapshot = snapshot_for((native, 1.25, "silent"))
+    snapshot["target_seconds"] = 4
+    result = await export_module.assemble(snapshot, tmp_path / "film.mp4")
+    assert result["duration_sec"] == pytest.approx(1.25, abs=0.05)
+
+
+async def test_imported_music_honors_hold_at_the_same_time(
+    export_module, tmp_path, monkeypatch,
+):
+    from calliope.studio.audio import mix_command
+
+    source = tmp_path / "silent.mp4"
+    music = tmp_path / "external.wav"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+        "color=c=blue:s=160x90:r=24:d=4", "-f", "lavfi", "-i",
+        "anullsrc=r=48000:cl=stereo", "-t", "4", "-c:v", "libx264", "-c:a", "aac",
+        str(source),
+    ], check=True, capture_output=True)
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+        "sine=frequency=500:duration=4", str(music),
+    ], check=True, capture_output=True)
+    config = {"music_path": str(music), "music": "none", "music_gain_db": 0,
+              "voice_gain_db": 0, "ducking": False}
+    outputs = []
+    for name, holds in [("plain", []), ("hold", [{
+        "shot_index": 0, "at_sec": 1, "duration_sec": 1, "drop_db": -36,
+    }])]:
+        directory = tmp_path / name
+        directory.mkdir()
+        output = directory / "mixed.mp4"
+        command = mix_command(
+            ["ffmpeg", "-v", "error", "-y"], source, config | {"holds": holds},
+            [4], directory, output,
+        )
+        subprocess.run(command, check=True, capture_output=True)
+        outputs.append(output)
+    plain, held = outputs
+    assert audio_rms(held, 1.2, 0.3) < audio_rms(plain, 1.2, 0.3) * 0.04
+    assert audio_rms(held, 2.1, 0.2) == pytest.approx(
+        audio_rms(plain, 2.1, 0.2), rel=0.02
+    )
+
+
 @pytest.mark.parametrize("existing", [False, True])
 async def test_cancel_stops_encoding_and_removes_partial_files(
     export_module, media, tmp_path, existing,

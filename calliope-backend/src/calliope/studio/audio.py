@@ -359,11 +359,30 @@ def mix_command(base, source, config, durations, directory, ready):
         str(fx_path),
     ]
     total = sum(durations)
+    offsets = [sum(durations[:i]) for i in range(len(durations))]
+    imported_holds = ""
+    if config.get("music_path"):
+        for hold in config.get("holds", []):
+            if hold["shot_index"] >= len(durations):
+                continue
+            start = quantize(
+                offsets[hold["shot_index"]]
+                + min(hold["at_sec"], durations[hold["shot_index"]])
+            )
+            end = min(total, start + hold["duration_sec"])
+            if start >= end:
+                continue
+            ramp = min(0.03, (end - start) / 4)
+            floor = 10 ** (hold["drop_db"] / 20)
+            imported_holds += (
+                f",volume='1-{1 - floor:.9f}*max(0,min(1,min("
+                f"(t-{start:.9f})/{ramp:.9f},({end:.9f}-t)/{ramp:.9f})))':eval=frame"
+            )
     filters = [
         f"[0:a]volume={config.get('voice_gain_db', -5)}dB,asplit=2[voice][key]",
         f"[1:a]aresample=48000,atrim=duration={total:.9f},asetpts=PTS-STARTPTS,"
         f"volume={config.get('music_gain_db', -28)}dB,afade=t=in:d=1,"
-        f"afade=t=out:st={max(0, total - 1.5):.9f}:d=1.5[bed]",
+        f"afade=t=out:st={max(0, total - 1.5):.9f}:d=1.5{imported_holds}[bed]",
     ]
     if config.get("ducking", True):
         filters.append(
@@ -372,7 +391,6 @@ def mix_command(base, source, config, durations, directory, ready):
     else:
         filters.extend(["[key]anullsink", "[bed]anull[ducked]"])
     inputs = ["[voice]", "[ducked]", "[2:a]"]
-    offsets = [sum(durations[:i]) for i in range(len(durations))]
     for cue in config.get("sfx", []):
         if not cue.get("path") or cue["shot_index"] >= len(durations):
             continue

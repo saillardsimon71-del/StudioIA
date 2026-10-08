@@ -113,19 +113,17 @@ def test_pack_of_free_durations_hits_the_65_second_format():
     assert len(close["scenes"][0]["shots"]) == 12
 
 
-def test_planner_rejects_unfilmable_durations_and_bloated_episodes():
+def test_planner_rejects_unfilmable_durations():
     with pytest.raises(ValueError, match="entre 1 et 15"):
         normalize(beat_plan([0.4], dialogue="", speaker="", character_keys=[]))
     with pytest.raises(ValueError, match="entre 1 et 15"):
         normalize(beat_plan([20.0], dialogue="", speaker="", character_keys=[]))
-    with pytest.raises(ValueError, match="40 plans"):
-        normalize(beat_plan([1.5] * 41, dialogue="", speaker="", character_keys=[]))
+    assert len(normalize(beat_plan([1.5] * 41))["scenes"][0]["shots"]) == 41
 
 
-def test_a_line_must_fit_its_own_seconds_not_a_fixed_block():
-    too_long = beat_plan([1.6], dialogue=" ".join(["mot"] * 5))
-    with pytest.raises(ValueError, match="trop longue"):
-        normalize(too_long)
+def test_planner_does_not_infer_speech_speed_from_word_count():
+    result = normalize(beat_plan([1.6], dialogue=" ".join(["mot"] * 5)))
+    assert result["scenes"][0]["shots"][0]["dialogue"] == "mot mot mot mot mot"
     fits = normalize(beat_plan([2.1], dialogue=" ".join(["mot"] * 4)))
     assert fits["scenes"][0]["shots"][0]["duration_sec"] == 2.1
 
@@ -184,13 +182,13 @@ def test_dialogue_validation_tolerates_small_imperfections():
     expected_window = 3 / 2.2
     # Début de parole légèrement tardif : toléré (le trim rattrape).
     voice = {"intervals": [(1.2, 2.6)], "max_db": -12.0}
-    assert pacing.assess_dialogue(dialogue, 1.6, 5.17, voice)["status"] == "ok"
+    assert pacing.assess_dialogue(dialogue, 1.6, 5.17, voice)["status"] == "unknown"
     # Silence court avant la réplique : toléré, jamais un motif de rejet.
     voice = {"intervals": [(0.0, 1.4)], "max_db": -14.0}
-    assert pacing.assess_dialogue(dialogue, 1.6, 5.17, voice)["status"] == "ok"
+    assert pacing.assess_dialogue(dialogue, 1.6, 5.17, voice)["status"] == "unknown"
     # Quelques frames utiles en plus : toléré.
     voice = {"intervals": [(0.1, 1.7)], "max_db": -14.0}
-    assert pacing.assess_dialogue(dialogue, 1.6, 5.17, voice)["status"] == "ok"
+    assert pacing.assess_dialogue(dialogue, 1.6, 5.17, voice)["status"] == "unknown"
     assert expected_window > 1
     # Mesure impossible : permissif, on ne bloque pas sur du doute.
     assert pacing.assess_dialogue(dialogue, 1.6, 5.17, None)["status"] == "unknown"
@@ -203,7 +201,188 @@ def test_dialogue_validation_flags_only_manifest_failures():
     dead_audio = {"intervals": [], "max_db": -60.0}
     assert pacing.assess_dialogue(dialogue, 1.6, 5.17, dead_audio)["status"] == "inaudible"
     invented = {"intervals": [(0.0, 6.0)], "max_db": -12.0}
-    assert pacing.assess_dialogue(dialogue, 1.6, 7.2, invented)["status"] == "extra"
+    assert pacing.assess_dialogue(dialogue, 1.6, 7.2, invented)["status"] == "unknown"
+
+
+def test_speech_window_uses_recognized_timings_without_a_minimum_beat():
+    assert pacing.speech_window(7, None) == (0, 7)
+    assert pacing.speech_window(7, []) == (0, 7)
+    start, end = pacing.speech_window(7, [(2.02, 3.2)])
+    assert start == pytest.approx(1.7916667)
+    assert end == pytest.approx(3.5833333)
+    assert pacing.speech_window(0.4, [(0, 0.4)]) == (0, 0.4)
+
+
+@pytest.mark.parametrize("expected,actual,status", [
+    ("Je ferme la porte.", "je ferme la porte!", "ok"),
+    ("Pas maintenant : la porte se ferme.", "la porte se ferme", "missing"),
+    ("Attention : la porte se ferme.", "Attention, la porte se ferme!", "ok"),
+    ("Nous allons ouvrir cette porte maintenant", "Nous allons ouvrir la porte maintenant", "ok"),
+    ("Un deux trois", "1 2 3", "ok"),
+    ("Il reste 3 minutes", "Il reste trois minutes", "ok"),
+    ("Il reste 3 minutes", "Il reste 9 minutes", "missing"),
+    ("Je ne veux pas partir", "Je veux partir", "missing"),
+    ("La porte est fermée", "", "missing"),
+    ("La porte est fermée", "Demain il fera beau sur la côte", "missing"),
+    ("La porte est fermée", "La porte est fermée et demain nous irons voir le château", "extra"),
+])
+def test_transcript_checks_content_tolerantly(expected, actual, status):
+    from calliope.studio.transcription import assess_transcript
+
+    assert assess_transcript(expected, {"status": "ok", "text": actual})["status"] == status
+
+
+def test_uncertain_asr_never_proves_a_dialogue_failure():
+    from calliope.studio.transcription import assess_transcript
+
+    assert assess_transcript("Ouvre la porte", {
+        "status": "unknown", "text": "Il fera beau", "reason": "ASR incertain"
+    })["status"] == "unknown"
+
+
+def test_transcription_never_downloads_an_unconfigured_checkpoint(tmp_path):
+    from calliope.studio.transcription import transcribe_dialogue
+
+    assert transcribe_dialogue(tmp_path / "audio.wav", None, "fr")["status"] == "unknown"
+    assert transcribe_dialogue(tmp_path / "audio.wav", tmp_path / "missing.pt", "fr")[
+        "status"
+    ] == "unknown"
+
+
+def test_local_transcription_reuses_model_serializes_and_rejects_uncertainty(
+    tmp_path, monkeypatch,
+):
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+
+    from calliope.studio import transcription
+
+    checkpoint = tmp_path / "local.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    source = tmp_path / "native.mp4"
+    source.write_bytes(b"audio")
+    active, maximum, loads = 0, 0, []
+    state_lock = threading.Lock()
+
+    class Model:
+        def transcribe(self, path, **options):
+            nonlocal active, maximum
+            assert path == str(source)
+            assert options == {"fp16": False, "word_timestamps": True, "language": "fr"}
+            with state_lock:
+                active += 1
+                maximum = max(maximum, active)
+            time.sleep(0.03)
+            with state_lock:
+                active -= 1
+            return {"text": "Bonjour", "segments": [{
+                "start": 1.0, "end": 2.0, "text": "Bonjour", "avg_logprob": -0.2,
+                "no_speech_prob": 0.01, "compression_ratio": 1.1,
+                "words": [{"word": "Bonjour", "start": 1.1, "end": 1.8,
+                           "probability": 0.95}],
+            }]}
+
+    def load(path, device):
+        assert path == str(checkpoint.resolve()) and device == "cpu"
+        loads.append(path)
+        return Model()
+
+    import sys
+    monkeypatch.setitem(sys.modules, "whisper", SimpleNamespace(load_model=load))
+    monkeypatch.setattr(transcription, "_model", None)
+    monkeypatch.setattr(transcription, "_checkpoint", None)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(
+            lambda _: transcription.transcribe_dialogue(source, checkpoint, "fr"), range(2)
+        ))
+    assert all(result["status"] == "ok" for result in results)
+    assert results[0]["speech_intervals"] == [[1.1, 1.8]]
+    assert maximum == 1 and len(loads) == 1
+    monkeypatch.setattr(transcription._model, "transcribe", lambda *a, **k: {
+        "text": "Bonjour le Maddy", "segments": [{
+            "start": 1, "end": 2, "text": "Bonjour le Maddy", "avg_logprob": -0.2,
+            "no_speech_prob": 0.01, "compression_ratio": 1.1,
+            "words": [{"word": "Bonjour", "start": 1.1, "end": 1.4, "probability": 0.95},
+                      {"word": "le", "start": 1.45, "end": 1.45, "probability": 0.9},
+                      {"word": "Maddy", "start": 1.5, "end": 1.8, "probability": 0.3}],
+        }],
+    })
+    localized = transcription.transcribe_dialogue(source, checkpoint, "fr")
+    assert localized["status"] == "ok"
+    assert localized["speech_intervals"] == [[1.1, 1.8]]
+    assert transcription.assess_transcript("Bonjour la Marie", localized)["status"] == "unknown"
+    monkeypatch.setattr(transcription._model, "transcribe", lambda *a, **k: {
+        "text": "Bonjour", "segments": [{"start": 0, "end": 1, "text": "Bonjour",
+        "avg_logprob": -1.4, "no_speech_prob": 0.8, "compression_ratio": 3}],
+    })
+    uncertain = transcription.transcribe_dialogue(source, checkpoint, "fr")
+    assert uncertain["status"] == "unknown" and uncertain["speech_intervals"] == []
+
+
+def test_low_word_confidence_does_not_confirm_a_changed_number_or_major_divergence():
+    from calliope.studio.transcription import assess_transcript
+
+    transcript = {"status": "ok", "text": "Il reste 9 minutes", "segments": [{
+        "words": [{"word": word, "probability": probability}
+                  for word, probability in [("Il", 0.9), ("reste", 0.9),
+                                            ("9", 0.3), ("minutes", 0.9)]]
+    }]}
+    assert assess_transcript("Il reste 3 minutes", transcript)["status"] == "unknown"
+    transcript = {"status": "ok", "text": "Demain il fera beau", "segments": [{
+        "words": [{"word": word, "probability": 0.3}
+                  for word in ["Demain", "il", "fera", "beau"]]
+    }]}
+    assert assess_transcript("La porte est fermée", transcript)["status"] == "unknown"
+
+
+@pytest.mark.parametrize("expected,actual,weak_words,status", [
+    ("Il reste 3 minutes avant le départ", "Il reste minutes avant le départ", [], "missing"),
+    ("Il reste 3 minutes avant le départ", "Il reste minutes avant le départ",
+     ["minutes"], "unknown"),
+    ("Je veux que tu viennes à la maison demain",
+     "Je ne veux plus que tu viennes à la maison demain", [], "missing"),
+    ("Je veux que tu viennes à la maison demain",
+     "Je ne veux plus que tu viennes à la maison demain", ["plus"], "unknown"),
+    ("Je veux que tu viennes à la maison demain",
+     "Je ne veux plus que tu viennes à la maison demain", ["ne"], "unknown"),
+    ("Je ne veux plus que tu viennes à la maison demain",
+     "Je veux que tu viennes à la maison demain", [], "missing"),
+    ("Je veux que tu viennes à la maison demain",
+     "Je veux plus que tu viennes à la maison demain", [], "ok"),
+    ("Je ne veux pas de sucre maintenant",
+     "Je ne veux pas plus de sucre maintenant", [], "ok"),
+])
+def test_missing_number_and_ne_plus_use_local_asr_confidence(
+    expected, actual, weak_words, status,
+):
+    from calliope.studio.transcription import assess_transcript
+
+    transcript = {"status": "ok", "text": actual, "segments": [{
+        "words": [{"word": word, "probability": 0.3 if word in weak_words else 0.95}
+                  for word in actual.split()]
+    }]}
+    assert assess_transcript(expected, transcript)["status"] == status
+
+
+@pytest.mark.parametrize("expected,actual,status", [
+    ("Je veux ouvrir une porte maintenant", "Je veux ouvrir la porte maintenant", "ok"),
+    ("Je veux ouvrir un portail maintenant", "Je veux ouvrir le portail maintenant", "ok"),
+    ("Il reste une minute avant le départ", "Il reste 1 minute avant départ", "ok"),
+    ("Il reste 3 minutes avant le départ", "Il reste une minute avant le départ", "unknown"),
+    ("une", "3", "unknown"),
+    ("Il reste 3 minutes avant le départ", "Il reste 90 minutes avant le départ", "missing"),
+    ("Il reste 3 minutes pour ouvrir une porte", "Il reste minutes pour ouvrir la porte",
+     "missing"),
+])
+def test_ambiguous_articles_do_not_confirm_a_numeric_failure(expected, actual, status):
+    from calliope.studio.transcription import assess_transcript
+
+    transcript = {"status": "ok", "text": actual, "segments": [{
+        "words": [{"word": word, "probability": 0.95} for word in actual.split()]
+    }]}
+    assert assess_transcript(expected, transcript)["status"] == status
 
 
 @requires_ffmpeg
@@ -353,7 +532,7 @@ async def test_export_honours_explicit_trim_points(tmp_path):
 
 
 @requires_ffmpeg
-async def test_dialogue_trim_stays_on_the_spoken_window(tmp_path):
+async def test_untranscribed_dialogue_keeps_the_entire_take(tmp_path):
     from calliope.studio import export
 
     clip = make_clip(tmp_path / "dialogue.mp4", 7.0, tone_windows=[(2.02, 3.2)])
@@ -370,9 +549,8 @@ async def test_dialogue_trim_stays_on_the_spoken_window(tmp_path):
     )
     destination = tmp_path / "film.mp4"
     result = await export.assemble(snapshot, destination)
-    assert result["duration_sec"] == pytest.approx(pacing.quantize(1.6), abs=0.05)
-    # La parole détectée à 2,02 s dans la prise arrive au début du segment.
-    assert audio_rms(destination, 0.15, 0.6) > 500
+    assert result["duration_sec"] == pytest.approx(7, abs=0.05)
+    assert audio_rms(destination, 2.2, 0.6) > 500
 
 
 # ---------------------------------------------------------------- sound design

@@ -110,15 +110,34 @@ def _window_for(clip, probe):
     if (
         clip.get("audio_mode") == "native"
         and str(clip.get("dialogue") or "").strip()
-        and probe.get("has_audio")
     ):
-        measured = pacing.detect_voice(clip["path"], probe_sec)
-        if measured is None:
-            # Mesure impossible : ne pas couper à l'aveugle une prise à
-            # dialogue. La prise reste entière plutôt qu'un mauvais trim.
+        transcript = clip.get("transcript") or {}
+        if transcript.get("status") != "ok" or not transcript.get("speech_intervals"):
             return 0.0, probe_sec
-        return pacing.useful_window(beat, probe_sec, measured["intervals"])
+        if clip.get("trim_to_speech"):
+            return pacing.speech_window(
+                probe_sec, transcript["speech_intervals"],
+                clip.get("post_roll_sec", pacing.POST_ROLL_SEC),
+            )
+        return pacing.useful_window(beat, probe_sec, transcript["speech_intervals"])
     return pacing.useful_window(beat, probe_sec, None)
+
+
+def _check_target(duration, target, stage):
+    if target is None:
+        return
+    try:
+        target = float(target)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Durée cible invalide pour l'export.") from exc
+    if not math.isfinite(target) or target <= 0:
+        raise ValueError("Durée cible invalide pour l'export.")
+    if not target - 3 - 1e-6 <= duration <= target + 5 + 1e-6:
+        raise ValueError(
+            f"Durée {stage}: {duration:.2f} s pour une cible de {target:.2f} s "
+            f"(fenêtre autorisée {max(0, target - 3):.2f}-{target + 5:.2f} s). "
+            "Le contenu utile doit être ajusté avant publication; aucun padding n'est ajouté."
+        )
 
 
 async def _run_ffmpeg(command, duration, start, end, message, callback, cancel_check):
@@ -200,6 +219,7 @@ async def assemble(
     width, height = size
     durations = [max(0.0, end - start) for start, end in windows]
     total_duration = sum(durations)
+    _check_target(total_duration, frozen.get("target_seconds"), "des fenêtres utiles")
     base = [ffmpeg, "-v", "error", "-nostdin", "-nostats", "-progress", "pipe:1", "-y"]
     with tempfile.TemporaryDirectory(prefix="studio-export-", dir=destination.parent) as temporary:
         work = Path(temporary)
@@ -310,6 +330,7 @@ async def assemble(
             )
             ready = mixed
         metadata = await asyncio.to_thread(inspect_media, ready)
+        _check_target(metadata["duration_sec"], frozen.get("target_seconds"), "du MP4 réel")
         metadata.pop("has_video")
         metadata["clip_count"] = len(clips)
         metadata["cuts_sec"] = [
