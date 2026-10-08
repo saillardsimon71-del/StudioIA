@@ -13,6 +13,7 @@ from PIL import Image, UnidentifiedImageError
 
 from calliope.engines.h3_graph import (
     H3_FPS,
+    H3_PROGRESS_TIMEOUT_SEC,
     H3_SIZES,
     H3_STEPS,
     frames_for_duration,
@@ -85,6 +86,7 @@ def build_request(
     image_path: Path | None = None,
     audio_mode: str = "native",
     previous_video_path: Path | None = None,
+    trace_id: str | None = None,
 ) -> dict:
     if aspect_ratio not in H3_SIZES:
         raise ValueError("Le format doit être 16:9, 9:16 ou 1:1.")
@@ -107,6 +109,8 @@ def build_request(
         "audio_mode": audio_mode,
         "continuity_mode": "none",
     }
+    if trace_id is not None:
+        payload["trace_id"] = trace_id
     validate_request(payload)
     if image_path is not None:
         payload["image_base64"] = base64.b64encode(_image_png(Path(image_path))).decode("ascii")
@@ -170,3 +174,13 @@ class ModalH3Engine:
         modal = _load_modal()
         modal.FunctionCall.from_id(call_id).cancel(terminate_containers=True)
         self._results.pop(call_id, None)
+
+    def progress(self, trace_id: str) -> dict | None:
+        try:
+            store = _load_modal().Dict.from_name("studio-ia-h3-progress")
+            snapshot = asyncio.run(asyncio.wait_for(
+                store.get.aio(trace_id), timeout=H3_PROGRESS_TIMEOUT_SEC,
+            ))
+            return snapshot if isinstance(snapshot, dict) else None
+        except Exception:
+            return None

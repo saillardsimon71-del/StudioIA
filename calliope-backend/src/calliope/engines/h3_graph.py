@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import math
+import re
 
 H3_COMFYUI_REVISION = "d49e888586dd8ae012c0667b33466b815fee07f7"
 H3_VOLUME_NAME = "fasth3-models"
@@ -14,6 +15,7 @@ H3_MODEL_FILES = {
 H3_SIZES = {"16:9": (832, 480), "9:16": (480, 832), "1:1": (640, 640)}
 H3_FPS = 24
 H3_STEPS = 8
+H3_PROGRESS_TIMEOUT_SEC = 3
 H3_MIN_FRAMES = 124
 H3_MAX_FRAMES = 362
 
@@ -46,8 +48,13 @@ def validate_request(payload: dict) -> None:
     }
     if not isinstance(payload, dict) or not required <= payload.keys():
         raise ValueError("Requête H3 incomplète.")
-    if payload.keys() - required - {"image_base64"}:
+    if payload.keys() - required - {"image_base64", "trace_id"}:
         raise ValueError("La requête H3 contient des paramètres inconnus.")
+    if "trace_id" in payload and (
+        not isinstance(payload["trace_id"], str)
+        or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", payload["trace_id"])
+    ):
+        raise ValueError("Identifiant de trace H3 invalide.")
     if payload["contract_version"] != 1:
         raise ValueError("Version du contrat H3 invalide.")
     if not isinstance(payload["prompt"], str) or not payload["prompt"].strip():

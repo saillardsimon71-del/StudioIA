@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from PIL import Image
@@ -378,3 +379,50 @@ async def run():
 asyncio.run(run())
 """
     subprocess.run([sys.executable, "-c", code], check=True, capture_output=True, timeout=30)
+
+
+def test_trace_id_is_optional_and_cannot_inject_workflow():
+    from calliope.engines.h3_graph import validate_request
+
+    assert "trace_id" not in request()
+    payload = request(trace_id="take-42")
+    assert payload["trace_id"] == "take-42"
+    validate_request(payload)
+    for value in ("", "a" * 129, "secret\ntext", 42):
+        with pytest.raises(ValueError):
+            validate_request({**payload, "trace_id": value})
+    with pytest.raises(ValueError):
+        validate_request({**payload, "workflow": {}})
+
+
+def test_progress_retrieves_named_dict_without_submission(monkeypatch):
+    from calliope.engines.modal_h3 import ModalH3Engine
+
+    snapshot = {"trace_id": "take-42", "phase": "LOADING_MODEL", "events": []}
+    modal = SimpleNamespace(Dict=SimpleNamespace(from_name=lambda name: store))
+    store = SimpleNamespace(get=SimpleNamespace(aio=AsyncMock(side_effect=lambda key: snapshot if key == "take-42" else None)))
+    monkeypatch.setitem(sys.modules, "modal", modal)
+    engine = ModalH3Engine("studio-ia-h3", "render_clip")
+    assert engine.progress("take-42") == snapshot
+    assert engine.progress("missing") is None
+    store.get.aio = AsyncMock(side_effect=RuntimeError("secret"))
+    assert engine.progress("take-42") is None
+
+
+def test_progress_cancels_blocked_async_dict_get(monkeypatch):
+    import asyncio
+    from calliope.engines import modal_h3
+
+    state = {"entered": False, "cancelled": False}
+    async def blocked(key):
+        state["entered"] = True
+        try:
+            await asyncio.Event().wait()
+        finally:
+            state["cancelled"] = True
+    store = SimpleNamespace(get=SimpleNamespace(aio=blocked))
+    module = SimpleNamespace(Dict=SimpleNamespace(from_name=lambda name: store))
+    monkeypatch.setitem(sys.modules, "modal", module)
+    monkeypatch.setattr(modal_h3, "H3_PROGRESS_TIMEOUT_SEC", 0.01, raising=False)
+    assert modal_h3.ModalH3Engine("studio-ia-h3", "render_clip").progress("take-1") is None
+    assert state == {"entered": True, "cancelled": True}
