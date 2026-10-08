@@ -40,6 +40,8 @@ export interface Shot {
   image_prompt: string;
   dialogue: string;
   duration_sec: number;
+  trim_start_sec: number | null;
+  trim_end_sec: number | null;
   audio_mode: "native" | "silent";
   continue_from_previous: boolean;
   selected_image_id: number | null;
@@ -128,6 +130,12 @@ export interface AudioCue {
   gain_db: number;
   asset_id?: number | null;
 }
+export interface AudioHold {
+  shot_index: number;
+  at_sec: number;
+  duration_sec: number;
+  drop_db: number;
+}
 export interface AudioAsset {
   id: number;
   name: string;
@@ -146,6 +154,7 @@ export interface AudioSettings {
   ambience_gain_db: number;
   music_asset_id: number | null;
   sfx: AudioCue[];
+  holds: AudioHold[];
   assets?: AudioAsset[];
 }
 export interface SeriesEntity {

@@ -13,7 +13,7 @@
   let concept = $state("");
   let aspect = $state<AspectRatio>("9:16");
   let language = $state("en");
-  let seconds = $state(70);
+  let seconds = $state(65);
   let error = $state("");
   let loading = $state(true);
   let busy = $state(false);
@@ -167,7 +167,9 @@
           /></label
         >
         <p class="hint">
-          Durée indicative. Le montage conserve les prises entières.
+          Format visé pour chaque épisode : le scénario remplit réellement cette
+          durée, chaque plan ne dure que le temps utile, et le montage coupe le
+          surplus des prises.
         </p>
         <button
           class="primary"

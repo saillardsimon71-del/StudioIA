@@ -86,6 +86,41 @@ async def _progress(callback, progress, message):
         await callback({"progress": progress, "message": message})
 
 
+def _window_for(clip, probe):
+    """Fenêtre conservée d'une prise, en secondes, sur la grille 24 fps.
+
+    Priorité aux points d'entrée/sortie explicites du plan. Sinon, la durée
+    utile écrite (beat_sec) guide le trim, aligné sur la parole détectée pour
+    les plans à dialogue. Sans information utile, la prise est gardée entière.
+    """
+    from calliope.studio import pacing
+
+    probe_sec = probe["duration_sec"]
+    if clip.get("trim_start_sec") is not None or clip.get("trim_end_sec") is not None:
+        return pacing.explicit_window(
+            clip.get("trim_start_sec"), clip.get("trim_end_sec"), probe_sec
+        )
+    beat = clip.get("beat_sec")
+    try:
+        beat = float(beat) if beat is not None else 0.0
+    except (TypeError, ValueError):
+        beat = 0.0
+    if beat <= 0:
+        return 0.0, probe_sec
+    if (
+        clip.get("audio_mode") == "native"
+        and str(clip.get("dialogue") or "").strip()
+        and probe.get("has_audio")
+    ):
+        measured = pacing.detect_voice(clip["path"], probe_sec)
+        if measured is None:
+            # Mesure impossible : ne pas couper à l'aveugle une prise à
+            # dialogue. La prise reste entière plutôt qu'un mauvais trim.
+            return 0.0, probe_sec
+        return pacing.useful_window(beat, probe_sec, measured["intervals"])
+    return pacing.useful_window(beat, probe_sec, None)
+
+
 async def _run_ffmpeg(command, duration, start, end, message, callback, cancel_check):
     _check_cancel(cancel_check)
     process = await asyncio.create_subprocess_exec(
@@ -155,19 +190,28 @@ async def assemble(
         _check_cancel(cancel_check)
         probes.append(await asyncio.to_thread(inspect_media, Path(clip["path"])))
     _check_cancel(cancel_check)
+    windows = [
+        await asyncio.to_thread(_window_for, clip, probe)
+        for clip, probe in zip(clips, probes)
+    ]
+    _check_cancel(cancel_check)
     destination = Path(destination).resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
     width, height = size
-    durations = [probe["duration_sec"] for probe in probes]
+    durations = [max(0.0, end - start) for start, end in windows]
     total_duration = sum(durations)
     base = [ffmpeg, "-v", "error", "-nostdin", "-nostats", "-progress", "pipe:1", "-y"]
     with tempfile.TemporaryDirectory(prefix="studio-export-", dir=destination.parent) as temporary:
         work = Path(temporary)
         elapsed = 0
-        for index, (clip, probe) in enumerate(zip(clips, probes)):
-            duration = probe["duration_sec"]
+        for index, (clip, probe, window) in enumerate(zip(clips, probes, windows)):
+            trim_start, _ = window
+            duration = durations[index]
             segment = work / f"segment-{index:06d}.mov"
-            command = base + ["-i", clip["path"]]
+            command = list(base)
+            if trim_start > 1e-9:
+                command += ["-ss", f"{trim_start:.9f}"]
+            command += ["-i", clip["path"]]
             native_audio = clip["audio_mode"] == "native" and probe["has_audio"]
             if not native_audio:
                 command += ["-f", "lavfi", "-i", "anullsrc=cl=stereo:r=48000"]
@@ -268,6 +312,10 @@ async def assemble(
         metadata = await asyncio.to_thread(inspect_media, ready)
         metadata.pop("has_video")
         metadata["clip_count"] = len(clips)
+        metadata["cuts_sec"] = [
+            [round(start, 4), round(end, 4)] for start, end in windows
+        ]
+        metadata["grid_fps"] = 24
         _check_cancel(cancel_check)
         ready.replace(destination)
     await _progress(progress_callback, 1, "Film exporté")

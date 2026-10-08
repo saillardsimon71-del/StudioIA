@@ -47,7 +47,9 @@ class ShotCreate(BaseModel):
     prompt: str = Field(default="", max_length=50000)
     image_prompt: str = Field(default="", max_length=50000)
     dialogue: str = Field(default="", max_length=50000)
-    duration_sec: float = Field(default=5, ge=5, le=15)
+    duration_sec: float = Field(default=5, ge=1, le=15)
+    trim_start_sec: float | None = Field(default=None, ge=0, le=900)
+    trim_end_sec: float | None = Field(default=None, ge=0, le=900)
     audio_mode: Literal["native", "silent"] = "native"
 
 
@@ -56,7 +58,9 @@ class ShotUpdate(BaseModel):
     prompt: str | None = Field(default=None, max_length=50000)
     image_prompt: str | None = Field(default=None, max_length=50000)
     dialogue: str | None = Field(default=None, max_length=50000)
-    duration_sec: float | None = Field(default=None, ge=5, le=15)
+    duration_sec: float | None = Field(default=None, ge=1, le=15)
+    trim_start_sec: float | None = Field(default=None, ge=0, le=900)
+    trim_end_sec: float | None = Field(default=None, ge=0, le=900)
     audio_mode: Literal["native", "silent"] | None = None
     continue_from_previous: bool | None = None
     order_index: int | None = Field(default=None, ge=1)
@@ -278,9 +282,14 @@ async def new_shot(project_id: int, scene_id: int, payload: ShotCreate):
 @router.patch("/projects/{project_id}/shots/{shot_id}")
 async def edit_shot(project_id: int, shot_id: int, payload: ShotUpdate):
     series.require_editable(project_id)
-    return service.update_shot(
-        project_id, shot_id, payload.model_dump(exclude_unset=True, exclude_none=True)
-    )
+    data = payload.model_dump(exclude_unset=True)
+    # Seuls les points utiles peuvent être explicitement effacés par null.
+    data = {
+        key: value
+        for key, value in data.items()
+        if value is not None or key in ("trim_start_sec", "trim_end_sec")
+    }
+    return service.update_shot(project_id, shot_id, data)
 
 
 @router.delete("/projects/{project_id}/shots/{shot_id}")
@@ -455,7 +464,7 @@ async def create_example():
                     "Sound of gentle water and distant birds, no music and no speech.",
                     "image_prompt": "Photorealistic calm alpine lake at sunrise, soft golden "
                     "mist, pine forest, no people or text.",
-                    "duration_sec": 5,
+                    "duration_sec": 4.2,
                     "audio_mode": "native",
                 }
             ],
@@ -472,7 +481,7 @@ async def create_example():
                     "no people, no text. Sound of flowing water and birds, no speech or music.",
                     "image_prompt": "A photorealistic small waterfall on mossy rocks "
                     "in a sunlit pine forest, no people or text.",
-                    "duration_sec": 5,
+                    "duration_sec": 3.4,
                     "audio_mode": "native",
                 }
             ],

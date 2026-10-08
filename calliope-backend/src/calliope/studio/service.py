@@ -234,14 +234,16 @@ def add_shot(conn, project_id, scene_id, data):
         (scene_id, project_id, index, description, data.get("duration_sec") or 5),
     )
     conn.execute(
-        "INSERT INTO studio_shots(clip_id,prompt,image_prompt,dialogue,audio_mode) "
-        "VALUES(?,?,?,?,?)",
+        "INSERT INTO studio_shots(clip_id,prompt,image_prompt,dialogue,audio_mode,"
+        "trim_start_sec,trim_end_sec) VALUES(?,?,?,?,?,?,?)",
         (
             cur.lastrowid,
             str(data.get("prompt") or description),
             str(data.get("image_prompt") or description),
             str(data.get("dialogue") or ""),
             data.get("audio_mode") or "native",
+            data.get("trim_start_sec"),
+            data.get("trim_end_sec"),
         ),
     )
     return cur.lastrowid
@@ -298,10 +300,28 @@ def update_shot(project_id, shot_id, data):
         require_shot(conn, shot_id, project_id)
         current = public_shot(conn, shot_id)
         changed = any(current.get(k) != v for k, v in data.items())
+        trim = {
+            key: data.get(key, current.get(key))
+            for key in ("trim_start_sec", "trim_end_sec")
+        }
+        if trim != {key: current.get(key) for key in trim}:
+            start, end = trim["trim_start_sec"], trim["trim_end_sec"]
+            if start is not None and not 0 <= float(start) < 900:
+                raise HTTPException(422, "Le point d'entrée utile doit être positif.")
+            if end is not None and float(end) <= float(start or 0):
+                raise HTTPException(422, "Le point de sortie utile doit suivre l'entrée.")
         for key in ("description", "duration_sec", "order_index"):
             if key in data:
                 conn.execute(f"UPDATE clips SET {key}=? WHERE id=?", (data[key], shot_id))
-        for key in ("prompt", "image_prompt", "dialogue", "audio_mode", "continue_from_previous"):
+        for key in (
+            "prompt",
+            "image_prompt",
+            "dialogue",
+            "audio_mode",
+            "continue_from_previous",
+            "trim_start_sec",
+            "trim_end_sec",
+        ):
             if key in data:
                 conn.execute(
                     f"UPDATE studio_shots SET {key}=? WHERE clip_id=?", (data[key], shot_id)
@@ -312,6 +332,27 @@ def update_shot(project_id, shot_id, data):
         result = public_shot(conn, shot_id)
         conn.commit()
         return result
+
+
+def save_trim(conn, shot_id, start, end):
+    """Enregistre les points utiles calculés pour une prise validée.
+
+    N'écrase jamais une coupe choisie à la main et ne touche pas à
+    l'approbation : la validation de la prise reste acquise.
+    """
+    row = conn.execute(
+        "SELECT trim_start_sec,trim_end_sec FROM studio_shots WHERE clip_id=?", (shot_id,)
+    ).fetchone()
+    if not row or row["trim_start_sec"] is not None or row["trim_end_sec"] is not None:
+        return False
+    conn.execute(
+        "UPDATE studio_shots SET trim_start_sec=?,trim_end_sec=? WHERE clip_id=?",
+        (round(float(start), 3), round(float(end), 3), shot_id),
+    )
+    project = conn.execute("SELECT project_id FROM clips WHERE id=?", (shot_id,)).fetchone()
+    if project:
+        touch(conn, project["project_id"])
+    return True
 
 
 def normalized_image(content):
@@ -627,6 +668,10 @@ def enqueue_export(project_id, request_id):
                     "take_id": take["id"],
                     "path": take["output_path"],
                     "duration_sec": effective.get("duration_sec") or shot["duration_sec"],
+                    "beat_sec": shot["duration_sec"],
+                    "dialogue": shot["dialogue"],
+                    "trim_start_sec": shot.get("trim_start_sec"),
+                    "trim_end_sec": shot.get("trim_end_sec"),
                     "audio_mode": shot["audio_mode"],
                 }
             )

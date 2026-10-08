@@ -16,18 +16,28 @@ language. New entities must have stable lowercase ASCII keys.
 Develop missing bible fields from the concept; do not contradict filled fields.
 Open with an immediate visual hook, develop one coherent event, end with a
 revelation or compelling next question. No padding, no unexplained location jumps.
-Use the target duration: roughly one complete 5-second shot per 5 seconds.
-For a 70-second episode, write 14 five-second shots (actual H3 export about 72s).
-Return exactly required_shots shots, each lasting shot_duration_sec seconds.
+The target duration is a real format constraint: the story must carry about
+target_seconds of USEFUL screen time, no more, no less. Write the story FIRST,
+then cut it into shots. The number of shots is FREE (usually 10 to 30). Each
+shot lasts ONLY the time its line, action or reaction honestly needs, then ends
+as soon as its beat is over: a quick reaction is 1.5-2.5 s, a spoken line is
+2-6 s, a movement or suspense beat is 3-8 s. Give duration_sec one decimal,
+for example 1.6, 3.4, 2.1 or 4.8, and vary it: never quantize the episode into
+identical blocks. Never stretch a shot to fill time; the edit trims any dead
+footage by itself, so script ZERO dead time. A shot beyond 8 s needs a strong
+reason, never exceed 15 s.
 Alternate story actions and short dialogue; each shot must advance the story.
 Each shot shows at most ONE speaking character. Shot/reverse-shot for dialogue.
 Dialogue is plain speech, without speaker names, quotes or instructions. At most
-11 spoken words per 5 seconds. No narrator, offscreen voices, overlapping voices,
-prompt recitation or music inside the video. Prompts and still prompts in English;
-speech in the series language. Spell out who is visible, clothes, location,
-lighting, camera, expression and quiet native ambience. Keep the established
-visual style; no default cartoon or dystopian style. Prefer a stable medium
-close-up for dialogue, one natural voice with synchronized lips, then silence.
+2.2 spoken words per second of that shot. No narrator, offscreen voices,
+overlapping voices, prompt recitation or music inside the video. Prompts and
+still prompts in English; speech in the series language. Spell out who is
+visible, clothes, location, lighting, camera, expression and quiet native
+ambience. Keep the established visual style; no default cartoon or dystopian
+style. Prefer a stable medium close-up for dialogue, one natural voice with
+synchronized lips, then silence. The renderer only produces the image and the
+native dialogue; music, ambience, sound effects and pacing are handled in
+post-production, so do NOT ask for them in the video prompts.
 Reuse a reference_key for the SAME character, location and camera composition;
 change it when the scene really needs a new composition. Existing characters
 and locations have canonical image references used by the image service.
@@ -42,21 +52,26 @@ Return ONLY JSON with these fields:
 "shots":[{"description":"story beat","prompt":"visual motion and native sound",
 "image_prompt":"still composition matching motion prompt", "dialogue":"plain speech",
 "speaker":"character key or empty", "character_keys":["key"], "location_key":"key or empty",
-"reference_key":"composition key", "duration_sec":5, "audio_mode":"native"}]}],
+"reference_key":"composition key", "duration_sec":3.4, "audio_mode":"native"}]}],
 "audio":{"enabled":true,"music":"none/neutral/tension/warm/playful/energetic/horror",
 "tempo":72,"music_gain_db":-28,"voice_gain_db":-5,"ducking":true,
-"ambience":"none/room/wind/rain", "ambience_gain_db":-38,
-"sfx":[{"effect":"click/beep/impact/whoosh/door/footstep","shot_index":0,
-"at_sec":0.2,"gain_db":-24}]}}.
-SFX are optional and sparse. Prefer native ambience for realistic environmental
-sounds. Summary and events must describe what the episode actually shows, not
-future intentions. Never claim that a cliffhanger has already been resolved."""
+"ambience":"none/room/wind/rain/cafe/night/city/forest", "ambience_gain_db":-38,
+"sfx":[{"effect":"click/beep/impact/boom/whoosh/riser/door/footstep","shot_index":0,
+"at_sec":0.2,"gain_db":-24}],
+"holds":[{"shot_index":0,"at_sec":0.0,"duration_sec":0.8,"drop_db":-36}]}}.
+Sound design is post-production, synchronized with the real beats: pick the
+ambience that matches the main location, keep the music bed VERY light so it
+never masks the voices, keep sfx sparse (a riser into the final reveal, one
+impact or boom on it), and use at most one or two holds — short voluntary
+silences right before a reveal — never under a spoken line. Summary and events
+must describe what the episode actually shows, not future intentions. Never
+claim that a cliffhanger has already been resolved."""
     public_context = {k: v for k, v in context.items() if k != "entities"}
     public_context["entities"] = [
         {k: e[k] for k in ("key", "kind", "name", "description")} for e in context["entities"]
     ]
-    target = context.get("target_seconds", 70)
-    shot_count = round(target / 5)
+    target = context.get("target_seconds", 65)
+    estimated_shots = max(8, round(target / 3))
     messages = [
         {"role": "system", "content": prompt},
         {
@@ -66,8 +81,11 @@ future intentions. Never claim that a cliffhanger has already been resolved."""
                     "series": public_context,
                     "idea": idea,
                     "objective": objective,
-                    "required_shots": shot_count,
-                    "shot_duration_sec": 5,
+                    "target_seconds": target,
+                    "pacing": (
+                        "free shot count, one decimal duration_sec per shot, "
+                        "each as short as its beat allows, total near target_seconds"
+                    ),
                 },
                 ensure_ascii=False,
             ),
@@ -77,7 +95,7 @@ future intentions. Never claim that a cliffhanger has already been resolved."""
         result = await generate_structured(
             messages,
             temperature=0.45,
-            max_tokens=max(4096, min(15000, shot_count * 650 + 2000)),
+            max_tokens=max(4096, min(16000, estimated_shots * 650 + 2000)),
         )
         try:
             return normalize_plan(copy.deepcopy(result), context)
@@ -91,7 +109,9 @@ future intentions. Never claim that a cliffhanger has already been resolved."""
                         "role": "user",
                         "content": (
                             f"Validation failed: {exc}. Repair the complete JSON episode. "
-                            f"Exactly {shot_count} shots of 5 seconds for about {target} seconds. "
+                            f"Keep free per-shot durations; adjust the cutting or the "
+                            f"dialogue so the useful total stays near {target} seconds "
+                            "without stretching any shot. "
                             "Preserve the story and series canon. Shorten dialogue if needed. "
                             "Return the complete corrected JSON, with all scenes and shots."
                         ),
@@ -135,7 +155,15 @@ def normalize_plan(result, context):
                 or not str(shot.get("image_prompt", "")).strip()
             ):
                 raise ValueError("Le scénario contient un plan sans prompt.")
-            duration = min(10, max(5, float(shot.get("duration_sec") or 5)))
+            try:
+                duration = float(shot.get("duration_sec") or 0)
+            except (TypeError, ValueError):
+                duration = 0
+            if not 1 <= duration <= 15:
+                raise ValueError(
+                    "Chaque plan doit viser une durée utile entre 1 et 15 secondes."
+                )
+            duration = round(duration, 1)
             dialogue = str(shot.get("dialogue") or "").strip()
             speaker = str(shot.get("speaker") or "")
             if speaker and speaker not in known:
@@ -183,12 +211,13 @@ def normalize_plan(result, context):
             shot["prompt"] += (
                 "No narration, no offscreen voices, no overlapping speech, no background music."
             )
-    if count > 24:
-        raise ValueError("Limitez un épisode à 24 plans.")
+    if count > 40:
+        raise ValueError("Limitez un épisode à 40 plans.")
     if "target_seconds" in context and abs(total_duration - context["target_seconds"]) > 5:
         raise ValueError(
-            f"La durée du scénario ({total_duration:g} s) ne correspond pas "
-            f"à la durée demandée ({context['target_seconds']} s)."
+            f"La durée utile du scénario ({total_duration:g} s) ne correspond pas "
+            f"à la durée demandée ({context['target_seconds']} s). Ajustez le découpage "
+            "ou les répliques, sans étirer les plans."
         )
     result["audio"] = AudioSettings.model_validate(result.get("audio") or {}).model_dump()
     result["bible"] = {

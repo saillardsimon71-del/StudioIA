@@ -29,7 +29,7 @@ class SeriesCreate(BaseModel):
     concept: str = Field(min_length=1, max_length=30000)
     aspect_ratio: Literal["16:9", "9:16", "1:1"] = "9:16"
     language: str = Field(default="en", min_length=1, max_length=40)
-    target_seconds: int = Field(default=70, ge=10, le=120)
+    target_seconds: int = Field(default=65, ge=10, le=120)
     bible: BiblePatch = Field(default_factory=BiblePatch)
 
     @field_validator("title", "concept", "language")

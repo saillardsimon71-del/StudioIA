@@ -69,7 +69,7 @@ def test_next_episode_waits_for_previous_and_missing_services_create_no_jobs(cli
 def test_blank_concept_and_unknown_bible_fields_are_rejected(client):
     assert client.post("/api/studio/series", json={"title": "X", "concept": " "}).status_code == 422
     a = series(client)
-    assert a["target_seconds"] == 70
+    assert a["target_seconds"] == 65
     result = client.patch(f"/api/studio/series/{a['id']}", json={"bible": {"other_series_id": 3}})
     assert result.status_code == 422
 
@@ -425,7 +425,8 @@ def test_70_second_script_keeps_large_output_budget_on_json_retry(monkeypatch):
     monkeypatch.setattr(llm, "LLMClient", Client)
     result = asyncio.run(plan_episode({"target_seconds": 70, "entities": []}, "A warning", ""))
     assert len(result["scenes"][0]["shots"]) == 14
-    assert budgets == [11100, 11100]
+    # Le nombre de plans est libre ; le budget suit la cible, ~23 plans estimés.
+    assert budgets == [16000, 16000]
 
 
 def test_planner_repairs_short_episode_before_any_gpu_render(monkeypatch):

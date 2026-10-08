@@ -16,7 +16,7 @@
 	let dirty = $derived(JSON.stringify(draft) !== saved);
 	let chosenVideo = $derived(selectedTake(shot, 'video'));
 	let chosenImage = $derived(selectedTake(shot, 'image'));
-	let valid = $derived(!!draft.description.trim() && draft.duration_sec >= 5 && draft.duration_sec <= 15);
+	let valid = $derived(!!draft.description.trim() && draft.duration_sec >= 1 && draft.duration_sec <= 15);
 	onMount(() => {
 		const previousFocus = document.activeElement;
 		const media = window.matchMedia('(max-width: 1100px)');
@@ -36,7 +36,7 @@
 
 	async function persist() {
 		if (!dirty) return;
-		if (!valid) throw new Error('Renseignez le titre du plan et une durée de 5 à 15 secondes.');
+		if (!valid) throw new Error('Renseignez le titre du plan et une durée utile de 1 à 15 secondes.');
 		const snapshot = { ...draft };
 		await studio.saveShot(projectId, shot.id, snapshot);
 		saved = JSON.stringify(snapshot);
@@ -86,8 +86,9 @@
 			<label>Titre du plan<input required bind:value={draft.description} /></label>
 			<label>Prompt vidéo et mouvement<textarea bind:value={draft.prompt} rows="5" placeholder="Sujet, action, cadrage, mouvement de caméra et ambiance."></textarea></label>
 			<label>Dialogue<textarea bind:value={draft.dialogue} rows="2" placeholder="Réplique ou parole à entendre dans ce plan."></textarea></label>
-			<div class="columns"><label>Durée demandée (secondes)<input type="number" min="5" max="15" step="0.1" required bind:value={draft.duration_sec} /></label><label>Son<select bind:value={draft.audio_mode}><option value="native">Son généré avec la vidéo</option><option value="silent">Sans son</option></select></label></div>
-			<p class="hint">Le moteur produit des plans de 5 à 15 secondes. La durée réelle de chaque prise est indiquée dans ses informations.</p>
+			<div class="columns"><label>Durée utile (secondes)<input type="number" min="1" max="15" step="0.1" required bind:value={draft.duration_sec} /></label><label>Son<select bind:value={draft.audio_mode}><option value="native">Son généré avec la vidéo</option><option value="silent">Sans son</option></select></label></div>
+			<p class="hint">Le moteur rend un clip plus long que nécessaire ; le montage ne garde que la durée utile de la réplique ou de l'action, sans rallonger la prise.</p>
+			{#if shot.trim_start_sec !== null || shot.trim_end_sec !== null}<p class="hint">Partie conservée au montage : {(shot.trim_start_sec ?? 0).toFixed(2)} s → {(shot.trim_end_sec ?? 0).toFixed(2)} s de la prise choisie.</p>{/if}
 			<label class="check"><input type="checkbox" bind:checked={draft.continue_from_previous} />Reprendre la dernière image du plan précédent</label><p class="hint">Utilise la vidéo choisie dans le plan précédent. Le mouvement et le son restent propres à cette prise.</p>
 			<div class="row"><button disabled={!dirty || !valid || !!busy} class="primary">{busy === 'save' ? 'Enregistrement...' : 'Enregistrer les changements'}</button>{#if dirty}<span class="hint">Modifications non enregistrées</span>{/if}</div>
 			{#if shot.approved && dirty}<p class="hint">Ces changements retireront l'approbation. Vos prises restent conservées.</p>{/if}

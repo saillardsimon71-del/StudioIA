@@ -98,7 +98,7 @@ def create_series(data):
                 json.dumps(data.get("bible") or {}),
                 data.get("aspect_ratio", "9:16"),
                 data.get("language", "en"),
-                data.get("target_seconds", 70),
+                data.get("target_seconds", 65),
             ),
         )
         conn.commit()

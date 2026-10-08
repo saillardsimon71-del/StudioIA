@@ -40,7 +40,9 @@
     ["click", "Clic"],
     ["beep", "Signal électronique"],
     ["impact", "Impact"],
+    ["boom", "Boom grave"],
     ["whoosh", "Souffle bref"],
+    ["riser", "Montée de tension"],
     ["door", "Porte"],
     ["footstep", "Pas"],
   ];
@@ -200,6 +202,10 @@
               >Fond intérieur discret</option
             ><option value="wind">Vent</option><option value="rain"
               >Pluie</option
+            ><option value="cafe">Murmure de café</option><option value="night"
+              >Nuit</option
+            ><option value="city">Ville lointaine</option><option value="forest"
+              >Forêt</option
             ></select
           ></label
         ><label

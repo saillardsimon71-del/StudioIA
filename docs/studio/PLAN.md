@@ -53,7 +53,8 @@ approved_count,created_at,updated_at,cover_url}]}.
 POST /projects {title,idea,aspect_ratio: '16:9'|'9:16'|'1:1'} -> projet.
 GET /projects/{id} -> {project,scenes,jobs,exports}; chaque scène contient shots.
 Chaque shot: {id,scene_id,order_index,description,prompt,image_prompt,dialogue,
-duration_sec,audio_mode:'native'|'silent',selected_image_id,selected_video_id,
+duration_sec,trim_start_sec,trim_end_sec,audio_mode:'native'|'silent',
+selected_image_id,selected_video_id,
 approved,takes}. Chaque take: {id,clip_id,kind:'image'|'video',status,
 url,prompt,seed,error,job_id,source_take_id,created_at,metadata}.
 POST /projects/{id}/plan {text,mode:'script'|'idea',use_llm:boolean} -> board.
@@ -62,7 +63,11 @@ POST /projects/{id}/scenes {heading,action,dialog} -> scène et plan initial.
 PATCH /projects/{id}/scenes/{scene_id} {heading,action,dialog} -> scène.
 POST /projects/{id}/scenes/{scene_id}/shots {description,prompt,duration_sec} -> plan.
 PATCH /projects/{id}/shots/{shot_id} {description,prompt,image_prompt,dialogue,
-duration_sec,audio_mode,order_index} -> plan.
+duration_sec,audio_mode,order_index,trim_start_sec,trim_end_sec} -> plan.
+duration_sec est la durée utile écrite (1 à 15 s, libre) ; trim_start_sec et
+trim_end_sec bornent la partie conservée d'une prise (null = coupe automatique
+au montage, alignée sur la grille 24 fps). Le montage ne rallonge jamais une
+prise : seule la partie utile entre dans le film.
 DELETE /projects/{id}/shots/{shot_id} -> {ok:true} (au moins un plan par scène).
 POST /projects/{id}/reorder {scene_ids?,shot_ids?,scene_id?} -> board.
 POST /shots/{id}/generate {kind,request_id,n_takes:1..4,seed?} -> {takes,jobs}.

@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS studio_shots (
     dialogue TEXT NOT NULL DEFAULT '',
     audio_mode TEXT NOT NULL DEFAULT 'native',
     continue_from_previous INTEGER NOT NULL DEFAULT 0,
+    trim_start_sec REAL,
+    trim_end_sec REAL,
     selected_image_id INTEGER REFERENCES studio_takes(id) ON DELETE SET NULL,
     selected_video_id INTEGER REFERENCES studio_takes(id) ON DELETE SET NULL,
     approved INTEGER NOT NULL DEFAULT 0
@@ -62,7 +64,7 @@ CREATE TABLE IF NOT EXISTS studio_series (
     bible_json TEXT NOT NULL DEFAULT '{}',
     aspect_ratio TEXT NOT NULL DEFAULT '9:16',
     language TEXT NOT NULL DEFAULT 'en',
-    target_seconds INTEGER NOT NULL DEFAULT 70,
+    target_seconds INTEGER NOT NULL DEFAULT 65,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -125,6 +127,10 @@ def migrate_studio(db_path):
     conn = get_db(db_path)
     try:
         conn.executescript(SCHEMA)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(studio_shots)")}
+        for column in ("trim_start_sec", "trim_end_sec"):
+            if column not in columns:
+                conn.execute(f"ALTER TABLE studio_shots ADD COLUMN {column} REAL")
         conn.commit()
     finally:
         conn.close()

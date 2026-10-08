@@ -183,7 +183,7 @@ def image_references(conn, shot_id):
     return paths[:4]
 
 
-def generation_id(job, shot, kind):
+def generation_id(job, shot, kind, attempt=0):
     inputs = [
         shot["prompt"] if kind == "video" else shot["image_prompt"],
         shot["dialogue"],
@@ -197,15 +197,75 @@ def generation_id(job, shot, kind):
         with service.database() as conn:
             inputs.append(image_references(conn, shot["id"]))
     digest = hashlib.sha256(json.dumps(inputs).encode()).hexdigest()[:16]
-    return f"auto-{job['id']}-{shot['id']}-{kind}-{digest}"
+    suffix = f"-r{attempt}" if attempt else ""
+    return f"auto-{job['id']}-{shot['id']}-{kind}-{digest}{suffix}"
 
 
-async def generate_take(job, shot, kind, should_stop):
-    request = {"kind": kind, "request_id": generation_id(job, shot, kind), "n_takes": 1}
+async def generate_take(job, shot, kind, should_stop, attempt=0):
+    request = {"kind": kind, "request_id": generation_id(job, shot, kind, attempt), "n_takes": 1}
     queued = service.enqueue_takes(shot["id"], request)
     take = queued["takes"][0]
     await run_child(take["job_id"], should_stop)
     return service.select_take(take["id"])
+
+
+def selected_video(shot):
+    return next((t for t in shot["takes"] if t["id"] == shot["selected_video_id"]), None)
+
+
+async def assess_take(shot):
+    """Mesure la piste native d'une prise à dialogue et juge la réplique.
+
+    Tolérant par construction : seuls les échecs manifestes sont renvoyés
+    (réplique absente, invention importante, audio inexploitable). Le reste se
+    corrige au trim, jamais au rerender.
+    """
+    from calliope.studio import pacing
+
+    take = selected_video(shot)
+    dialogue = shot["dialogue"].strip()
+    if (
+        not take
+        or not dialogue
+        or shot["audio_mode"] != "native"
+        or not take["output_path"]
+        or not Path(take["output_path"]).is_file()
+    ):
+        return None
+    metadata = take.get("metadata") or {}
+    probe = float(metadata.get("duration_sec") or 0)
+    if not metadata.get("has_audio"):
+        return {
+            "status": "inaudible",
+            "reason": "Audio inexploitable : pas de piste son native.",
+            "voice": None,
+        }
+    voice = await asyncio.to_thread(pacing.detect_voice, take["output_path"], probe)
+    verdict = pacing.assess_dialogue(dialogue, shot["duration_sec"], probe, voice)
+    verdict["voice"] = (voice or {}).get("intervals") if voice else None
+    return verdict
+
+
+def trim_take(shot, voice=None):
+    """Calcule et enregistre la fenêtre utile d'une prise conservée.
+
+    Une prise déjà à la bonne taille n'a aucun point à enregistrer ; le montage
+    la garde entière. Aucun rallongement n'est jamais produit.
+    """
+    from calliope.studio import pacing
+
+    take = selected_video(shot)
+    if not take or not take.get("metadata"):
+        return
+    probe = float(take["metadata"].get("duration_sec") or 0)
+    if probe <= 0:
+        return
+    start, end = pacing.useful_window(shot["duration_sec"], probe, voice)
+    if start <= 1e-9 and end >= probe - 1e-9:
+        return
+    with service.database() as conn:
+        if service.save_trim(conn, shot["id"], start, end):
+            conn.commit()
 
 
 def reuse_reference(project_id, shot):
@@ -337,6 +397,7 @@ async def run_production(job, payload, should_stop):
             if not shot["selected_image_id"]:
                 if not reuse_reference(project_id, shot):
                     shot = await generate_take(job, shot, "image", should_stop)
+        warnings = []
         for index, initial in enumerate(shots):
             await checkpoint(
                 job,
@@ -357,8 +418,29 @@ async def run_production(job, payload, should_stop):
                 and chosen["prompt"] != expected
             ):
                 shot = await generate_take(job, shot, "video", should_stop)
+                verdict = await assess_take(shot)
+                if verdict and verdict["status"] in ("missing", "extra", "inaudible"):
+                    # Une seule relance, uniquement sur échec manifeste.
+                    await checkpoint(
+                        job,
+                        "video",
+                        0.33 + index / len(shots) * 0.55,
+                        f"Prise à refaire : plan {index + 1}/{len(shots)} ({verdict['reason']})",
+                        should_stop,
+                    )
+                    shot = await generate_take(job, shot, "video", should_stop, attempt=1)
+                    retry = await assess_take(shot)
+                    if retry and retry["status"] in ("missing", "extra", "inaudible"):
+                        # La prise reste exploitable au montage : on continue
+                        # plutôt que de brûler du GPU sur une perfection théorique.
+                        warnings.append(f"plan {index + 1}: {retry['reason']}")
+                    verdict = retry
+                trim_take(shot, (verdict or {}).get("voice"))
             service.approve_shot(shot["id"], True)
-        await checkpoint(job, "mixing", 0.9, "Musique, bruitages et assemblage du MP4", should_stop)
+        message = "Musique, bruitages et assemblage du MP4"
+        if warnings:
+            message += " — avertissement dialogue : " + " ; ".join(warnings[:4])
+        await checkpoint(job, "mixing", 0.9, message, should_stop)
         revision = service.board(project_id)["project"]["revision"]
         queued = service.enqueue_export(project_id, f"auto-{job['id']}-export-{revision}")
         outputs = await run_child(queued["job_id"], should_stop)

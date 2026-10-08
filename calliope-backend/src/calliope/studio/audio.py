@@ -13,18 +13,33 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from calliope.config import settings
 from calliope.studio import service
+from calliope.studio.pacing import quantize
 
 MUSIC = ("none", "neutral", "tension", "warm", "playful", "energetic", "horror")
-EFFECTS = ("click", "beep", "impact", "whoosh", "door", "footstep")
+EFFECTS = ("click", "beep", "impact", "boom", "whoosh", "riser", "door", "footstep")
+AMBIENCE = ("none", "room", "wind", "rain", "cafe", "night", "city", "forest")
 
 
 class Cue(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    effect: Literal["click", "beep", "impact", "whoosh", "door", "footstep"] = "click"
+    effect: Literal[
+        "click", "beep", "impact", "boom", "whoosh", "riser", "door", "footstep"
+    ] = "click"
     shot_index: int = Field(default=0, ge=0, le=1000)
     at_sec: float = Field(default=0, ge=0, le=120)
     gain_db: float = Field(default=-24, ge=-60, le=0)
     asset_id: int | None = None
+
+
+class Hold(BaseModel):
+    """Silence volontaire : musique et fond sonore s'effacent brièvement, par
+    exemple juste avant une révélation. Les voix ne sont jamais touchées."""
+
+    model_config = ConfigDict(extra="forbid")
+    shot_index: int = Field(default=0, ge=0, le=1000)
+    at_sec: float = Field(default=0, ge=0, le=120)
+    duration_sec: float = Field(default=0.8, gt=0, le=30)
+    drop_db: float = Field(default=-36, ge=-90, lt=0)
 
 
 class AudioSettings(BaseModel):
@@ -37,10 +52,13 @@ class AudioSettings(BaseModel):
     voice_gain_db: float = Field(default=-5, ge=-24, le=6)
     tempo: int = Field(default=72, ge=40, le=160)
     ducking: bool = True
-    ambience: Literal["none", "room", "wind", "rain"] = "none"
+    ambience: Literal["none", "room", "wind", "rain", "cafe", "night", "city", "forest"] = (
+        "none"
+    )
     ambience_gain_db: float = Field(default=-38, ge=-60, le=0)
     music_asset_id: int | None = None
     sfx: list[Cue] = Field(default_factory=list, max_length=100)
+    holds: list[Hold] = Field(default_factory=list, max_length=100)
 
 
 def get_audio(conn, project_id):
@@ -197,12 +215,47 @@ def render_stems(config, durations, directory):
     rng = random.Random(2718)
     ambience = config.get("ambience", "none")
     gain = 10 ** (config.get("ambience_gain_db", -38) / 20)
-    previous = 0
     if ambience != "none":
+        previous = 0.0
+        walk = 0.5
+        next_chirp, chirp_end, chirp_freq = 0.4, -1.0, 3200.0
         for index in range(frames):
+            t = index / rate
             noise = rng.uniform(-1, 1)
-            previous = previous * 0.97 + noise * 0.03
-            effects[index] = (noise * 0.15 if ambience == "rain" else previous * 0.8) * gain
+            if ambience == "rain":
+                value = noise * 0.15
+            elif ambience == "wind":
+                previous = previous * 0.97 + noise * 0.03
+                value = previous * (0.6 + 0.5 * math.sin(2 * math.pi * 0.07 * t + 1.3))
+            elif ambience == "cafe":
+                # Murmure lointain : bruit adouci dont le niveau se promène.
+                previous = previous * 0.96 + noise * 0.04
+                walk = min(1.0, max(0.15, walk + rng.uniform(-0.02, 0.02)))
+                value = previous * (0.3 + 0.7 * walk) * 1.4
+            elif ambience == "city":
+                previous = previous * 0.99 + noise * 0.01
+                value = previous * 1.5 + math.sin(2 * math.pi * 55 * t) * 0.03
+            elif ambience == "night":
+                previous = previous * 0.985 + noise * 0.015
+                cricket = (
+                    math.sin(2 * math.pi * 4200 * t)
+                    * max(0.0, math.sin(2 * math.pi * 18 * t)) ** 8
+                    * 0.06
+                )
+                value = previous * 0.5 + cricket
+            elif ambience == "forest":
+                previous = previous * 0.97 + noise * 0.03
+                value = previous * 0.4
+                if t >= next_chirp:
+                    chirp_end = t + rng.uniform(0.1, 0.18)
+                    chirp_freq = rng.uniform(2800, 3800)
+                    next_chirp = t + rng.uniform(0.7, 2.6)
+                if t < chirp_end:
+                    value += math.sin(2 * math.pi * chirp_freq * t) * 0.05
+            else:  # room
+                previous = previous * 0.97 + noise * 0.03
+                value = previous * 0.8
+            effects[index] = value * gain
     offsets, elapsed = [], 0
     for duration in durations:
         offsets.append(elapsed)
@@ -210,9 +263,20 @@ def render_stems(config, durations, directory):
     for cue in config.get("sfx", []):
         if cue.get("path") or cue["shot_index"] >= len(durations):
             continue
-        start = offsets[cue["shot_index"]] + min(cue["at_sec"], durations[cue["shot_index"]])
+        start = quantize(
+            offsets[cue["shot_index"]] + min(cue["at_sec"], durations[cue["shot_index"]])
+        )
         effect = cue["effect"]
-        length = 0.65 if effect in ("impact", "whoosh", "door") else 0.16
+        length = {
+            "click": 0.16,
+            "beep": 0.16,
+            "footstep": 0.16,
+            "impact": 0.65,
+            "whoosh": 0.65,
+            "door": 0.65,
+            "boom": 0.9,
+            "riser": 2.2,
+        }[effect]
         scale = 10 ** (cue["gain_db"] / 20)
         for index in range(min(int(length * rate), max(0, frames - int(start * rate)))):
             t = index / rate
@@ -221,11 +285,40 @@ def render_stems(config, durations, directory):
                 value = math.sin(2 * math.pi * 880 * t) * math.sin(math.pi * t / length) * 0.4
             elif effect == "whoosh":
                 value = noise * math.sin(math.pi * t / length) * 0.5
+            elif effect == "riser":
+                # Montée de tension : souffle filtré et tonalité qui grimpe.
+                sweep = math.sin(2 * math.pi * (220 + 320 * t / length) * t)
+                value = (noise * 0.25 + sweep * 0.3) * (t / length) ** 1.5
+            elif effect == "boom":
+                value = (math.sin(2 * math.pi * 48 * t) * 0.7 + noise * 0.3) * math.exp(-t * 7)
             elif effect in ("impact", "door", "footstep"):
                 value = (math.sin(2 * math.pi * 65 * t) * 0.5 + noise * 0.2) * math.exp(-t * 14)
             else:
                 value = noise * math.exp(-t * 70) * 0.5
             effects[int(start * rate) + index] += value * scale
+    for hold in config.get("holds", []):
+        # Silence volontaire : musique et fond sonore s'effacent avec de courtes
+        # rampes ; les voix (piste native des prises) ne sont jamais touchées.
+        if hold["shot_index"] >= len(durations):
+            continue
+        start = quantize(
+            offsets[hold["shot_index"]] + min(hold["at_sec"], durations[hold["shot_index"]])
+        )
+        floor = 10 ** (hold["drop_db"] / 20)
+        first = min(frames, max(0, int(start * rate)))
+        last = min(frames, first + int(hold["duration_sec"] * rate))
+        ramp = min(int(0.03 * rate), max(1, (last - first) // 4))
+        for index in range(first, last):
+            into = index - first
+            left = last - index
+            if into < ramp:
+                weight = 1 - (1 - floor) * (into / ramp)
+            elif left < ramp:
+                weight = 1 - (1 - floor) * (left / ramp)
+            else:
+                weight = floor
+            music[index] *= weight
+            effects[index] *= weight
     music_path, fx_path = Path(directory) / "music.wav", Path(directory) / "effects.wav"
     _write_wave(music_path, music, rate)
     _write_wave(fx_path, effects, rate)
@@ -237,7 +330,7 @@ def preview(project_id):
         service.require_project(conn, project_id)
         config = snapshot_audio(conn, project_id)
         durations = [
-            r[0] or 5
+            quantize(r[0] or 5)
             for r in conn.execute(
                 "SELECT duration_sec FROM clips WHERE project_id=? ORDER BY id", (project_id,)
             )
@@ -286,7 +379,10 @@ def mix_command(base, source, config, durations, directory, ready):
         index = len(inputs)
         command += ["-i", cue["path"]]
         delay = round(
-            (offsets[cue["shot_index"]] + min(cue["at_sec"], durations[cue["shot_index"]])) * 1000
+            quantize(
+                offsets[cue["shot_index"]] + min(cue["at_sec"], durations[cue["shot_index"]])
+            )
+            * 1000
         )
         label = f"cue{index}"
         filters.append(
