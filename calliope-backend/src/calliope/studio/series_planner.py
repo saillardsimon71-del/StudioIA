@@ -213,12 +213,24 @@ def normalize_plan(result, context):
             )
     if count > 40:
         raise ValueError("Limitez un épisode à 40 plans.")
-    if "target_seconds" in context and abs(total_duration - context["target_seconds"]) > 5:
-        raise ValueError(
-            f"La durée utile du scénario ({total_duration:g} s) ne correspond pas "
-            f"à la durée demandée ({context['target_seconds']} s). Ajustez le découpage "
-            "ou les répliques, sans étirer les plans."
-        )
+    if "target_seconds" in context:
+        target = float(context["target_seconds"])
+        # Le montage coupe mais n'étire jamais : un scénario manifestement plus
+        # court ou plus long que le format est réparé avant tout rendu GPU, la
+        # manière de découper restant entièrement libre.
+        if total_duration < target - 2.0:
+            raise ValueError(
+                f"Le scénario ne remplit que {total_duration:g} s utiles sur "
+                f"les {target:g} s du format : l'histoire est trop courte. "
+                "Développez l'événement ou ajoutez une action/réaction utile, "
+                "sans jamais étirer un plan existant."
+            )
+        if total_duration > target + 5.0:
+            raise ValueError(
+                f"La durée utile du scénario ({total_duration:g} s) dépasse la "
+                f"durée demandée ({target:g} s). Ajustez le découpage ou les "
+                "répliques, sans étirer les plans."
+            )
     result["audio"] = AudioSettings.model_validate(result.get("audio") or {}).model_dump()
     result["bible"] = {
         key: str(value) for key, value in (result.get("bible") or {}).items() if key in BIBLE_FIELDS

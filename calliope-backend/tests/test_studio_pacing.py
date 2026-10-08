@@ -98,8 +98,19 @@ def test_pack_of_free_durations_hits_the_65_second_format():
     assert sum(s["duration_sec"] for s in result["scenes"][0]["shots"]) == pytest.approx(
         68.4
     )
-    with pytest.raises(ValueError, match="durée utile"):
+    with pytest.raises(ValueError, match="durée utile|trop courte"):
         normalize(beat_plan([5.0] * 4), {"entities": [], "target_seconds": 65})
+    # 60 s de contenu utile ne suffit pas pour un format qui demande 65 s : le
+    # montage n'étirant jamais les plans, l'épisode sortirait sous le format.
+    with pytest.raises(ValueError, match="trop courte"):
+        normalize(beat_plan([2.4] * 25), {"entities": [], "target_seconds": 65})
+    # Une proche marge de garde (décimales, grille 24 fps) reste acceptée : ce
+    # n'est pas une règle narrative, seul l'écart manifeste est réparé.
+    close = normalize(
+        beat_plan([5.3] * 12, dialogue="", speaker="", character_keys=[]),
+        {"entities": [], "target_seconds": 65},
+    )
+    assert len(close["scenes"][0]["shots"]) == 12
 
 
 def test_planner_rejects_unfilmable_durations_and_bloated_episodes():

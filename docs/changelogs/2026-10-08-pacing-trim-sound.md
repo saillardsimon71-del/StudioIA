@@ -12,7 +12,11 @@ montage garde l'utile, les validateurs ne rejettent que les échecs manifestes).
   nombre de plans libre (jusqu'à 40), `duration_sec` à 0,1 s près entre 1 et
   15 s, une réplique d'au plus 2,2 mots par seconde de son propre plan.
 - La cible reste une contrainte de format : la somme des durées utiles doit
-  rester à ±5 s de `target_seconds`, sinon le plan est réparé avant tout GPU.
+  rester proche de `target_seconds` : un scénario manifestement plus court
+  (plus de ~2 s sous la cible — une histoire de 60 s ne suffit pas pour un
+  format de 65 s) ou plus long (plus de ~5 s au-dessus) est réparé avant tout
+  GPU. Cette marge est un garde-fou d'écart manifeste, pas une règle
+  narrative : les durées individuelles viennent toujours du scénario.
 - H3 continue de recevoir la marge dont il a besoin (124 frames minimum) ; le
   montage ramène un clip de 5,17 s à 1,6 s utiles quand c'est tout ce que le
   beat demande. Aucune prise n'est rallongée : plus courte que le beat, elle

@@ -289,7 +289,7 @@ def test_planner_requires_requested_episode_duration():
     from calliope.studio.series_planner import normalize_plan
 
     plan = planned_episode({})
-    with pytest.raises(ValueError, match="durée"):
+    with pytest.raises(ValueError, match="trop courte"):
         normalize_plan(plan, {"entities": [], "target_seconds": 70})
     plan = planned_episode({})
     plan["scenes"][0]["shots"] *= 14
