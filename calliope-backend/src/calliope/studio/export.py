@@ -246,6 +246,7 @@ async def assemble(
                     write_overlay, clip["path"], clip["screen_text"], trim_start, duration,
                     (probe["width"], probe["height"]), (width, height),
                     work / f"text-{index}.ass",
+                    take_id=clip.get("take_id"),
                 )
                 overlays.append({"clip_id": clip.get("clip_id"), **overlay_data})
             if not native_audio:

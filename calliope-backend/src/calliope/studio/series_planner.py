@@ -119,7 +119,10 @@ Return ONLY JSON with these fields:
 "characters":"identity and voices", "relationships":"", "locations":"", "world_rules":"",
 "past_events":"", "ongoing_plot":"", "continuity":"screen direction, visual rules"},
 "entities":[{"key":"stable_key","kind":"character or location","name":"name",
-"description":"precise permanent visual identity; wardrobe; voice for characters"}],
+"description":"precise permanent visual identity; wardrobe; voice for characters",
+"identity":{"visual_description":"immutable species, face, colors and proportions",
+"variant_of":"existing identity key for an age variant or empty",
+"attached_value":null,"label_key":"stable label key shared by variants or empty"}}],
 "scenes":[{"heading":"scene title","action":"action","dialog":"full scene dialogue",
 "shots":[{"description":"story beat","prompt":"visual motion and native sound",
 "image_prompt":"still composition matching motion prompt", "dialogue":"plain speech",
@@ -159,16 +162,27 @@ fixed display; character anchors require a tight, textured anchor_box around the
 correct character, excluding other characters. Keep the composition simple.
 No decorative score changes. Mark event=appear/change/reveal only at real beats.
 The software adds the exact text and event sound in post-production.
+If directing_profile.attached_values is true, declare each required character's
+initial integer identity.attached_value and stable identity.label_key. Every
+visible character with a configured value MUST have its own numeric screen_text
+entry attached to that entity_key. Do not replace this data with prose or omit it.
+For an in-shot change, keep value as the initial value and add
+changes:[{"at_sec":1.2,"value":2}], with event="change"; at_sec is the useful
+edited shot time. The next shot starts with that final value. Never infer a
+change from action text. Preserve all other characters' values.
+Identity variants retain the same immutable species, colors and facial traits;
+variant_of supplies their existing reference, it is not a new random design.
+If require_reference_approval is true, visual_description must explicitly fix
+the immutable design of every character and location. References are reviewed before video.
 """
     trace = context.get("_planner_trace")
     trace_token = uuid.uuid4().hex
-    public_context = {
-        k: v for k, v in context.items() if k not in ("entities", "_planner_trace")
-    }
+    public_context = {k: v for k, v in context.items() if k not in ("entities", "_planner_trace")}
     public_context["directing_profile"] = directing_profile(context.get("directing_profile"))
     public_context["entities"] = [
-        {k: e[k] for k in ("key", "kind", "name", "description")}
-        for e in context["entities"] if e["key"] != OUTRO_KEY
+        {k: e[k] for k in ("key", "kind", "name", "description", "identity") if k in e}
+        for e in context["entities"]
+        if e["key"] != OUTRO_KEY
     ]
     episode_target = float(context.get("target_seconds", 65))
     target = max(5.0, episode_target - OUTRO_SECONDS)
@@ -246,13 +260,22 @@ The software adds the exact text and event sound in post-production.
                 path = directory / (
                     f"planner-{trace['job_id']}-{trace_token}-attempt-{attempt + 1}.json"
                 )
-                path.write_text(json.dumps({
-                    "project_id": trace["project_id"], "job_id": trace["job_id"],
-                    "attempt": attempt + 1,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                    "messages": request_messages, "response": result,
-                    "validation_error": validation_error,
-                }, ensure_ascii=False, indent=2), encoding="utf-8")
+                path.write_text(
+                    json.dumps(
+                        {
+                            "project_id": trace["project_id"],
+                            "job_id": trace["job_id"],
+                            "attempt": attempt + 1,
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                            "messages": request_messages,
+                            "response": result,
+                            "validation_error": validation_error,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
 
 
 def canonical_key(value, entities, kind):
@@ -264,8 +287,10 @@ def canonical_key(value, entities, kind):
         return value
     normalized = re.sub(r"[\s_-]+", "_", value.casefold())
     keys = {
-        e["key"] for e in candidates
-        if normalized in {
+        e["key"]
+        for e in candidates
+        if normalized
+        in {
             re.sub(r"[\s_-]+", "_", str(e.get(field) or "").strip().casefold())
             for field in ("key", "name")
         }
@@ -279,14 +304,20 @@ def append_outro(plan, context):
     language = next(code for code, name in LANGUAGES.items() if name == label)
     dialogue = OUTRO_DIALOGUES[language]
     if not any(e["key"] == OUTRO_KEY for e in context.get("entities", []) + plan["entities"]):
-        plan["entities"].append({
-            "key": OUTRO_KEY, "kind": "character", "name": "Studio host",
-            "description": (
-                "Friendly anthropomorphic red apple with a small green leaf, "
-                "expressive eyes, clearly visible mouth, small arms, navy jacket, "
-                "consistent proportions. Clear warm voice."
-            ),
-        })
+        plan["entities"].append(
+            {
+                "key": OUTRO_KEY,
+                "kind": "character",
+                "name": "Studio host",
+                "description": (
+                    "Friendly anthropomorphic red apple with a small green leaf, "
+                    "expressive eyes, clearly visible mouth, small arms, navy jacket, "
+                    "consistent proportions. Clear warm voice."
+                ),
+            }
+        )
+        host = plan["entities"][-1]
+        host["identity"] = {"visual_description": host["description"]}
     shot = {
         "description": "The fruit host invites the viewer to make videos.",
         "prompt": (
@@ -299,18 +330,25 @@ def append_outro(plan, context):
             "expressive eyes, visible mouth, small arms and navy jacket in a clean studio. "
             "Medium close-up, the host fills the frame, soft lighting, no text."
         ),
-        "dialogue": dialogue, "speaker": OUTRO_KEY,
-        "character_keys": [OUTRO_KEY], "location_key": "",
-        "reference_key": "studio-cta-host-studio", "duration_sec": OUTRO_SECONDS,
-        "audio_mode": "native", "language": language, "purpose": "outro",
+        "dialogue": dialogue,
+        "speaker": OUTRO_KEY,
+        "character_keys": [OUTRO_KEY],
+        "location_key": "",
+        "reference_key": "studio-cta-host-studio",
+        "duration_sec": OUTRO_SECONDS,
+        "audio_mode": "native",
+        "language": language,
+        "purpose": "outro",
         "framing": "Medium close-up, visible speaker dominates the vertical frame.",
         "camera": "Static camera.",
         "action": "The host speaks directly to the viewer and gestures invitingly.",
         "reaction": "The host finishes with an enthusiastic smile.",
     }
     ending = {
-        "heading": "Studio - Make your own videos", "action": shot["action"],
-        "dialog": dialogue, "shots": [shot],
+        "heading": "Studio - Make your own videos",
+        "action": shot["action"],
+        "dialog": dialogue,
+        "shots": [shot],
     }
     if plan.get("scenes") and any(
         s.get("purpose") == "outro" for s in plan["scenes"][-1].get("shots", [])
@@ -343,7 +381,7 @@ def normalize_dialogue(dialogue, speaker, entities):
                     "La réplique contient plusieurs voix ou un locuteur contradictoire."
                 )
             speaker = next(iter(owners))
-            dialogue = dialogue[prefix.end():].strip()
+            dialogue = dialogue[prefix.end() :].strip()
             had_label = True
         wrapper = re.fullmatch(r"<d>\s*(.*?)\s*</d>", dialogue, re.S | re.I)
         if wrapper and not re.search(r"<[^>]+>", wrapper[1]):
@@ -352,7 +390,7 @@ def normalize_dialogue(dialogue, speaker, entities):
             if language and language[1].casefold() in (
                 name.casefold() for name in LANGUAGES.values()
             ):
-                dialogue = dialogue[language.end():].strip()
+                dialogue = dialogue[language.end() :].strip()
         if before == dialogue:
             break
     labels = re.findall(r"(?:^|\s)([^\W\d_][\w '-]{0,30}):", dialogue, re.I)
@@ -373,7 +411,7 @@ def normalize_dialogue(dialogue, speaker, entities):
                     "La réplique contient plusieurs voix; séparez les locuteurs en dialogue_turns."
                 )
             speaker = next(iter(owners))
-            line = line[prefix.end():].strip()
+            line = line[prefix.end() :].strip()
             had_label = True
         elif index and had_label and prefix:
             raise ValueError(f"La réplique contient plusieurs voix possibles: {prefix[1]!r}.")
@@ -394,7 +432,9 @@ def normalize_dialogue(dialogue, speaker, entities):
 def normalize_plan(result, context):
     if not isinstance(result, dict) or not isinstance(result.get("scenes"), list):
         raise ValueError("L'IA n'a pas renvoyé de scénario exploitable.")
-    known = {item["key"] for item in context.get("entities", [])}
+    profile = directing_profile(context.get("directing_profile"))
+    canon = {item["key"]: item for item in context.get("entities", [])}
+    known = set(canon)
     new_entities = result.get("entities", [])
     if not isinstance(new_entities, list) or len(new_entities) > 30:
         raise ValueError("Liste de personnages ou lieux invalide.")
@@ -406,8 +446,39 @@ def normalize_plan(result, context):
             or not str(entity.get("description", "")).strip()
         ):
             raise ValueError("Une identité visuelle est incomplète.")
+        if entity["key"] in canon:
+            original = canon[entity["key"]]
+            for field in ("name", "description", "identity"):
+                if field in original:
+                    entity[field] = copy.deepcopy(original[field])
         known.add(entity["key"])
-    all_entities = context.get("entities", []) + new_entities
+    all_entities = list((canon | {e["key"]: e for e in new_entities}).values())
+    required_values = {}
+    for entity in all_entities:
+        identity = entity.get("identity") or {}
+        if (
+            profile["require_reference_approval"]
+            and not identity.get("visual_description", "").strip()
+        ):
+            raise ValueError(
+                f"entities[{entity['key']}].identity.visual_description: "
+                "identité immuable manquante."
+            )
+        if entity.get("kind", "character") != "character":
+            continue
+        if identity.get("attached_value") is not None:
+            value = identity["attached_value"]
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(
+                    f"entities[{entity['key']}].identity.attached_value: entier requis."
+                )
+            required_values[entity["key"]] = (identity.get("label_key") or entity["key"], value)
+    if profile["attached_values"] and not required_values:
+        raise ValueError(
+            "entities.identity.attached_value: "
+            "déclarez les valeurs entières structurées des personnages."
+        )
+    attached_required = profile["attached_values"] or bool(required_values)
     characters = {e["key"] for e in all_entities if e.get("kind", "character") == "character"}
     result["speaker_ids"] = dict(context.get("speaker_ids") or {})
     for entity in all_entities:
@@ -449,7 +520,8 @@ def normalize_plan(result, context):
                     reference_errors.append(f"{turn_field}.{exc}")
     if reference_errors:
         raise ValueError(
-            "Références du scénario à corriger ensemble: " + "\n".join(reference_errors)
+            "Références du scénario à corriger ensemble: "
+            + "\n".join(reference_errors)
             + "\nDéclarez tous les lieux dans entities. Attribuez chaque réplique à un "
             "personnage connu; une notification sans personnage parlant est un son ou "
             "une action, pas une réplique sans locuteur."
@@ -477,9 +549,7 @@ def normalize_plan(result, context):
             except (TypeError, ValueError):
                 duration = 0
             if not 1 <= duration <= 15:
-                raise ValueError(
-                    "Chaque plan doit viser une durée utile entre 1 et 15 secondes."
-                )
+                raise ValueError("Chaque plan doit viser une durée utile entre 1 et 15 secondes.")
             duration = round(duration, 1)
             turns = shot.get("dialogue_turns") or []
             if not isinstance(turns, list) or len(turns) > 30:
@@ -488,9 +558,11 @@ def normalize_plan(result, context):
                 for key in ("action", "reaction"):
                     if key in turn:
                         validate_h3_prose(turn[key])
-            dialogue = " ".join(t["text"] for t in turns) if turns else str(
-                shot.get("dialogue") or ""
-            ).strip()
+            dialogue = (
+                " ".join(t["text"] for t in turns)
+                if turns
+                else str(shot.get("dialogue") or "").strip()
+            )
             speaker = canonical_key(shot.get("speaker"), all_entities, "character")
             if turns:
                 voices = {t["speaker"] for t in turns}
@@ -549,32 +621,89 @@ def normalize_plan(result, context):
                 raise ValueError("Liste de textes à l'écran invalide.")
             shot["screen_text"] = [
                 ScreenText.model_validate(
-                    label | {"number_format": directing_profile(
-                        context.get("directing_profile")
-                    )["number_format"]}
-                    if isinstance(label, dict) and label.get("value") is not None else label
-                ).model_dump() for label in labels
+                    label | {"number_format": profile["number_format"]}
+                    if isinstance(label, dict) and label.get("value") is not None
+                    else label
+                ).model_dump()
+                for label in labels
             ]
-            for raw_label, label in zip(labels, shot["screen_text"]):
-                label["entity_key"] = canonical_key(
-                    label["entity_key"], all_entities, "character"
-                )
+            for label in shot["screen_text"]:
+                label["entity_key"] = canonical_key(label["entity_key"], all_entities, "character")
+            if attached_required:
+                missing = [
+                    key
+                    for key in keys
+                    if key in required_values
+                    and not any(
+                        label["entity_key"] == key
+                        and label["value"] is not None
+                        and label["anchor"] == "character"
+                        for label in shot["screen_text"]
+                    )
+                ]
+                if missing:
+                    raise ValueError(
+                        f"scenes[{scene_index}].shots[{shot_index}].screen_text: "
+                        f"valeurs attachées manquantes pour {', '.join(missing)}."
+                    )
+            label_keys = set()
+            for label in shot["screen_text"]:
                 if label["entity_key"] and label["entity_key"] not in keys:
                     raise ValueError("Un texte référence un personnage absent du plan.")
+                if label["key"] in label_keys:
+                    raise ValueError("Deux textes du même plan utilisent la même clé.")
+                label_keys.add(label["key"])
+                if attached_required and label["entity_key"] in required_values:
+                    required_key, initial_value = required_values[label["entity_key"]]
+                    if label["key"] != required_key:
+                        raise ValueError(
+                            f"Clé de valeur incohérente pour {label['entity_key']}: {required_key}."
+                        )
+                    prior_text = display_values.get(required_key)
+                    expected_value = (
+                        int(re.sub(r"[ ,]", "", prior_text))
+                        if prior_text is not None
+                        else initial_value
+                    )
+                    if label["value"] != expected_value and label["event"] not in (
+                        "change",
+                        "reveal",
+                    ):
+                        raise ValueError(
+                            f"La valeur de {label['entity_key']} doit rester {expected_value} "
+                            "sans événement structuré."
+                        )
+                changes = label.get("changes", [])
+                if changes and label["event"] not in ("change", "reveal"):
+                    raise ValueError(
+                        "Un changement temporel exige un événement narratif change/reveal."
+                    )
+                if any(change["at_sec"] >= duration for change in changes):
+                    raise ValueError(
+                        "Un changement de valeur dépasse la durée utile prévue du plan."
+                    )
                 previous = display_values.get(label["key"])
-                if previous is not None and previous != label["text"] and label["event"] not in (
-                    "change", "reveal"
+                if (
+                    previous is not None
+                    and previous != label["text"]
+                    and label["event"] not in ("change", "reveal")
                 ):
                     raise ValueError("Une valeur affichée change sans événement narratif.")
-                display_values[label["key"]] = label["text"]
+                final_label = (
+                    ScreenText.model_validate(label | {"value": changes[-1]["value"]})
+                    if changes
+                    else None
+                )
+                display_values[label["key"]] = final_label.text if final_label else label["text"]
+            if shot["screen_text"]:
+                from calliope.studio.visual_identity import strip_generated_text
+
                 blank = (
-                    " Render a blank illuminated display with no letters or digits at normalized "
-                    f"position ({label['x']:g}, {label['y']:g}); exact text is added in editing."
+                    " Leave clean blank space for the exact labels added in editing; "
+                    "generate no text or digits."
                 )
                 for key in ("prompt", "image_prompt"):
-                    shot[key] = str(shot[key]).replace(label["text"], "a blank display") + blank
-                    if raw_label.get("text"):
-                        shot[key] = shot[key].replace(raw_label["text"], "a blank display")
+                    shot[key] = strip_generated_text(shot[key], shot["screen_text"]) + blank
             shot["audio_mode"] = "native" if dialogue else shot.get("audio_mode", "native")
             if shot["audio_mode"] not in ("native", "silent"):
                 raise ValueError("Mode audio invalide.")
@@ -582,9 +711,7 @@ def normalize_plan(result, context):
                 r"<d>.*?</d>", "", str(shot["prompt"]), flags=re.S | re.I
             ).strip()
             for field in ("action", "reaction", "framing", "camera", "soundscape"):
-                if field in shot and (
-                    not isinstance(shot[field], str) or len(shot[field]) > 5000
-                ):
+                if field in shot and (not isinstance(shot[field], str) or len(shot[field]) > 5000):
                     raise ValueError("Une directive de réalisation est invalide.")
                 if field in shot:
                     validate_h3_prose(shot[field])
@@ -622,9 +749,16 @@ def normalize_plan(result, context):
         for label in shot.get("screen_text", []):
             effect = {"appear": "click", "change": "beep", "reveal": "impact"}.get(label["event"])
             if effect and not any(c["shot_index"] == shot_index for c in result["audio"]["sfx"]):
-                result["audio"]["sfx"].append({
-                    "effect": effect, "shot_index": shot_index, "at_sec": 0.15, "gain_db": -24,
-                })
+                result["audio"]["sfx"].append(
+                    {
+                        "effect": effect,
+                        "shot_index": shot_index,
+                        "at_sec": label.get("changes", [{}])[0].get("at_sec", 0.15)
+                        if label.get("changes")
+                        else 0.15,
+                        "gain_db": -24,
+                    }
+                )
     result["bible"] = {
         key: str(value) for key, value in (result.get("bible") or {}).items() if key in BIBLE_FIELDS
     }

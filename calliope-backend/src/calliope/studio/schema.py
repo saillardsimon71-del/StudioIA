@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS studio_entities (
     name TEXT NOT NULL,
     description TEXT NOT NULL,
     reference_path TEXT,
+    identity_json TEXT NOT NULL DEFAULT '{}',
+    reference_request_json TEXT NOT NULL DEFAULT '{}',
     UNIQUE(series_id,entity_key)
 );
 CREATE TABLE IF NOT EXISTS studio_shot_context (
@@ -136,6 +138,8 @@ def migrate_studio(db_path):
         for table, column in (
             ("studio_series", "directing_profile_json"),
             ("studio_takes", "render_state_json"),
+            ("studio_entities", "identity_json"),
+            ("studio_entities", "reference_request_json"),
         ):
             columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
             if column not in columns:

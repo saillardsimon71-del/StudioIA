@@ -3,6 +3,7 @@ import base64
 import hashlib
 import io
 import json
+import math
 import secrets
 import subprocess
 import uuid
@@ -44,7 +45,7 @@ def utc_now():
 
 def shot_context(conn, shot_id):
     row = conn.execute(
-        "SELECT e.context_json,e.plan_json,sc.context_json AS shot_json FROM clips c "
+        "SELECT e.context_json,e.plan_json,e.series_id,sc.context_json AS shot_json FROM clips c "
         "LEFT JOIN studio_episodes e ON e.project_id=c.project_id "
         "LEFT JOIN studio_shot_context sc ON sc.clip_id=c.id WHERE c.id=?",
         (shot_id,),
@@ -53,6 +54,15 @@ def shot_context(conn, shot_id):
     plan = json.loads(row["plan_json"] or "{}") if row else {}
     entities = {e["key"]: e for e in plan.get("entities", [])}
     entities.update({e["key"]: e for e in context.get("entities", [])})
+    if row and row["series_id"]:
+        from calliope.studio.series import entities as series_entities
+
+        for entity in series_entities(conn, row["series_id"]):
+            if entity["key"] in entities:
+                entities[entity["key"]].update(
+                    identity=entity["identity"],
+                    reference_path=entity.get("reference_path"),
+                )
     context["entities"] = list(entities.values())
     context["bible"] = {
         **plan.get("bible", {}),
@@ -244,6 +254,25 @@ def public_shot(conn, shot_id):
     clip["dialogue_turns"] = context.get("dialogue_turns", [])
     clip["soundscape"] = context.get("soundscape", "")
     clip["screen_text"] = context.get("screen_text", [])
+    clip["character_keys"] = context.get("character_keys", [])
+    if clip["continue_from_previous"]:
+        try:
+            previous = _previous_video(conn, shot_id)
+            clip["continuation_source"] = public_take(conn, previous)
+            end = conn.execute(
+                "SELECT trim_end_sec FROM studio_shots WHERE clip_id=?", (previous["clip_id"],)
+            ).fetchone()[0]
+            meta = json.loads(previous["metadata_json"] or "{}")
+            from calliope.engines.h3_graph import H3_FPS
+
+            fps = float(meta.get("fps") or H3_FPS)
+            clip["continuation_frame_index"] = (
+                max(0, math.ceil(max(0, end - 1 / H3_FPS) * fps - 1e-6))
+                if end is not None
+                else max(0, round(float(meta.get("duration_sec") or 0) * fps) - 1)
+            )
+        except HTTPException:
+            clip["continuation_source"] = None
     clip["takes"] = [
         public_take(conn, r)
         for r in conn.execute(
@@ -659,6 +688,163 @@ def select_take(take_id):
         return result
 
 
+def visual_review_contract(context, shot):
+    from calliope.studio.visual_identity import contract_hash
+
+    info = context.get("shot") or {}
+    keys = list(info.get("character_keys") or [])
+    if info.get("location_key"):
+        keys.append(info["location_key"])
+    identities = [
+        {"key": entity["key"], "identity": entity.get("identity") or {}}
+        for entity in context["entities"]
+        if entity["key"] in keys
+    ]
+    labels = [
+        {k: v for k, v in label.items() if k != "anchor_binding"}
+        for label in shot.get("screen_text", [])
+    ]
+    return contract_hash(
+        {
+            "identities": identities,
+            "labels": labels,
+            "visual_style": context.get("bible", {}).get("visual_style", ""),
+        }
+    )
+
+
+def review_take_visuals(take_id, approved, frame_index=0, target_shot_id=None):
+    from calliope.studio.screen_text import bind_anchor
+    from calliope.studio.visual_identity import file_hash
+
+    with database() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        take = conn.execute("SELECT * FROM studio_takes WHERE id=?", (take_id,)).fetchone()
+        if not take:
+            raise HTTPException(404, "Prise introuvable.")
+        shot = public_shot(conn, target_shot_id or take["clip_id"])
+        selected = shot["selected_image_id" if take["kind"] == "image" else "selected_video_id"]
+        continuation = bool(target_shot_id and target_shot_id != take["clip_id"])
+        if continuation:
+            previous = _previous_video(conn, shot["id"]) if shot["continue_from_previous"] else None
+            selected = previous["id"] if previous else None
+        if (
+            selected != take_id
+            or take["status"] != "done"
+            or not Path(take["output_path"] or "").is_file()
+        ):
+            raise HTTPException(
+                409, "Choisissez cette prise terminée avant de vérifier son identité."
+            )
+        context = shot_context(conn, shot["id"])
+        metadata = json.loads(take["metadata_json"] or "{}")
+        if approved:
+            try:
+                bindings = [
+                    bind_anchor(take["output_path"], label, take_id, frame_index)
+                    for label in shot.get("screen_text", [])
+                    if label.get("anchor") == "character"
+                ]
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from None
+            review = {
+                "approved": True,
+                "source_sha256": file_hash(take["output_path"]),
+                "contract_hash": visual_review_contract(context, shot),
+                "anchor_bindings": bindings,
+                "frame_index": frame_index,
+            }
+            if take["kind"] == "video":
+                from calliope.studio.screen_text import _anchor_frame
+
+                frame = _anchor_frame(take["output_path"], frame_index)
+                review["frame_pixel_sha256"] = hashlib.sha256(
+                    frame[:, :, ::-1].tobytes()
+                ).hexdigest()
+            if continuation:
+                metadata.setdefault("continuation_reviews", {})[str(shot["id"])] = review
+            else:
+                metadata["visual_review"] = review
+        else:
+            if continuation:
+                metadata.setdefault("continuation_reviews", {}).pop(str(shot["id"]), None)
+            else:
+                metadata.pop("visual_review", None)
+        if take["kind"] == "video" and not continuation:
+            info = context["shot"]
+            binding_iter = iter((metadata.get("visual_review") or {}).get("anchor_bindings", []))
+            for label in info.get("screen_text", []):
+                if label.get("anchor") == "character":
+                    label["anchor_binding"] = next(binding_iter) if approved else None
+            conn.execute(
+                "UPDATE studio_shot_context SET context_json=? WHERE clip_id=?",
+                (json.dumps(info), shot["id"]),
+            )
+        conn.execute(
+            "UPDATE studio_takes SET metadata_json=? WHERE id=?", (json.dumps(metadata), take_id)
+        )
+        conn.execute("UPDATE studio_shots SET approved=0 WHERE clip_id=?", (shot["id"],))
+        touch(conn, shot["project_id"])
+        conn.commit()
+        return public_take(
+            conn, conn.execute("SELECT * FROM studio_takes WHERE id=?", (take_id,)).fetchone()
+        )
+
+
+def require_source_visual_review(source, shot, context, previous_video_time=None):
+    from calliope.studio.visual_identity import file_hash, validate_value_manifest
+
+    try:
+        validate_value_manifest(shot, context)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+
+    labels = [label for label in shot.get("screen_text", []) if label.get("anchor") == "character"]
+    strict = context.get("directing_profile", {}).get("require_reference_approval")
+    if not strict and not labels:
+        return None
+    if not source:
+        raise HTTPException(
+            422, "Choisissez une image de départ et approuvez son identité avant la vidéo."
+        )
+    metadata = json.loads(source["metadata_json"] or "{}")
+    review = (
+        (
+            (metadata.get("continuation_reviews") or {}).get(str(shot["id"]))
+            if source["kind"] == "video"
+            else None
+        )
+        or metadata.get("visual_review")
+        or {}
+    )
+    if (
+        not review.get("approved")
+        or review.get("source_sha256") != file_hash(source["output_path"])
+        or review.get("contract_hash") != visual_review_contract(context, shot)
+    ):
+        raise HTTPException(
+            422,
+            "Vérifiez et approuvez l'identité et les zones sur l'image de départ avant la vidéo.",
+        )
+    if len(review.get("anchor_bindings", [])) != len(labels):
+        raise HTTPException(422, "Les zones de texte de l'image de départ doivent être approuvées.")
+    if source["kind"] == "video":
+        from calliope.engines.modal_h3 import _last_frame_png
+
+        content = _last_frame_png(Path(source["output_path"]), previous_video_time)
+        with Image.open(io.BytesIO(content)) as image:
+            digest = hashlib.sha256(image.convert("RGB").tobytes()).hexdigest()
+        if review.get("frame_pixel_sha256") != digest:
+            raise HTTPException(
+                422, "Approuvez la dernière frame conservée du plan précédent avant de poursuivre."
+            )
+        review = review | {
+            "source_frame_sha256": hashlib.sha256(content).hexdigest(),
+            "previous_video_time": previous_video_time,
+        }
+    return review
+
+
 def approve_shot(shot_id, approved):
     with database() as conn:
         shot = public_shot(conn, shot_id)
@@ -676,9 +862,26 @@ def approve_shot(shot_id, approved):
                     409, "Choisissez une prise vidéo terminée avant de valider ce plan."
                 )
             qc = json.loads(take["metadata_json"] or "{}").get("dialogue_qc") or {}
+            context = shot_context(conn, shot_id)
+            if context.get("directing_profile", {}).get("require_reference_approval") or any(
+                label.get("anchor") == "character" for label in shot.get("screen_text", [])
+            ):
+                from calliope.studio.visual_identity import file_hash
+
+                review = json.loads(take["metadata_json"] or "{}").get("visual_review") or {}
+                if (
+                    not review.get("approved")
+                    or review.get("source_sha256") != file_hash(take["output_path"])
+                    or review.get("contract_hash") != visual_review_contract(context, shot)
+                ):
+                    raise HTTPException(
+                        422,
+                        "Vérifiez et approuvez l'identité et les zones "
+                        "de la vidéo réelle avant le montage.",
+                    )
             if qc.get("status") in ("missing", "extra", "inaudible"):
                 raise HTTPException(
-                    409, 'Contrôle parole bloquant : ' + qc.get('reason', qc['status'])
+                    409, "Contrôle parole bloquant : " + qc.get("reason", qc["status"])
                 )
         if shot["approved"] != approved:
             conn.execute(
@@ -723,7 +926,13 @@ def enqueue_takes(shot_id, data):
             "SELECT aspect_ratio FROM studio_projects WHERE project_id=?", (project["id"],)
         ).fetchone()[0]
         kind = data["kind"]
-        from calliope.studio.production import image_references
+        from calliope.studio.visual_identity import (
+            compile_image_request,
+            file_hash,
+            reference_bindings,
+            validate_value_manifest,
+        )
+
         source = None
         if kind == "video" and shot["continue_from_previous"]:
             source = _previous_video(conn, shot_id)
@@ -736,6 +945,17 @@ def enqueue_takes(shot_id, data):
         if not prompt.strip():
             raise HTTPException(422, "Saisissez un prompt pour ce plan avant de générer.")
         context = shot_context(conn, shot_id)
+        try:
+            validate_value_manifest(shot, context)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        image_inputs = None
+        if kind == "image":
+            try:
+                image_inputs = compile_image_request(shot, context)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from None
+            prompt = image_inputs["prompt"]
         if kind == "video":
             from calliope.studio.h3_prompt import compile_h3_prompt, spoken_dialogue
 
@@ -761,14 +981,36 @@ def enqueue_takes(shot_id, data):
                 context=context,
                 expected_dialogue=spoken_dialogue(shot | context.get("shot", {}), context),
             )
+            if context.get("directing_profile", {}).get("require_reference_approval"):
+                info = context.get("shot") or {}
+                keys = (info.get("character_keys") or []) + (
+                    [info["location_key"]] if info.get("location_key") else []
+                )
+                try:
+                    parameters["reference_bindings"] = reference_bindings(
+                        context["entities"], keys, True
+                    )
+                    parameters["reference_paths"] = [
+                        binding["path"] for binding in parameters["reference_bindings"]
+                    ]
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc)) from None
+            if source and source["output_path"]:
+                parameters["source_sha256"] = file_hash(source["output_path"])
             if source and source["kind"] == "video":
                 previous = conn.execute(
                     "SELECT trim_end_sec FROM studio_shots WHERE clip_id=?", (source["clip_id"],)
                 ).fetchone()
                 parameters["previous_video_time"] = previous[0] if previous else None
-        references = image_references(conn, shot_id) if kind == "image" else []
-        if references:
-            parameters["reference_paths"] = references
+            review = require_source_visual_review(
+                source, shot, context, parameters.get("previous_video_time")
+            )
+            if review:
+                parameters["source_visual_review"] = review
+                if review.get("source_frame_sha256"):
+                    parameters["source_frame_sha256"] = review["source_frame_sha256"]
+        if image_inputs:
+            parameters.update(image_inputs)
         fingerprint = hashlib.sha256(
             json.dumps(
                 {"parameters": parameters, "n_takes": data["n_takes"], "seed": data.get("seed")},
@@ -836,10 +1078,14 @@ def enqueue_takes(shot_id, data):
             request = {**parameters, "seed": seed}
             state = {
                 "phase": "QUEUED",
-                "events": [{
-                    "phase": "QUEUED", "at": utc_now(),
-                    "detail": "Demande enregistrée", "source": "local",
-                }],
+                "events": [
+                    {
+                        "phase": "QUEUED",
+                        "at": utc_now(),
+                        "detail": "Demande enregistrée",
+                        "source": "local",
+                    }
+                ],
             }
             if kind == "video":
                 request["trace_id"] = uuid.uuid4().hex
@@ -872,11 +1118,16 @@ def enqueue_takes(shot_id, data):
                     shot["scene_id"],
                     shot_id,
                     kind,
-                    json.dumps({
-                        "studio_take_id": take_id,
-                        **({'parent_job_id': data['parent_job_id']}
-                           if data.get('parent_job_id') else {}),
-                    }),
+                    json.dumps(
+                        {
+                            "studio_take_id": take_id,
+                            **(
+                                {"parent_job_id": data["parent_job_id"]}
+                                if data.get("parent_job_id")
+                                else {}
+                            ),
+                        }
+                    ),
                 ),
             )
             job_id = cur.lastrowid
@@ -1007,6 +1258,9 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
 
 
 async def _generate_image(request):
+    from calliope.studio.visual_identity import verify_reference_inputs
+
+    verify_reference_inputs(request)
     if request["image_base_url"].rstrip("/") != settings.studio_image_base_url.rstrip("/"):
         raise ValueError(
             "Le service d'images a changé depuis cette demande. "
@@ -1101,6 +1355,71 @@ async def run_studio_job(job, payload, should_stop):
     directory = settings.assets_dir / str(take["project_id"]) / "studio" / "takes" / str(take_id)
     directory.mkdir(parents=True, exist_ok=True)
     try:
+        if not take["modal_call_id"]:
+            from calliope.studio.visual_identity import (
+                compile_image_request,
+                file_hash,
+                verify_reference_inputs,
+            )
+
+            verify_reference_inputs(request)
+            if take["kind"] == "image" and request.get("require_reference_approval"):
+                with database() as conn:
+                    current = public_shot(conn, take["clip_id"])
+                    compiled = compile_image_request(current, shot_context(conn, take["clip_id"]))
+                if compiled["reference_bindings"] != request.get("reference_bindings") or compiled[
+                    "input_hashes"
+                ] != request.get("input_hashes"):
+                    raise ValueError("Le contrat visuel a changé. Créez une nouvelle demande.")
+            if request.get("source_sha256"):
+                source_path = request.get("image_path") or request.get("previous_video_path")
+                if not source_path or file_hash(source_path) != request["source_sha256"]:
+                    raise ValueError(
+                        "L'image de départ a changé depuis sa préparation. "
+                        "Créez une nouvelle demande."
+                    )
+            if take["kind"] == "video":
+                with database() as conn:
+                    current = public_shot(conn, take["clip_id"])
+                    context = shot_context(conn, take["clip_id"])
+                    source = conn.execute(
+                        "SELECT * FROM studio_takes WHERE id=?", (take["source_take_id"],)
+                    ).fetchone()
+                    selected_source = (
+                        _previous_video(conn, current["id"])
+                        if current["continue_from_previous"]
+                        else None
+                    )
+                    if request.get("source_visual_review") and (
+                        not source
+                        or (
+                            source["kind"] == "image"
+                            and current["selected_image_id"] != source["id"]
+                        )
+                        or (
+                            source["kind"] == "video"
+                            and (not selected_source or selected_source["id"] != source["id"])
+                        )
+                    ):
+                        raise ValueError(
+                            "L'image de départ choisie a changé. Créez une nouvelle demande."
+                        )
+                    source_time = None
+                    if source and source["kind"] == "video":
+                        source_time = conn.execute(
+                            "SELECT trim_end_sec FROM studio_shots WHERE clip_id=?",
+                            (source["clip_id"],),
+                        ).fetchone()[0]
+                    current_review = require_source_visual_review(
+                        source, current, context, source_time
+                    )
+                    if (
+                        request.get("source_visual_review")
+                        and current_review != request["source_visual_review"]
+                    ):
+                        raise ValueError(
+                            "La référence approuvée a changé. Créez une nouvelle demande."
+                        )
         if take["kind"] == "image":
             content, metadata = await _generate_image(request)
             path = directory / "image.png"
@@ -1118,8 +1437,9 @@ async def run_studio_job(job, payload, should_stop):
                 render_event(take_id, identity=await asyncio.to_thread(engine.identity))
             started_at = state.get("resume_started_at") or state.get("started_at") or utc_now()
             render_event(
-                take_id, started_at=state.get('started_at') or started_at,
-                progress_limited=not bool(request.get('trace_id')),
+                take_id,
+                started_at=state.get("started_at") or started_at,
+                progress_limited=not bool(request.get("trace_id")),
             )
             if not call_id:
                 if queue_manager.is_cancelled(job["id"]):
@@ -1147,6 +1467,12 @@ async def run_studio_job(job, payload, should_stop):
                     raise asyncio.CancelledError()
                 if queue_manager.is_cancelled(job["id"]):
                     raise StudioCancelledError()
+                if request.get("source_frame_sha256"):
+                    frame_digest = hashlib.sha256(
+                        base64.b64decode(prepared["image_base64"])
+                    ).hexdigest()
+                    if frame_digest != request["source_frame_sha256"]:
+                        raise ValueError("La frame préparée diffère de la frame approuvée.")
                 with database() as conn:
                     conn.execute(
                         "UPDATE studio_takes SET submission_state='submitting' WHERE id=?",
@@ -1166,7 +1492,7 @@ async def run_studio_job(job, payload, should_stop):
                         )
                         conn.commit()
                     render_event(take_id, "SUBMITTED", "Appel confirmé pendant arrêt")
-                    if queue_manager.is_cancelled(job['id']):
+                    if queue_manager.is_cancelled(job["id"]):
                         await cancel_modal_take(take_id)
                         raise StudioCancelledError() from None
                     raise
@@ -1179,8 +1505,9 @@ async def run_studio_job(job, payload, should_stop):
                     conn.commit()
                 render_event(take_id, "SUBMITTED", "Appel Modal confirmé")
             render_event(
-                take_id, 'WAITING_FOR_GPU',
-                'Appel soumis; allocation et démarrage non distingués',
+                take_id,
+                "WAITING_FOR_GPU",
+                "Appel soumis; allocation et démarrage non distingués",
             )
             while True:
                 if queue_manager.is_cancelled(job["id"]):
@@ -1205,9 +1532,11 @@ async def run_studio_job(job, payload, should_stop):
                 except Exception as exc:
                     from calliope.engines.modal_h3 import is_poll_network_error
 
-                    if getattr(engine, 'remote_terminal', False):
+                    if getattr(engine, "remote_terminal", False):
                         render_event(
-                            take_id, remote_terminal=True, remote_terminal_reason='sdk_result',
+                            take_id,
+                            remote_terminal=True,
+                            remote_terminal_reason="sdk_result",
                         )
                     if not is_poll_network_error(exc):
                         raise
@@ -1216,7 +1545,9 @@ async def run_studio_job(job, payload, should_stop):
                     continue
                 if result is not None:
                     render_event(
-                        take_id, remote_terminal=True, remote_terminal_reason='result_received',
+                        take_id,
+                        remote_terminal=True,
+                        remote_terminal_reason="result_received",
                     )
                     break
                 await event_bus.publish(
@@ -1231,13 +1562,13 @@ async def run_studio_job(job, payload, should_stop):
                 await asyncio.sleep(max(1, settings.queue_poll_interval_sec))
             if queue_manager.is_cancelled(job["id"]):
                 raise StudioCancelledError()
-            render_event(take_id, 'DOWNLOADING', 'Résultat distant reçu', poll_error=None)
+            render_event(take_id, "DOWNLOADING", "Résultat distant reçu", poll_error=None)
             content = base64.b64decode(result["video_base64"], validate=True)
             path = directory / "video.mp4"
             temporary = directory / "download.mp4"
             temporary.write_bytes(content)
             try:
-                render_event(take_id, 'VALIDATING', 'Contrôle du média')
+                render_event(take_id, "VALIDATING", "Contrôle du média")
                 info = await asyncio.to_thread(inspect_media, temporary)
                 if request["audio_mode"] == "native" and not info["has_audio"]:
                     raise ValueError("Le rendu FastH3 n'a pas de piste audio native.")
@@ -1275,10 +1606,10 @@ async def run_studio_job(job, payload, should_stop):
                 (str(path), json.dumps(metadata), take_id),
             )
             conn.commit()
-        render_event(take_id, 'DONE', 'Média enregistré')
+        render_event(take_id, "DONE", "Média enregistré")
         return [str(path)]
     except StudioCancelledError:
-        render_event(take_id, 'CANCELLED', 'Annulation demandée')
+        render_event(take_id, "CANCELLED", "Annulation demandée")
         with database() as conn:
             conn.execute(
                 "UPDATE studio_takes SET status='cancelled',error='cancelled' WHERE id=?",
@@ -1287,7 +1618,7 @@ async def run_studio_job(job, payload, should_stop):
             conn.commit()
         raise
     except Exception as exc:
-        render_event(take_id, 'FAILED', safe_error(exc))
+        render_event(take_id, "FAILED", safe_error(exc))
         with database() as conn:
             conn.execute(
                 "UPDATE studio_takes SET status='failed',error=? WHERE id=?",

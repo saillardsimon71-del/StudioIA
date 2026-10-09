@@ -1,5 +1,7 @@
 import json
+import re
 import shutil
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException
@@ -41,9 +43,199 @@ def entities(conn, series_id):
     ):
         item = dict(row)
         item["key"] = item.pop("entity_key")
+        item["identity"] = {
+            "visual_description": "",
+            "variant_of": "",
+            "reference_approved": False,
+            "reference_sha256": "",
+            "attached_value": None,
+            "label_key": "",
+        } | json.loads(item.pop("identity_json"))
+        item["reference_request"] = json.loads(item.pop("reference_request_json"))
         item["url"] = service.media_url(item.get("reference_path"))
         result.append(item)
     return result
+
+
+def require_references_editable(conn, series_id):
+    require_series(conn, series_id)
+    if conn.execute(
+        "SELECT 1 FROM studio_productions p JOIN studio_episodes e ON e.project_id=p.project_id "
+        "WHERE e.series_id=? AND p.status IN ('pending','running')",
+        (series_id,),
+    ).fetchone():
+        raise HTTPException(409, "Mettez la production en pause avant de modifier ses références.")
+
+
+def invalidate_reference_dependents(conn, series_id, key):
+    changed = {key}
+    pending = entities(conn, series_id)
+    while pending:
+        affected = [entity for entity in pending if entity["identity"].get("variant_of") in changed]
+        if not affected:
+            break
+        for entity in affected:
+            identity = entity["identity"] | {"reference_approved": False, "reference_sha256": ""}
+            conn.execute(
+                "UPDATE studio_entities SET identity_json=? WHERE id=?",
+                (json.dumps(identity), entity["id"]),
+            )
+            changed.add(entity["key"])
+        pending = [entity for entity in pending if entity not in affected]
+
+
+def update_entity(series_id, entity_id, data):
+    from calliope.studio.visual_identity import file_hash, ordered_entities
+
+    with service.database() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        require_references_editable(conn, series_id)
+        current = next(
+            (entity for entity in entities(conn, series_id) if entity["id"] == entity_id), None
+        )
+        if not current:
+            raise HTTPException(404, "Référence introuvable dans cette série.")
+        identity = current["identity"]
+        patch = data.get("identity") or {}
+        identity_changed = any(identity.get(key) != value for key, value in patch.items())
+        identity.update(patch)
+        if (
+            identity_changed
+            or data.get("reset_reference")
+            or data.get("reference_approved") is False
+        ):
+            identity.update(reference_approved=False, reference_sha256="")
+        if data.get("reset_reference"):
+            current["reference_path"] = None
+        try:
+            ordered_entities(
+                [
+                    entity if entity["id"] != entity_id else current
+                    for entity in entities(conn, series_id)
+                ]
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        if data.get("reference_approved"):
+            if not current.get("reference_path") or not Path(current["reference_path"]).is_file():
+                raise HTTPException(422, "Importez ou préparez une référence avant de l'approuver.")
+            if not str(identity.get("visual_description") or "").strip():
+                raise HTTPException(
+                    422, "Renseignez l'identité visuelle explicite avant d'approuver."
+                )
+            identity.update(
+                reference_approved=True, reference_sha256=file_hash(current["reference_path"])
+            )
+        conn.execute(
+            "UPDATE studio_entities SET identity_json=?,reference_path=? "
+            "WHERE id=? AND series_id=?",
+            (json.dumps(identity), current.get("reference_path"), entity_id, series_id),
+        )
+        if (
+            identity_changed
+            or data.get("reset_reference")
+            or data.get("reference_approved") is False
+        ):
+            invalidate_reference_dependents(conn, series_id, current["key"])
+        conn.commit()
+    return get_series(series_id)
+
+
+def refresh_visual_contract(project_id):
+    from calliope.studio.visual_identity import validate_value_manifest
+
+    require_editable(project_id)
+    with service.database() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        episode = conn.execute(
+            "SELECT series_id,context_json FROM studio_episodes WHERE project_id=?", (project_id,)
+        ).fetchone()
+        if not episode:
+            raise HTTPException(404, "Épisode de série introuvable.")
+        current = require_series(conn, episode["series_id"])
+        canon = entities(conn, episode["series_id"])
+        by_key = {entity["key"]: entity for entity in canon}
+        frozen = json.loads(episode["context_json"])
+        expected = {
+            key: int(re.sub(r"[ ,]", "", str(value)))
+            for key, value in frozen.get("display_values", {}).items()
+            if re.fullmatch(r"-?[\d ,]+", str(value))
+        }
+        shots = conn.execute(
+            "SELECT c.id,c.duration_sec,sc.context_json FROM clips c "
+            "JOIN scenes s ON s.id=c.scene_id "
+            "JOIN studio_shot_context sc ON sc.clip_id=c.id "
+            "WHERE c.project_id=? ORDER BY s.order_index,s.id,c.order_index,c.id",
+            (project_id,),
+        ).fetchall()
+        for row in shots:
+            info = json.loads(row["context_json"])
+            visible = list(info.get("character_keys", []))
+            if info.get("location_key"):
+                visible.append(info["location_key"])
+            for key in visible:
+                entity = by_key.get(key)
+                identity = (entity or {}).get("identity") or {}
+                if not entity or (
+                    current["directing_profile"]["require_reference_approval"]
+                    and not identity.get("visual_description")
+                ):
+                    raise HTTPException(
+                        422, f"Plan {row['id']}: identité visuelle explicite manquante pour {key}."
+                    )
+            try:
+                validate_value_manifest(
+                    {"duration_sec": row["duration_sec"]},
+                    {
+                        "entities": canon,
+                        "directing_profile": current["directing_profile"],
+                        "shot": info,
+                    },
+                    expected,
+                )
+            except ValueError as exc:
+                raise HTTPException(422, f"Plan {row['id']}: {exc}") from None
+        frozen["entities"] = canon
+        frozen["directing_profile"] = current["directing_profile"]
+        frozen.setdefault("bible", {})["visual_style"] = current["bible"]["visual_style"]
+        conn.execute(
+            "UPDATE studio_episodes SET context_json=? WHERE project_id=?",
+            (json.dumps(frozen), project_id),
+        )
+        for row in shots:
+            info = json.loads(row["context_json"])
+            for label in info.get("screen_text", []):
+                label.pop("anchor_binding", None)
+            conn.execute(
+                "UPDATE studio_shot_context SET context_json=? WHERE clip_id=?",
+                (json.dumps(info), row["id"]),
+            )
+        for take in conn.execute(
+            "SELECT id,metadata_json FROM studio_takes WHERE project_id=?", (project_id,)
+        ).fetchall():
+            metadata = json.loads(take["metadata_json"] or "{}")
+            metadata.pop("visual_review", None)
+            metadata.pop("continuation_reviews", None)
+            conn.execute(
+                "UPDATE studio_takes SET metadata_json=? WHERE id=?",
+                (json.dumps(metadata), take["id"]),
+            )
+        conn.execute(
+            "UPDATE studio_shots SET approved=0 "
+            "WHERE clip_id IN (SELECT id FROM clips WHERE project_id=?)",
+            (project_id,),
+        )
+        conn.execute(
+            "UPDATE studio_productions SET status='paused',message=? WHERE project_id=?",
+            (
+                "Contrat visuel préparé. Vérifiez les références et les ancrages "
+                "avant de reprendre.",
+                project_id,
+            ),
+        )
+        service.touch(conn, project_id)
+        conn.commit()
+    return service.board(project_id)
 
 
 def get_series(series_id):
@@ -124,6 +316,17 @@ def update_series(series_id, data):
             )
         if "bible" in data:
             bible = current["bible"] | data.pop("bible")
+            if bible.get("visual_style") != current["bible"].get("visual_style"):
+                require_references_editable(conn, series_id)
+                for entity in entities(conn, series_id):
+                    identity = entity["identity"] | {
+                        "reference_approved": False,
+                        "reference_sha256": "",
+                    }
+                    conn.execute(
+                        "UPDATE studio_entities SET identity_json=? WHERE id=?",
+                        (json.dumps(identity), entity["id"]),
+                    )
             conn.execute(
                 "UPDATE studio_series SET bible_json=? WHERE id=?", (json.dumps(bible), series_id)
             )

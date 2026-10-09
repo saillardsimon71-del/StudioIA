@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -86,6 +87,49 @@ class ScriptShot(BaseModel):
 class ScriptEdit(BaseModel):
     model_config = ConfigDict(extra="forbid")
     shots: list[ScriptShot] = Field(min_length=1, max_length=1000)
+
+
+class EntityIdentityPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    visual_description: str | None = Field(default=None, max_length=10000)
+    variant_of: str | None = Field(default=None, max_length=100)
+    attached_value: int | None = None
+    label_key: str | None = Field(default=None, max_length=80)
+
+
+class EntityPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    identity: EntityIdentityPatch | None = None
+    reference_approved: bool | None = None
+    reset_reference: bool = False
+
+
+class VisualReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    approved: bool
+    frame_index: int = Field(default=0, ge=0)
+    target_shot_id: int | None = Field(default=None, ge=1)
+
+
+@router.post("/takes/{take_id}/visual-review")
+async def review_visuals(take_id: int, payload: VisualReview):
+    with service.database() as conn:
+        take = conn.execute("SELECT project_id FROM studio_takes WHERE id=?", (take_id,)).fetchone()
+    if take:
+        series.require_editable(take[0])
+    return service.review_take_visuals(
+        take_id, payload.approved, payload.frame_index, payload.target_shot_id
+    )
+
+
+@router.post("/projects/{project_id}/visual-contract")
+async def prepare_visual_contract(project_id: int):
+    return series.refresh_visual_contract(project_id)
+
+
+@router.patch("/series/{series_id}/entities/{entity_id}")
+async def save_entity(series_id: int, entity_id: int, payload: EntityPatch):
+    return series.update_entity(series_id, entity_id, payload.model_dump(exclude_unset=True))
 
 
 @router.patch("/projects/{project_id}/script")
@@ -211,17 +255,7 @@ async def preview_audio(project_id: int):
 @router.post("/series/{series_id}/entities/{entity_id}/reference")
 async def upload_reference(series_id: int, entity_id: int, file: UploadFile = File(...)):
     with service.database() as conn:
-        series.require_series(conn, series_id)
-        if conn.execute(
-            (
-                "SELECT 1 FROM studio_productions p JOIN studio_episodes e ON e.project_id="
-                "p.project_id WHERE e.series_id=? AND p.status IN ('pending','running')"
-            ),
-            (series_id,),
-        ).fetchone():
-            raise HTTPException(
-                409, ("Mettez la production en pause avant de modifier ses références.")
-            )
+        series.require_references_editable(conn, series_id)
         entity = conn.execute(
             "SELECT id FROM studio_entities WHERE id=? AND series_id=?", (entity_id, series_id)
         ).fetchone()
@@ -244,9 +278,27 @@ async def upload_reference(series_id: int, entity_id: int, file: UploadFile = Fi
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(normalized)
     with service.database() as conn:
+        series.require_references_editable(conn, series_id)
+        entity = conn.execute(
+            "SELECT identity_json FROM studio_entities WHERE id=? AND series_id=?",
+            (entity_id, series_id),
+        ).fetchone()
+        identity = json.loads(entity[0])
+        identity.update(reference_approved=False, reference_sha256="")
         conn.execute(
-            "UPDATE studio_entities SET reference_path=? WHERE id=? AND series_id=?",
-            (str(path), entity_id, series_id),
+            "UPDATE studio_entities SET reference_path=?,identity_json=?,reference_request_json=? "
+            "WHERE id=? AND series_id=?",
+            (
+                str(path),
+                json.dumps(identity),
+                json.dumps({"source": "manual_upload"}),
+                entity_id,
+                series_id,
+            ),
         )
+        key = conn.execute(
+            "SELECT entity_key FROM studio_entities WHERE id=?", (entity_id,)
+        ).fetchone()[0]
+        series.invalidate_reference_dependents(conn, series_id, key)
         conn.commit()
     return series.get_series(series_id)

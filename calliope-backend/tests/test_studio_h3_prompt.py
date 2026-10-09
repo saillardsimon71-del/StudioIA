@@ -1,6 +1,7 @@
 import copy
 import importlib
 import json
+import re
 
 import pytest
 
@@ -320,3 +321,115 @@ def test_non_native_modes_send_no_dialogue_and_qc_expects_no_speech(mode):
     shot = {"prompt": "Lila listens.", "dialogue": "Lila: Bonjour.", "audio_mode": mode}
     assert h3_prompt.spoken_dialogue(shot, {"language": "fr"}) == ""
     assert "<d>" not in compiler()(shot, {"language": "fr"})
+
+
+def test_visual_reactions_precede_the_complete_spoken_sequence():
+    shot = {
+        "prompt": "Student 2 watches Noah.",
+        "dialogue_turns": [{
+            "speaker": "student_2", "text": "That's impossible, homie.",
+            "action": "Whispers, barely audible, eyes on Noah",
+            "reaction": "Leo doesn't respond - still staring at Noah",
+        }],
+        "reaction": "Leo remains frozen",
+    }
+    context = {"language": "en", "speaker_ids": {"student_2": "S9"}, "entities": [
+        {"key": "student_2", "name": "Student 2", "description": "A fruit student."},
+    ]}
+    original = copy.deepcopy(shot)
+    result = compiler()(shot, context)
+    visual, spoken = result.split("<d>", 1)
+    assert "Leo doesn't respond - still staring at Noah." in visual
+    assert "Leo remains frozen." in visual
+    assert "attentive posture" in visual
+    assert "Student 2 (S9)" in visual
+    assert "Leo" not in spoken.split("overall_soundscape:", 1)[0]
+    assert re.findall(r"<d>(.*?)</d>", result) == ["[English] That's impossible, homie."]
+    assert shot == original
+
+
+def test_multiple_speakers_keep_all_visual_directions_before_ordered_dialogue():
+    shot = {"prompt": "Two students face each other.", "dialogue_turns": [
+        {"speaker": "a", "text": "You changed the score.", "action": "She points.",
+         "reaction": "He raises an eyebrow."},
+        {"speaker": "b", "text": "Look again. I won.", "action": "He leans forward.",
+         "reaction": "She looks down."},
+    ]}
+    context = {"language": "en", "entities": [
+        {"key": "a", "name": "Ada", "description": "A red fruit.",
+         "voice_description": "A clear low voice."},
+        {"key": "b", "name": "Ben", "description": "A blue fruit.",
+         "voice_description": "A bright high voice."},
+    ]}
+    result = compiler()(shot, context)
+    first_speech = result.index("<d>")
+    for direction in ("A blue fruit.", "A bright high voice.", "He raises an eyebrow.",
+                      "He leans forward.", "She looks down.", "without overlapping speech"):
+        assert result.index(direction) < first_speech
+    assert re.findall(r"<d>(.*?)</d>", result) == [
+        "[English] You changed the score.", "[English] Look again. I won.",
+    ]
+    assert "Ada (S1)" in result and "Ben (S2)" in result
+    assert result.split("</d>")[-1].split("overall_soundscape:", 1)[0].strip() == ""
+
+
+def test_exact_overlay_labels_are_removed_from_visual_prose_but_speech_is_verbatim():
+    shot = {
+        "prompt": 'A hallway. A floating number above Leo shows "500".',
+        "speaker": "leo", "dialogue": "My son. A five hundred.",
+        "action": 'A badge displays "500". He looks down.',
+        "reaction": 'The label reads "500". His eyes widen.',
+        "screen_text": [{"key": "leo_value", "text": "500"}],
+    }
+    context = {"language": "en", "bible": {"visual_style":
+        'Stylized 3D fruit realism. A glowing value display reads "500".'}, "entities": [
+        {"key": "leo", "name": "Leo", "description":
+         'A grape student. A badge displays "500".'},
+    ]}
+    original = copy.deepcopy(shot)
+    result = compiler()(shot, context)
+    visual = result.split("<d>", 1)[0]
+    assert '"500"' not in visual
+    assert "A grape student." in visual and "He looks down." in visual
+    assert "His eyes widen." in visual and "Stylized 3D fruit realism." in visual
+    assert "Generate no text" in visual
+    assert "<d>[English] My son. A five hundred.</d>" in result
+    assert shot == original
+
+
+def test_explicit_visual_identity_includes_silent_listeners_and_variant_base():
+    shot = {"prompt": "Leo watches Noah speak.", "speaker": "noah_teen", "dialogue": "Yes.",
+            "character_keys": ["noah_teen", "leo"]}
+    context = {"language": "en", "speaker_ids": {"noah_teen": "S3"}, "entities": [
+        {"key": "noah", "name": "Noah", "description": "Old plot biography.",
+         "identity": {"visual_description": "A blueberry with round eyes and a natural mouth."}},
+        {"key": "noah_teen", "name": "Teenage Noah", "description": "Incorrect orange robot.",
+         "identity": {"visual_description": "A smaller blueberry in an academy uniform.",
+                      "variant_of": "noah"}},
+        {"key": "leo", "name": "Leo", "description": "Incorrect apple student.",
+         "identity": {"visual_description": "A grape student with amber eyes."}},
+        {"key": "elsewhere", "name": "Elsewhere", "description": "An absent banana."},
+    ]}
+    result = compiler()(shot, context, first_frame=True)
+    visual = result.split("<d>", 1)[0]
+    assert "A smaller blueberry in an academy uniform." in visual
+    assert "A blueberry with round eyes and a natural mouth." in visual
+    assert "Leo: A grape student with amber eyes." in visual
+    assert "Incorrect" not in result and "Old plot biography" not in result
+    assert "absent banana" not in result
+    assert "Teenage Noah (S3)" in result
+    assert "Leo (S" not in result
+    assert "<d>[English] Yes.</d>" in result
+
+
+def test_strict_visual_identity_rejects_a_silent_listener_without_explicit_canon():
+    shot = {"prompt": "Leo watches Noah speak.", "speaker": "noah", "dialogue": "Yes.",
+            "character_keys": ["noah", "leo"]}
+    context = {"language": "en", "directing_profile": {"require_reference_approval": True},
+               "entities": [
+                   {"key": "noah", "name": "Noah", "identity":
+                    {"visual_description": "A blueberry student."}},
+                   {"key": "leo", "name": "Leo", "description": "A grape student."},
+               ]}
+    with pytest.raises(ValueError, match="Identité visuelle explicite requise pour leo"):
+        compiler()(shot, context, first_frame=True)

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import TakeGallery from './TakeGallery.svelte';
+	import VisualReview from './VisualReview.svelte';
 	import { studio, newRequestId, errorMessage, selectedTake, type Shot, type ShotDraft, type Take, type MediaKind } from './api';
 	let { shot, projectId, onrefresh, onclose, ondirty }: { shot: Shot; projectId: number; onrefresh: () => Promise<void>; onclose: () => void; ondirty: (dirty: boolean) => void } = $props();
 	let initializedId = 0;
@@ -65,6 +66,8 @@
 		input.value = '';
 	}
 	function approve() { run('approve', async () => { await studio.approve(shot.id, !shot.approved); message = shot.approved ? 'Approbation retirée.' : 'Plan approuvé pour le montage.'; }); }
+	function addLabel() { draft.screen_text = [...(draft.screen_text ?? []), { key: '', text: '', value: null, entity_key: '', x: 0.5, y: 0.1, anchor: 'character', anchor_box: [0.1, 0.1, 0.3, 0.5], event: 'none' }]; }
+	function review(take: Take, frameIndex: number, targetShotId?: number) { run('review', async () => { await persist(); await studio.reviewVisuals(take.id, true, frameIndex, targetShotId); message = "Identité et zones approuvées sur cette prise exacte."; }); }
 	function beforeUnload(event: BeforeUnloadEvent) { if (dirty) { event.preventDefault(); event.returnValue = ''; } }
 	function keyboard(event: KeyboardEvent) {
 		if (document.querySelector('dialog[open]')) return;
@@ -93,10 +96,14 @@
 				<label>Dialogue<textarea bind:value={draft.dialogue} rows="2" placeholder="Réplique ou parole à entendre dans ce plan."></textarea></label>
 			{/if}
 			<label>Ambiance du plan<textarea bind:value={draft.soundscape} rows="2" placeholder="Sons de lieu et d'action, sans paroles ni musique."></textarea></label>
-			{#each draft.screen_text ?? [] as label}
+			<button type="button" disabled={!!busy} onclick={addLabel}>Ajouter une valeur ou un texte exact</button>
+			{#each draft.screen_text ?? [] as label, labelIndex}
+				<label>Clé stable du texte<input bind:value={label.key} /></label>
+				<label>Personnage associé<select bind:value={label.entity_key}><option value="">Texte indépendant</option>{#each shot.character_keys ?? [] as key}<option value={key}>{key}</option>{/each}</select></label>
 				{#if label.value !== undefined && label.value !== null}
 					<label>Valeur exacte - {label.key}<input type="number" step="1" bind:value={label.value} /></label>
 				{:else}
+					<label>Valeur entière exacte<input type="number" step="1" bind:value={label.value} /></label>
 					<label>Texte exact - {label.key}<input bind:value={label.text} /></label>
 				{/if}
 				<details><summary>Position du texte</summary><div class="columns">
@@ -115,6 +122,7 @@
 					</div>
 				{/if}
 				<p class="hint">0 correspond au bord gauche ou haut, 1 au bord droit ou bas. La zone de suivi doit entourer uniquement le personnage concerné.</p></details>
+				<button type="button" onclick={() => draft.screen_text = draft.screen_text?.filter((_, index) => index !== labelIndex)}>Retirer ce texte</button>
 			{/each}
 			<div class="columns"><label>Durée utile (secondes)<input type="number" min="1" max="15" step="0.1" required bind:value={draft.duration_sec} /></label><label>Son<select bind:value={draft.audio_mode}><option value="native">Son généré avec la vidéo</option><option value="silent">Sans son</option></select></label></div>
 			<p class="hint">Le moteur rend un clip plus long que nécessaire ; le montage ne garde que la durée utile de la réplique ou de l'action, sans rallonger la prise.</p>
@@ -124,7 +132,9 @@
 			{#if shot.approved && dirty}<p class="hint">Ces changements retireront l'approbation. Vos prises restent conservées.</p>{/if}
 		</form>
 		<section class="reference stack"><h3>Référence visuelle</h3>
+			{#if draft.continue_from_previous && shot.continuation_source?.url}<h4>Dernière frame conservée du plan précédent</h4><VisualReview take={shot.continuation_source} labels={draft.screen_text} initialFrame={shot.continuation_frame_index ?? 0} disabled={!!busy} onreview={(frameIndex) => review(shot.continuation_source!, frameIndex, shot.id)} />{/if}
 			{#if chosenImage?.url}<div class="reference-preview media"><img src={chosenImage.url} alt="Référence actuellement choisie pour le plan" /></div><p class="hint">Image choisie: prise {chosenImage.id}</p>{:else}<p class="hint">Sans référence, la vidéo part de votre prompt.</p>{/if}
+			{#if chosenImage?.url}<VisualReview take={chosenImage} labels={draft.screen_text} disabled={!!busy} onreview={(frameIndex) => review(chosenImage!, frameIndex)} />{/if}
 			<label>Prompt de l'image<textarea bind:value={draft.image_prompt} rows="3" placeholder="Décrivez l'image de départ souhaitée."></textarea></label>
 			<label>Importer une image<input type="file" accept="image/*" disabled={!!busy} onchange={(event) => upload(event, 'image')} /></label>
 		</section>
@@ -136,6 +146,7 @@
 		</section>
 		<TakeGallery takes={shot.takes} kind="image" selectedId={shot.selected_image_id} busy={!!busy} onselect={select} />
 		<TakeGallery takes={shot.takes} kind="video" selectedId={shot.selected_video_id} busy={!!busy} muted={draft.audio_mode === 'silent'} onselect={select} />
+		{#if chosenVideo?.url}<section class="stack"><h3>Identité et ancrages de la vidéo choisie</h3><VisualReview take={chosenVideo} labels={draft.screen_text} disabled={!!busy} onreview={(frameIndex) => review(chosenVideo!, frameIndex)} /></section>{/if}
 		<section class="approval stack"><h3>Choix pour le montage</h3>{#if chosenVideo?.url}<p>Vidéo choisie: prise {chosenVideo.id}</p><button class:primary={!shot.approved} disabled={!!busy || dirty} onclick={approve}>{shot.approved ? 'Retirer l\'approbation' : 'Approuver ce plan'}</button>{#if dirty}<p class="hint">Enregistrez vos changements avant d'approuver.</p>{/if}{:else}<p class="hint">Choisissez une vidéo dans les prises avant d'approuver le plan.</p>{/if}</section>
 	</div>
 </aside>

@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import ConfigDialog from "$lib/studio/ConfigDialog.svelte";
+  import EntityIdentityEditor from "$lib/studio/EntityIdentityEditor.svelte";
   import {
     studio,
     newRequestId,
@@ -137,6 +138,8 @@
       music_gain_db: -18,
       ambience_gain_db: -34,
       number_format: "grouped_comma",
+      attached_values: profile?.attached_values ?? false,
+      require_reference_approval: profile?.require_reference_approval ?? false,
     };
   }
   async function reference(event: Event, entityId: number) {
@@ -358,6 +361,8 @@
             </div>
             <label><input type="checkbox" bind:checked={profile.active_listening} /> Personnages attentifs et réactifs pendant l'écoute</label>
             <label><input type="checkbox" bind:checked={profile.continuity} /> Préserver les directions des regards, les tenues et la lumière</label>
+            <label><input type="checkbox" bind:checked={profile.require_reference_approval} /> Vérifier les références visuelles avant de rendre les vidéos</label>
+            <label><input type="checkbox" bind:checked={profile.attached_values} /> Afficher les valeurs exactes définies pour les personnages</label>
           </fieldset>
         {/if}
         {#each fields as [key, label]}<label
@@ -390,6 +395,8 @@
                 >{entity.kind === "character" ? "Personnage" : "Lieu"}</span
               >
               <p class="hint">{entity.description}</p>
+              <EntityIdentityEditor seriesId={item.id} {entity} entities={item.entities}
+                disabled={!!busy || active} onupdate={(updated) => item = updated} />
               <label
                 >Remplacer la référence<input
                   type="file"

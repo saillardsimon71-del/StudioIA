@@ -51,6 +51,9 @@ export interface Shot {
   prompt: string;
   image_prompt: string;
   dialogue: string;
+  character_keys?: string[];
+  continuation_source?: Take | null;
+  continuation_frame_index?: number;
   dialogue_turns?: { speaker: string; text: string; action?: string; reaction?: string }[];
   soundscape?: string;
   screen_text?: { key: string; text: string; x: number; y: number;
@@ -194,6 +197,15 @@ export interface SeriesEntity {
   kind: string;
   description: string;
   url: string | null;
+  identity: {
+    visual_description: string;
+    variant_of: string;
+    reference_approved: boolean;
+    reference_sha256: string;
+    attached_value: number | null;
+    label_key: string;
+  };
+  reference_request?: Record<string, unknown>;
 }
 export interface Episode {
   project_id: number;
@@ -239,6 +251,8 @@ export interface DirectingProfile {
   music_gain_db: number;
   ambience_gain_db: number;
   number_format: "plain" | "grouped_comma" | "grouped_space";
+  attached_values: boolean;
+  require_reference_approval: boolean;
 }
 
 export interface StudioConfig {
@@ -331,6 +345,15 @@ export const studio = {
   }) => request<Series>("/series", "POST", payload),
   saveSeries: (id: number, payload: Partial<Series>) =>
     request<Series>(`/series/${id}`, "PATCH", payload),
+  saveEntity: (id: number, entityId: number, payload: {
+    identity?: Partial<Pick<SeriesEntity['identity'], 'visual_description' | 'variant_of' | 'attached_value' | 'label_key'>>;
+    reference_approved?: boolean; reset_reference?: boolean;
+  }) => request<Series>(`/series/${id}/entities/${entityId}`, "PATCH", payload),
+  reviewVisuals: (takeId: number, approved: boolean, frameIndex = 0, targetShotId?: number) =>
+    request<Take>(`/takes/${takeId}/visual-review`, "POST", { approved, frame_index: frameIndex,
+      ...(targetShotId ? { target_shot_id: targetShotId } : {}) }),
+  refreshVisualContract: (projectId: number) =>
+    request<Board>(`/projects/${projectId}/visual-contract`, "POST"),
   createEpisode: (
     id: number,
     payload: { idea: string; objective: string; request_id: string },

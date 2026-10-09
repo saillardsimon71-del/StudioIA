@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from calliope.config import settings
@@ -8,6 +9,13 @@ from calliope.events.bus import event_bus
 from calliope.queue.manager import queue_manager
 from calliope.studio import audio, series, service
 from calliope.studio.series_planner import append_outro, plan_episode
+from calliope.studio.visual_identity import (
+    compile_image_request,
+    file_hash,
+    ordered_entities,
+    reference_bindings,
+    validate_value_manifest,
+)
 
 
 class ProductionPausedError(Exception):
@@ -106,7 +114,7 @@ def save_episode_plan(project_id, plan):
             conn.execute(
                 (
                     "INSERT OR IGNORE INTO studio_entities(series_id,entity_key,kind,name,d"
-                    "escription) VALUES(?,?,?,?,?)"
+                    "escription,identity_json) VALUES(?,?,?,?,?,?)"
                 ),
                 (
                     episode["series_id"],
@@ -114,6 +122,7 @@ def save_episode_plan(project_id, plan):
                     entity["kind"],
                     entity.get("name") or entity["key"],
                     entity["description"],
+                    json.dumps(entity.get("identity") or {}),
                 ),
             )
         script = []
@@ -248,29 +257,19 @@ def ensure_outro(project_id):
 
 
 def image_references(conn, shot_id):
-    row = conn.execute(
-        (
-            "SELECT e.series_id,sc.context_json FROM clips c JOIN studio_episodes e ON e.pr"
-            "oject_id=c.project_id JOIN studio_shot_context sc ON sc.clip_id=c.id WHERE c.i"
-            "d=?"
-        ),
-        (shot_id,),
-    ).fetchone()
-    if not row:
-        return []
-    info = json.loads(row["context_json"])
-    keys = info.get("character_keys", []) + (
-        [info["location_key"]] if info.get("location_key") else []
-    )
-    paths = []
-    for key in dict.fromkeys(keys):
-        entity = conn.execute(
-            "SELECT reference_path FROM studio_entities WHERE series_id=? AND entity_key=?",
-            (row["series_id"], key),
-        ).fetchone()
-        if entity and entity[0] and Path(entity[0]).is_file():
-            paths.append(entity[0])
-    return paths[:4]
+    context = service.shot_context(conn, shot_id)
+    info = context.get("shot") or {}
+    keys = list(info.get("character_keys") or [])
+    if info.get("location_key"):
+        keys.append(info["location_key"])
+    return [
+        binding["path"]
+        for binding in reference_bindings(
+            context["entities"],
+            keys,
+            context.get("directing_profile", {}).get("require_reference_approval", False),
+        )
+    ]
 
 
 def generation_id(job, shot, kind, attempt=0):
@@ -287,13 +286,41 @@ def generation_id(job, shot, kind, attempt=0):
     ]
     if kind == "image":
         with service.database() as conn:
-            inputs.append(image_references(conn, shot["id"]))
+            inputs.append(compile_image_request(shot, service.shot_context(conn, shot["id"])))
+    else:
+        from calliope.studio.h3_prompt import compile_h3_prompt
+
+        with service.database() as conn:
+            context = service.shot_context(conn, shot["id"])
+            inputs.append(
+                compile_h3_prompt(
+                    shot | context.get("shot", {}),
+                    context,
+                    first_frame=bool(shot["selected_image_id"] or shot["continue_from_previous"]),
+                )
+            )
+            inputs.append(service.visual_review_contract(context, shot))
+            source = conn.execute(
+                "SELECT output_path FROM studio_takes WHERE id=?", (shot["selected_image_id"],)
+            ).fetchone()
+            if source and Path(source[0] or "").is_file():
+                inputs.append(file_hash(source[0]))
+            if shot["continue_from_previous"]:
+                previous = service._previous_video(conn, shot["id"])
+                inputs.append(file_hash(previous["output_path"]))
+                inputs.append(
+                    conn.execute(
+                        "SELECT trim_end_sec FROM studio_shots WHERE clip_id=?",
+                        (previous["clip_id"],),
+                    ).fetchone()[0]
+                )
     digest = hashlib.sha256(json.dumps(inputs).encode()).hexdigest()[:16]
     suffix = f"-r{attempt}" if attempt else ""
     return f"auto-{job['id']}-{shot['id']}-{kind}-{digest}{suffix}"
 
 
 async def generate_take(job, shot, kind, should_stop, attempt=0):
+    request_id = generation_id(job, shot, kind, attempt)
     with service.database() as conn:
         previous = conn.execute(
             "SELECT t.* FROM studio_takes t JOIN jobs j ON j.id=t.job_id "
@@ -302,12 +329,31 @@ async def generate_take(job, shot, kind, should_stop, attempt=0):
             "AND (j.status!='done' OR ?=1) ORDER BY t.id DESC LIMIT 1",
             (shot["id"], kind, job["id"], "%-r1" if attempt else "%", attempt),
         ).fetchone()
+    if (
+        previous
+        and previous["request_id"] != request_id
+        and not previous["modal_call_id"]
+        and previous["submission_state"] == "new"
+    ):
+        with service.database() as conn:
+            conn.execute(
+                "UPDATE jobs SET status='failed',error='cancelled' WHERE id=?",
+                (previous["job_id"],),
+            )
+            conn.execute(
+                "UPDATE studio_takes SET status='failed',error=? WHERE id=?",
+                ("Demande remplacée après modification des entrées", previous["id"]),
+            )
+            conn.commit()
+        previous = None
     if previous and (attempt or not previous["request_id"].endswith("-r1")):
         await run_child(previous["job_id"], should_stop)
         return service.select_take(previous["id"])
     request = {
-        "kind": kind, "request_id": generation_id(job, shot, kind, attempt),
-        "n_takes": 1, "parent_job_id": job['id'],
+        "kind": kind,
+        "request_id": request_id,
+        "n_takes": 1,
+        "parent_job_id": job["id"],
     }
     queued = service.enqueue_takes(shot["id"], request)
     take = queued["takes"][0]
@@ -339,7 +385,8 @@ async def assess_take(shot):
         verdict = None
         if shot["audio_mode"] == "native" and metadata.get("has_audio") is False:
             verdict = {
-                "status": "inaudible", "reason": "La piste sonore native attendue est absente.",
+                "status": "inaudible",
+                "reason": "La piste sonore native attendue est absente.",
                 "voice": None,
             }
             metadata["dialogue_qc"] = verdict
@@ -360,7 +407,7 @@ async def assess_take(shot):
     ):
         return None
     metadata = take.get("metadata") or {}
-    service.render_event(take['id'], 'VALIDATING', 'Contrôle de la parole native')
+    service.render_event(take["id"], "VALIDATING", "Contrôle de la parole native")
     probe = float(metadata.get("duration_sec") or 0)
     if not metadata.get("has_audio"):
         verdict = {
@@ -406,7 +453,9 @@ async def assess_take(shot):
     if verdict["status"] not in ("missing", "inaudible"):
         verdict = transcription.assess_transcript(dialogue, transcript)
     if context.get("shot", {}).get("dialogue_turns") and verdict["status"] not in (
-        "missing", "extra", "inaudible"
+        "missing",
+        "extra",
+        "inaudible",
     ):
         turns = transcription.assess_turns(context["shot"]["dialogue_turns"], transcript)
         verdict["turns"] = turns.get("turns", [])
@@ -416,6 +465,15 @@ async def assess_take(shot):
         transcript.get("speech_intervals") if transcript.get("status") == "ok" else None
     )
     metadata["dialogue_qc"] = verdict
+    if verdict["status"] == "extra":
+        with service.database() as conn:
+            request_row = conn.execute(
+                "SELECT request_json FROM studio_takes WHERE id=?", (take["id"],)
+            ).fetchone()
+        compiled = json.loads(request_row[0] or "{}").get("prompt") or take.get("prompt", "")
+        diagnosis = transcription.assess_prompt_recitation(dialogue, transcript, compiled)
+        if diagnosis:
+            metadata["dialogue_qc"]["diagnostic"] = diagnosis
     service.render_event(
         take["id"],
         "FAILED" if verdict["status"] in ("missing", "extra", "inaudible") else "DONE",
@@ -465,7 +523,7 @@ def reuse_reference(project_id, shot):
         key = info.get("reference_key")
         if not key:
             return False
-        current_refs = image_references(conn, shot["id"])
+        compiled = compile_image_request(shot, service.shot_context(conn, shot["id"]))
         candidates = conn.execute(
             (
                 "SELECT t.output_path,t.request_json,sc.context_json FROM studio_takes t JO"
@@ -483,7 +541,8 @@ def reuse_reference(project_id, shot):
                 previous.get("reference_key") == key
                 and previous.get("character_keys") == info.get("character_keys")
                 and previous.get("location_key") == info.get("location_key")
-                and request.get("reference_paths", []) == current_refs
+                and request.get("reference_bindings", []) == compiled["reference_bindings"]
+                and request.get("input_hashes", {}) == compiled["input_hashes"]
                 and Path(item["output_path"] or "").is_file()
             ):
                 path = item["output_path"]
@@ -510,10 +569,17 @@ async def ensure_entities(job, should_stop):
         )
         canon = {e["key"]: e for e in planned.get("entities", [])}
         canon.update({e["key"]: e for e in frozen.get("entities", [])})
-        items = [
-            entity | canon.get(entity['key'], {})
-            for entity in items if entity['key'] in canon
-        ]
+        items = [entity for entity in items if entity["key"] in canon]
+        context = frozen | {
+            "entities": items,
+            "bible": {
+                **planned.get("bible", {}),
+                **{k: v for k, v in frozen.get("bible", {}).items() if v},
+            },
+        }
+        items = ordered_entities(items)
+        strict = context.get("directing_profile", {}).get("require_reference_approval", False)
+    pending = []
     for index, entity in enumerate(items):
         await checkpoint(
             job,
@@ -523,41 +589,64 @@ async def ensure_entities(job, should_stop):
             should_stop,
         )
         if entity["reference_path"] and Path(entity["reference_path"]).is_file():
+            if strict:
+                try:
+                    reference_bindings(items, [entity["key"]], True)
+                except ValueError:
+                    pending.append(entity["name"])
             continue
+        parent = entity["identity"].get("variant_of")
+        if strict and parent:
+            try:
+                reference_bindings(items, [parent], True)
+            except ValueError:
+                pending.append(entity["name"])
+                continue
         directory = settings.assets_dir / "series" / str(episode["series_id"]) / "references"
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"entity-{entity['id']}.png"
-        if not path.is_file():
-            style = frozen["bible"].get("visual_style") or planned.get('bible', {}).get(
-                'visual_style', ''
-            )
-            prompt = (
-                f"Canonical visual reference for {entity['kind']}: {entity['description']}. "
-                f"Visual style: {style}. Universe: {frozen['bible']['universe']}. "
-                "A single consistent medium view, clean composition, no collage, no watermark. "
-                + (
-                    "The character's natural mouth is visible. Preserve costume and identity."
-                    if entity["kind"] == "character"
-                    else "An empty establishing view of the location, no people."
-                )
-            )
-            content, _ = await service._generate_image(
-                {
-                    "prompt": prompt,
-                    "aspect_ratio": frozen["aspect_ratio"],
-                    "image_base_url": settings.studio_image_base_url,
-                    "image_model": settings.studio_image_model,
-                }
-            )
-            temporary = path.with_suffix(".tmp")
-            temporary.write_bytes(content)
-            temporary.replace(path)
+        try:
+            compiled = compile_image_request({}, context, canonical_entity=entity)
+        except ValueError:
+            if not strict:
+                raise
+            pending.append(entity["name"])
+            continue
+        request = compiled | {
+            "aspect_ratio": frozen["aspect_ratio"],
+            "image_base_url": settings.studio_image_base_url,
+            "image_model": settings.studio_image_model,
+        }
         with service.database() as conn:
             conn.execute(
-                "UPDATE studio_entities SET reference_path=? WHERE id=? AND series_id=?",
-                (str(path), entity["id"], episode["series_id"]),
+                "UPDATE studio_entities SET reference_request_json=? WHERE id=?",
+                (json.dumps(request), entity["id"]),
             )
             conn.commit()
+        content, _ = await service._generate_image(request)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_bytes(content)
+        temporary.replace(path)
+        entity["reference_path"] = str(path)
+        entity["identity"].update(reference_approved=False, reference_sha256="")
+        with service.database() as conn:
+            conn.execute(
+                "UPDATE studio_entities SET reference_path=?,identity_json=? "
+                "WHERE id=? AND series_id=?",
+                (str(path), json.dumps(entity["identity"]), entity["id"], episode["series_id"]),
+            )
+            conn.commit()
+        if strict:
+            pending.append(entity["name"])
+    if pending:
+        with service.database() as conn:
+            conn.execute(
+                "UPDATE studio_productions SET status='paused',stage='images',message=? "
+                "WHERE project_id=?",
+                ("Références à vérifier et approuver: " + ", ".join(pending), job["project_id"]),
+            )
+            conn.commit()
+        raise ProductionPausedError()
 
 
 def load_shot(shot_id):
@@ -590,7 +679,18 @@ async def render_shot(job, initial, should_stop):
         if chosen["prompt"] not in (expected, legacy):
             chosen = None
     if not chosen:
-        shot = await generate_take(job, shot, "video", should_stop)
+        try:
+            shot = await generate_take(job, shot, "video", should_stop)
+        except service.HTTPException as exc:
+            if exc.status_code != 422:
+                raise
+            with service.database() as conn:
+                conn.execute(
+                    "UPDATE studio_productions SET status='paused',message=? WHERE project_id=?",
+                    (exc.detail, job["project_id"]),
+                )
+                conn.commit()
+            raise ProductionPausedError() from None
     verdict = await assess_take(shot)
     if verdict and verdict["status"] in ("missing", "extra", "inaudible"):
         service.approve_shot(shot["id"], False)
@@ -603,7 +703,18 @@ async def render_shot(job, initial, should_stop):
         raise asyncio.CancelledError()
     if queue_manager.is_cancelled(job["id"]):
         raise ProductionPausedError()
-    service.approve_shot(shot["id"], True)
+    try:
+        service.approve_shot(shot["id"], True)
+    except service.HTTPException as exc:
+        if exc.status_code != 422:
+            raise
+        with service.database() as conn:
+            conn.execute(
+                "UPDATE studio_productions SET status='paused',message=? WHERE project_id=?",
+                (exc.detail, job["project_id"]),
+            )
+            conn.commit()
+        raise ProductionPausedError() from None
 
 
 async def render_videos(job, shots, should_stop):
@@ -648,13 +759,40 @@ async def run_production(job, payload, should_stop):
             )
         if not has_plan:
             plan = await plan_episode(
-                json.loads(episode["context_json"]) | {
-                    "_planner_trace": {"project_id": project_id, "job_id": job["id"]}
-                }, episode["idea"], episode["objective"]
+                json.loads(episode["context_json"])
+                | {"_planner_trace": {"project_id": project_id, "job_id": job["id"]}},
+                episode["idea"],
+                episode["objective"],
             )
             await checkpoint(job, "writing", 0.1, "Scénario préparé", should_stop)
             save_episode_plan(project_id, plan)
         ensure_outro(project_id)
+        with service.database() as conn:
+            snapshot = json.loads(episode["context_json"])
+            expected_values = {
+                key: int(re.sub(r"[ ,]", "", str(value)))
+                for key, value in snapshot.get("display_values", {}).items()
+                if re.fullmatch(r"-?[\d ,]+", str(value))
+            }
+            for row in conn.execute(
+                "SELECT c.id FROM clips c JOIN scenes s ON s.id=c.scene_id WHERE c.project_id=? "
+                "ORDER BY s.order_index,s.id,c.order_index,c.id",
+                (project_id,),
+            ).fetchall():
+                try:
+                    validate_value_manifest(
+                        service.public_shot(conn, row[0]),
+                        service.shot_context(conn, row[0]),
+                        expected_values,
+                    )
+                except ValueError as exc:
+                    conn.execute(
+                        "UPDATE studio_productions SET status='paused',message=? "
+                        "WHERE project_id=?",
+                        (f"Plan {row[0]}: {exc}", project_id),
+                    )
+                    conn.commit()
+                    raise ProductionPausedError() from None
         await ensure_entities(job, should_stop)
         board = service.board(project_id)
         shots = [s for scene in board["scenes"] for s in scene["shots"]]
@@ -668,9 +806,29 @@ async def run_production(job, payload, should_stop):
             )
             with service.database() as conn:
                 shot = service.public_shot(conn, initial["id"])
-            if not shot["selected_image_id"]:
+            if not shot["selected_image_id"] and not shot["continue_from_previous"]:
                 if not reuse_reference(project_id, shot):
                     shot = await generate_take(job, shot, "image", should_stop)
+        with service.database() as conn:
+            for initial in shots:
+                shot = service.public_shot(conn, initial["id"])
+                if shot["continue_from_previous"]:
+                    continue
+                source = conn.execute(
+                    "SELECT * FROM studio_takes WHERE id=?", (shot["selected_image_id"],)
+                ).fetchone()
+                try:
+                    service.require_source_visual_review(
+                        source, shot, service.shot_context(conn, shot["id"])
+                    )
+                except service.HTTPException as exc:
+                    conn.execute(
+                        "UPDATE studio_productions SET status='paused',message=? "
+                        "WHERE project_id=?",
+                        (exc.detail, project_id),
+                    )
+                    conn.commit()
+                    raise ProductionPausedError() from None
         await render_videos(job, shots, should_stop)
         message = "Musique, bruitages et assemblage du MP4"
         await checkpoint(job, "mixing", 0.9, message, should_stop)

@@ -82,11 +82,128 @@ def _tokens(text):
     return re.findall(r"\w+", text)
 
 
+_ENGLISH_UNITS = dict(zip(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+    "fifteen sixteen seventeen eighteen nineteen".split(), range(20),
+))
+_ENGLISH_TENS = dict(zip(
+    "twenty thirty forty fifty sixty seventy eighty ninety".split(), range(20, 100, 10),
+))
+_NUMBER_WORDS = {
+    "un": "1", "une": "1", "deux": "2", "trois": "3", "quatre": "4", "cinq": "5",
+    "sept": "7", "huit": "8", "neuf": "9", "dix": "10", "onze": "11", "douze": "12",
+    "treize": "13", "quatorze": "14", "quinze": "15", "seize": "16",
+} | {word: str(value) for word, value in (_ENGLISH_UNITS | _ENGLISH_TENS).items()}
+
+
+def _english_number(words, start):
+    def under_hundred(index):
+        if index >= len(words):
+            return None, index
+        word = words[index]
+        if word in _ENGLISH_UNITS:
+            return _ENGLISH_UNITS[word], index + 1
+        if word in _ENGLISH_TENS:
+            value, end = _ENGLISH_TENS[word], index + 1
+            if end < len(words) and 1 <= _ENGLISH_UNITS.get(words[end], 0) <= 9:
+                value += _ENGLISH_UNITS[words[end]]
+                end += 1
+            return value, end
+        return None, index
+
+    def under_thousand(index):
+        value, end = under_hundred(index)
+        if value is not None and 1 <= value <= 9 and end < len(words) and words[end] == "hundred":
+            value *= 100
+            end += 1
+            remainder_start = end + 1 if end < len(words) and words[end] == "and" else end
+            remainder, remainder_end = under_hundred(remainder_start)
+            if remainder is not None and 1 <= remainder <= 99:
+                value += remainder
+                end = remainder_end
+        return value, end
+
+    value, end = under_thousand(start)
+    if value is not None and 1 <= value <= 999 and end < len(words) and words[end] == "thousand":
+        value *= 1000
+        end += 1
+        remainder_start = end + 1 if end < len(words) and words[end] == "and" else end
+        remainder, remainder_end = under_thousand(remainder_start)
+        if remainder is not None and 1 <= remainder <= 999:
+            value += remainder
+            end = remainder_end
+    return value, end
+
+
+def _comparison_tokens(words):
+    normalized, spans = [], []
+    index = 0
+    while index < len(words):
+        value, end = _english_number(words, index)
+        normalized.append(
+            str(value) if value is not None else _NUMBER_WORDS.get(words[index], words[index])
+        )
+        if value is None:
+            end = index + 1
+        spans.append((index, end))
+        index = end
+    return normalized, spans
+
+
+def assess_prompt_recitation(expected, transcript, compiled_prompt):
+    if not transcript or transcript.get("status") != "ok":
+        return {}
+    wanted = _tokens(expected)
+    observed = str(transcript.get("text") or "")
+    heard = _tokens(observed)
+    if not wanted or wanted == heard:
+        return {}
+    speech = SequenceMatcher(None, wanted, heard, autojunk=False)
+    if sum(block.size for block in speech.get_matching_blocks()) != len(wanted):
+        return {}
+    word_tokens, probabilities = [], []
+    for segment in transcript.get("segments") or []:
+        for word in segment.get("words") or []:
+            tokens = _tokens(word["word"])
+            word_tokens.extend(tokens)
+            probabilities.extend([float(word.get("probability", 0))] * len(tokens))
+    if word_tokens != heard:
+        return {}
+    visual = re.sub(r"<d>.*?</d>", "\n", str(compiled_prompt or ""), flags=re.I | re.S)
+    instructions = [part.strip() for part in re.split(r"[.!?\n]+", visual) if part.strip()]
+    token_positions = list(re.finditer(r"\w+", observed))
+    for tag, _, _, begin, end in speech.get_opcodes():
+        if tag == "equal" or end - begin < 4:
+            continue
+        extra = heard[begin:end]
+        for instruction in instructions:
+            source = _tokens(instruction)
+            blocks = SequenceMatcher(None, source, extra, autojunk=False).get_matching_blocks()
+            matches = sum(block.size for block in blocks)
+            anchor = any(
+                block.size >= 3 and all(
+                    math.isfinite(probabilities[begin + index])
+                    and probabilities[begin + index] >= 0.8
+                    for index in range(block.b, block.b + block.size)
+                ) for block in blocks
+            )
+            if anchor and matches >= 4 and matches / min(len(source), len(extra)) >= 0.5:
+                return {
+                    "kind": "instruction_recitation", "expected": expected,
+                    "observed": observed,
+                    "observed_extra": observed[token_positions[begin].start():
+                                               token_positions[end - 1].end()],
+                    "instruction": instruction, "matched_tokens": matches,
+                    "reason": "Paroles supplémentaires correspondant à une directive du prompt.",
+                }
+    return {}
+
+
 def assess_turns(turns, transcript):
     if not transcript or transcript.get("status") != "ok":
         return {"status": "unknown", "reason": "Transcription indisponible."}
-    wanted = [_tokens(turn["text"]) for turn in turns]
-    heard = _tokens(transcript.get("text"))
+    wanted = [_comparison_tokens(_tokens(turn["text"]))[0] for turn in turns]
+    heard = _comparison_tokens(_tokens(transcript.get("text")))[0]
     flat = [word for turn in wanted for word in turn]
     matching = set()
     for block in SequenceMatcher(None, flat, heard, autojunk=False).get_matching_blocks():
@@ -124,18 +241,8 @@ def assess_transcript(expected, transcript):
     actual_words = _tokens(transcript.get("text"))
     if not actual_words:
         return {"status": "missing", "reason": "Réplique attendue absente du transcript fiable."}
-    # Les petits nombres peuvent être écrits en chiffres par l'ASR. Une table
-    # limitée suffit ici; les formes composées restent une comparaison incertaine.
-    numbers = {
-        "zero": "0", "un": "1", "une": "1", "deux": "2", "trois": "3",
-        "quatre": "4", "cinq": "5", "six": "6", "sept": "7", "huit": "8",
-        "neuf": "9", "dix": "10", "onze": "11", "douze": "12", "treize": "13",
-        "quatorze": "14", "quinze": "15", "seize": "16", "one": "1", "two": "2",
-        "three": "3", "four": "4", "five": "5", "seven": "7", "eight": "8",
-        "nine": "9", "ten": "10", "eleven": "11", "twelve": "12",
-    }
-    wanted = [numbers.get(word, word) for word in expected_words]
-    heard = [numbers.get(word, word) for word in actual_words]
+    wanted, wanted_spans = _comparison_tokens(expected_words)
+    heard, heard_spans = _comparison_tokens(actual_words)
     matcher = SequenceMatcher(None, wanted, heard, autojunk=False)
     matches = sum(block.size for block in matcher.get_matching_blocks())
     coverage = matches / len(wanted)
@@ -149,9 +256,10 @@ def assess_transcript(expected, transcript):
             word_tokens.extend(tokens)
             probabilities.extend([float(word.get("probability", 0))] * len(tokens))
     if word_tokens and word_tokens != actual_words:
-        probabilities = [0] * len(heard)
+        probabilities = [0] * len(actual_words)
     elif not word_tokens:
-        probabilities = [1] * len(heard)
+        probabilities = [1] * len(actual_words)
+    probabilities = [min(probabilities[start:end]) for start, end in heard_spans]
     uncertain_changes = 0
     uncertain_gap = False
     number_change = False
@@ -165,9 +273,12 @@ def assess_transcript(expected, transcript):
             uncertain_gap = uncertain_gap or any(probability < 0.5 for probability in neighbors)
         wanted_numbers = [word for word in wanted[wanted_begin:wanted_end] if word.isdigit()]
         heard_numbers = [word for word in heard[begin:end] if word.isdigit()]
-        changed_words = expected_words[wanted_begin:wanted_end] + actual_words[begin:end]
+        changed_words = [
+            word for start, stop in wanted_spans[wanted_begin:wanted_end]
+            for word in expected_words[start:stop]
+        ] + [word for start, stop in heard_spans[begin:end] for word in actual_words[start:stop]]
         if wanted_numbers != heard_numbers and any(
-            word.isdigit() or word in numbers and word not in {"un", "une"}
+            word.isdigit() or word in _NUMBER_WORDS and word not in {"un", "une"}
             for word in changed_words
         ):
             number_change = True
