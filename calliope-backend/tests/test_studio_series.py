@@ -501,17 +501,17 @@ def test_outro_language_and_speaker_survive_episode_persistence(client):
     created = series(client)
     client.patch(f"/api/studio/series/{created['id']}", json={"language": "fr"})
     project = episode(client, created["id"]).json()["project_id"]
-    plan = series_planner.append_outro(planned_episode({}), {"entities": []})
+    plan = series_planner.append_outro(planned_episode({}), {"entities": [], "language": "fr"})
     production.save_episode_plan(project, plan)
     board = service.board(project)
     ending = board["scenes"][-1]["shots"][0]
     with service.database() as conn:
         context = service.shot_context(conn, ending["id"])
     assert context["shot"]["speaker"] == "studio_cta_host"
-    assert context["shot"]["language"] == "en"
+    assert context["shot"]["language"] == "fr"
     assert context["shot"]["purpose"] == "outro"
     compiled = compile_h3_prompt(ending | context["shot"], context, first_frame=True)
-    assert "<d>[English] Want to make videos too?" in compiled
+    assert "<d>[French] Toi aussi, tu veux faire des vidéos ?" in compiled
 
 
 def test_resume_adds_missing_outro_once_to_an_existing_episode(client):
@@ -528,3 +528,67 @@ def test_resume_adds_missing_outro_once_to_an_existing_episode(client):
     assert board["scenes"][-1]["shots"][0]["dialogue"] == (
         "Want to make videos too? Copy this video's link, like, subscribe, and comment GO!"
     )
+
+
+@pytest.mark.parametrize("language", ["en", "fr"])
+def test_shot_language_controls_speech_validation_in_a_french_series(
+    client, monkeypatch, tmp_path, language
+):
+    from calliope.studio import production, series_planner, service, transcription
+    from tests.test_studio_pacing import make_clip
+
+    created = series(client)
+    client.patch(f"/api/studio/series/{created['id']}", json={"language": "fr"})
+    project = episode(client, created["id"]).json()["project_id"]
+    plan = series_planner.append_outro(planned_episode({}), {"entities": [], "language": language})
+    production.save_episode_plan(project, plan)
+    ending = service.board(project)["scenes"][-1]["shots"][0]
+    clip = make_clip(tmp_path / "english-outro.mp4", 8, tone_windows=[(0.1, 7.8)])
+    take = service.store_upload(ending["id"], clip.read_bytes(), "video")
+    service.select_take(take["id"])
+
+    def recognize(path, checkpoint, language):
+        text = {
+            "en": (
+                "Want to make videos too? Copy this video's link, like, subscribe, and comment GO!"
+            ),
+            "fr": (
+                "Toi aussi, tu veux faire des vidéos ? "
+                "Copie le lien de la vidéo, like, abonne-toi et commente GO !"
+            ),
+        }[language]
+        return {
+            "status": "ok", "text": text,
+            "segments": [{"words": [{"word": w, "probability": 0.99} for w in text.split()]}],
+            "speech_intervals": [[0.1, 7.8]], "reason": "",
+        }
+
+    monkeypatch.setattr(transcription, "transcribe_dialogue", recognize)
+    verdict = asyncio.run(production.assess_take(production.load_shot(ending["id"])))
+    assert verdict["status"] == "ok"
+    metadata = production.selected_video(production.load_shot(ending["id"]))["metadata"]
+    assert metadata["transcription_cache"]["signature"][-1] == language
+
+
+def test_resume_replaces_an_english_outro_in_a_french_episode_once(client):
+    from calliope.studio import production, series_planner, service
+
+    created = series(client)
+    client.patch(f"/api/studio/series/{created['id']}", json={"language": "fr"})
+    project = episode(client, created["id"]).json()["project_id"]
+    old = series_planner.append_outro(planned_episode({}), {"entities": [], "language": "en"})
+    production.save_episode_plan(project, old)
+    ending_id = service.board(project)["scenes"][-1]["shots"][0]["id"]
+    production.ensure_outro(project)
+    production.ensure_outro(project)
+    board = service.board(project)
+    assert len(board["scenes"]) == 2
+    assert board["scenes"][0]["shots"][0]["dialogue"] == "That's my name. Who is calling?"
+    ending = board["scenes"][-1]["shots"][0]
+    assert ending["id"] == ending_id
+    assert ending["dialogue"] == (
+        "Toi aussi, tu veux faire des vidéos ? "
+        "Copie le lien de la vidéo, like, abonne-toi et commente GO !"
+    )
+    with service.database() as conn:
+        assert service.shot_context(conn, ending_id)["shot"]["language"] == "fr"

@@ -5,15 +5,51 @@ import re
 
 from calliope.agent.llm import generate_structured
 from calliope.studio.audio import AudioSettings
-from calliope.studio.h3_prompt import LANGUAGES, directing_profile, validate_h3_prose
+from calliope.studio.h3_prompt import (
+    LANGUAGES,
+    dialogue_language,
+    directing_profile,
+    validate_h3_prose,
+)
 from calliope.studio.series import BIBLE_FIELDS
 
 logger = logging.getLogger(__name__)
 OUTRO_SECONDS = 8.0
 OUTRO_KEY = "studio_cta_host"
-OUTRO_DIALOGUE = (
-    "Want to make videos too? Copy this video's link, like, subscribe, and comment GO!"
-)
+OUTRO_DIALOGUES = {
+    "en": "Want to make videos too? Copy this video's link, like, subscribe, and comment GO!",
+    "fr": (
+        "Toi aussi, tu veux faire des vidéos ? "
+        "Copie le lien de la vidéo, like, abonne-toi et commente GO !"
+    ),
+    "ar": "هل تريد صنع فيديوهات أيضا؟ انسخ رابط الفيديو، وأعجب به، واشترك، واكتب GO في التعليقات!",
+    "zh": "你也想制作视频吗？复制这个视频的链接，点赞、订阅，并评论GO！",
+    "de": (
+        "Willst du auch Videos machen? "
+        "Kopiere den Link dieses Videos, like, abonniere und kommentiere GO!"
+    ),
+    "it": (
+        "Vuoi fare video anche tu? "
+        "Copia il link del video, metti mi piace, iscriviti e commenta GO!"
+    ),
+    "ja": (
+        "あなたも動画を作りたい？この動画のリンクをコピーして、"
+        "いいねと登録をして、GOとコメントしてね！"
+    ),
+    "ko": (
+        "너도 영상을 만들고 싶어? 이 영상 링크를 복사하고, "
+        "좋아요와 구독을 누르고, GO라고 댓글을 남겨!"
+    ),
+    "pt": "Você também quer fazer vídeos? Copie o link do vídeo, curta, inscreva-se e comente GO!",
+    "ru": (
+        "Тоже хочешь создавать видео? "
+        "Скопируй ссылку на видео, поставь лайк, подпишись и напиши GO в комментариях!"
+    ),
+    "es": (
+        "¿Tú también quieres hacer videos? "
+        "Copia el enlace del video, dale me gusta, suscríbete y comenta GO!"
+    ),
+}
 
 
 async def plan_episode(context, idea, objective):
@@ -113,7 +149,8 @@ claim that a cliffhanger has already been resolved."""
                     "objective": objective,
                     "target_seconds": target,
                     "ending": (
-                        "The software adds an English promotional outro after your story. "
+                        "The software adds a promotional outro in the episode language "
+                        "after your story. "
                         "Do not write the promotion or include its host in the story."
                     ),
                     "pacing": (
@@ -184,17 +221,16 @@ def canonical_key(value, entities, kind):
 
 def append_outro(plan, context):
     plan.setdefault("entities", [])
-    if plan.get("scenes") and any(
-        s.get("purpose") == "outro" for s in plan["scenes"][-1].get("shots", [])
-    ):
-        return plan
+    label = dialogue_language(context.get("language"))
+    language = next(code for code, name in LANGUAGES.items() if name == label)
+    dialogue = OUTRO_DIALOGUES[language]
     if not any(e["key"] == OUTRO_KEY for e in context.get("entities", []) + plan["entities"]):
         plan["entities"].append({
             "key": OUTRO_KEY, "kind": "character", "name": "Studio host",
             "description": (
                 "Friendly anthropomorphic red apple with a small green leaf, "
                 "expressive eyes, clearly visible mouth, small arms, navy jacket, "
-                "consistent proportions. Clear warm English voice."
+                "consistent proportions. Clear warm voice."
             ),
         })
     shot = {
@@ -209,19 +245,25 @@ def append_outro(plan, context):
             "expressive eyes, visible mouth, small arms and navy jacket in a clean studio. "
             "Medium close-up, the host fills the frame, soft lighting, no text."
         ),
-        "dialogue": OUTRO_DIALOGUE, "speaker": OUTRO_KEY,
+        "dialogue": dialogue, "speaker": OUTRO_KEY,
         "character_keys": [OUTRO_KEY], "location_key": "",
         "reference_key": "studio-cta-host-studio", "duration_sec": OUTRO_SECONDS,
-        "audio_mode": "native", "language": "en", "purpose": "outro",
+        "audio_mode": "native", "language": language, "purpose": "outro",
         "framing": "Medium close-up, visible speaker dominates the vertical frame.",
         "camera": "Static camera.",
         "action": "The host speaks directly to the viewer and gestures invitingly.",
         "reaction": "The host finishes with an enthusiastic smile.",
     }
-    plan["scenes"].append({
+    ending = {
         "heading": "Studio - Make your own videos", "action": shot["action"],
-        "dialog": OUTRO_DIALOGUE, "shots": [shot],
-    })
+        "dialog": dialogue, "shots": [shot],
+    }
+    if plan.get("scenes") and any(
+        s.get("purpose") == "outro" for s in plan["scenes"][-1].get("shots", [])
+    ):
+        plan["scenes"][-1] = ending
+    else:
+        plan.setdefault("scenes", []).append(ending)
     return plan
 
 

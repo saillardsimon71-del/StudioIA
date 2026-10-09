@@ -175,8 +175,17 @@ def test_duration_near_target_is_accepted_without_padding():
     assert sum(durations) == pytest.approx(59.8)
 
 
-@pytest.mark.parametrize("language", ["en", "fr", "ja"])
-def test_each_episode_gets_an_english_fruit_outro_after_the_story(monkeypatch, language):
+@pytest.mark.parametrize("language,label,dialogue", [
+    ("en", "English",
+     "Want to make videos too? Copy this video's link, like, subscribe, and comment GO!"),
+    ("fr", "French", "Toi aussi, tu veux faire des vidéos ? "
+     "Copie le lien de la vidéo, like, abonne-toi et commente GO !"),
+    ("fr-FR", "French", "Toi aussi, tu veux faire des vidéos ? "
+     "Copie le lien de la vidéo, like, abonne-toi et commente GO !"),
+    ("ja", "Japanese", "あなたも動画を作りたい？この動画のリンクをコピーして、"
+     "いいねと登録をして、GOとコメントしてね！"),
+])
+def test_each_episode_gets_a_fruit_outro_in_its_language(monkeypatch, language, label, dialogue):
     from calliope.studio.h3_prompt import compile_h3_prompt
 
     requests = []
@@ -198,14 +207,12 @@ def test_each_episode_gets_an_english_fruit_outro_after_the_story(monkeypatch, l
     ending = result["scenes"][-1]["shots"]
     assert len(ending) == 1
     shot = ending[0]
-    assert shot["dialogue"] == (
-        "Want to make videos too? Copy this video's link, like, subscribe, and comment GO!"
-    )
+    assert shot["dialogue"] == dialogue
     assert shot["speaker"] == "studio_cta_host"
     assert shot["character_keys"] == ["studio_cta_host"]
-    assert shot["language"] == "en"
+    assert shot["language"] == language.split("-")[0]
     host = next(e for e in result["entities"] if e["key"] == "studio_cta_host")
     assert "apple" in host["description"].lower()
     compiled = compile_h3_prompt(shot, context | {"entities": result["entities"]})
-    assert "<d>[English] Want to make videos too?" in compiled
+    assert f"<d>[{label}] {dialogue}</d>" in compiled
     assert "<d>" not in shot["dialogue"]

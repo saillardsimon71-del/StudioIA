@@ -183,16 +183,23 @@ def ensure_outro(project_id):
         if not episode:
             return
         last = conn.execute(
-            "SELECT sc.context_json FROM clips c JOIN scenes s ON s.id=c.scene_id "
+            "SELECT c.id,c.scene_id,sc.context_json,ss.dialogue FROM clips c "
+            "JOIN scenes s ON s.id=c.scene_id JOIN studio_shots ss ON ss.clip_id=c.id "
             "LEFT JOIN studio_shot_context sc ON sc.clip_id=c.id WHERE c.project_id=? "
             "ORDER BY s.order_index DESC,s.id DESC,c.order_index DESC,c.id DESC LIMIT 1",
             (project_id,),
         ).fetchone()
-        if last and json.loads(last[0] or "{}").get("purpose") == "outro":
-            return
         context = json.loads(episode["context_json"])
         plan = append_outro(json.loads(episode["plan_json"] or "{}"), context)
         ending = plan["scenes"][-1]
+        shot = ending["shots"][0]
+        last_context = json.loads(last["context_json"] or "{}") if last else {}
+        has_outro = last_context.get("purpose") == "outro"
+        if (
+            has_outro and last_context.get("language") == shot["language"]
+            and last["dialogue"] == shot["dialogue"]
+        ):
+            return
         host = next(
             e for e in context.get("entities", []) + plan["entities"]
             if e["key"] == ending["shots"][0]["speaker"]
@@ -202,13 +209,28 @@ def ensure_outro(project_id):
             "VALUES(?,?,?,?,?)",
             (episode["series_id"], host["key"], host["kind"], host["name"], host["description"]),
         )
-        scene_id = service.add_scene(conn, project_id, ending)
-        clip_id = conn.execute("SELECT id FROM clips WHERE scene_id=?", (scene_id,)).fetchone()[0]
-        shot = ending["shots"][0]
+        if has_outro:
+            clip_id = last["id"]
+            conn.execute(
+                "UPDATE studio_shots SET dialogue=?,selected_video_id=NULL,approved=0,"
+                "trim_start_sec=NULL,trim_end_sec=NULL WHERE clip_id=?",
+                (shot["dialogue"], clip_id),
+            )
+            conn.execute("UPDATE clips SET clip_path=NULL WHERE id=?", (clip_id,))
+            conn.execute(
+                "UPDATE scenes SET dialog=? WHERE id=?", (shot["dialogue"], last["scene_id"])
+            )
+            service.touch(conn, project_id)
+        else:
+            scene_id = service.add_scene(conn, project_id, ending)
+            clip_id = conn.execute(
+                "SELECT id FROM clips WHERE scene_id=?", (scene_id,)
+            ).fetchone()[0]
         fields = ("action", "reaction", "framing", "camera", "language", "purpose",
                   "speaker", "character_keys", "location_key", "reference_key")
         conn.execute(
-            "INSERT INTO studio_shot_context(clip_id,context_json) VALUES(?,?)",
+            "INSERT INTO studio_shot_context(clip_id,context_json) VALUES(?,?) "
+            "ON CONFLICT(clip_id) DO UPDATE SET context_json=excluded.context_json",
             (clip_id, json.dumps({key: shot[key] for key in fields})),
         )
         conn.execute(
@@ -339,11 +361,12 @@ async def assess_take(shot):
             conn.commit()
         return verdict
     stat = Path(take["output_path"]).stat()
+    language = context.get("shot", {}).get("language") or context.get("language", "en")
     signature = [
         stat.st_size,
         stat.st_mtime_ns,
         settings.studio_asr_checkpoint,
-        context.get("language", "en"),
+        language,
     ]
     cached = metadata.get("transcription_cache") or {}
     if cached.get("signature") == signature:
@@ -355,7 +378,7 @@ async def assess_take(shot):
             transcription.transcribe_dialogue,
             take["output_path"],
             settings.studio_asr_checkpoint,
-            context.get("language", "en"),
+            language,
         )
         metadata["transcription_cache"] = {
             "signature": signature,
