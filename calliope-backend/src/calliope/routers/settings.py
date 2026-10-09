@@ -60,6 +60,9 @@ class SettingsUpdate(BaseModel):
     agent_workspace_dir: str | None = None
     agent_shell_enabled: bool | None = None
     queue_concurrency: int | None = Field(None, ge=1, le=8)
+    studio_video_concurrency: int | None = Field(None, ge=1, le=2)
+    studio_render_timeout_sec: float | None = Field(None, ge=1, le=86400)
+    studio_asr_checkpoint: str | None = None
     queue_poll_interval_sec: float | None = Field(None, ge=0.5, le=60.0)
     queue_poll_timeout_sec: float | None = Field(None, ge=0, le=86400.0)
     queue_max_retries: int | None = Field(None, ge=0, le=10)

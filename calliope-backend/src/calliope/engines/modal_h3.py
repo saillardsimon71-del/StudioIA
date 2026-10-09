@@ -23,6 +23,14 @@ from calliope.engines.h3_graph import (
 _IMPORT_LOCK = threading.Lock()
 
 
+def is_poll_network_error(error):
+    _load_modal()
+    from grpclib.exceptions import StreamTerminatedError
+    from modal.exception import ServiceError
+
+    return isinstance(error, (ServiceError, StreamTerminatedError, ConnectionError))
+
+
 def _load_modal():
     with _IMPORT_LOCK:
         policy = asyncio.get_event_loop_policy()
@@ -42,7 +50,7 @@ def _image_png(path: Path) -> bytes:
         raise ValueError("Le fichier de référence n'est pas une image lisible.") from exc
 
 
-def _last_frame_png(video_path: Path) -> bytes:
+def _last_frame_png(video_path: Path, end_sec=None) -> bytes:
     if not video_path.is_file():
         raise ValueError("La vidéo précédente est introuvable.")
     with tempfile.TemporaryDirectory(prefix="studio-h3-frame-") as directory:
@@ -55,13 +63,16 @@ def _last_frame_png(video_path: Path) -> bytes:
                     "-loglevel",
                     "error",
                     "-y",
-                    "-sseof",
-                    "-2",
+                    *(
+                        ["-ss", str(max(0, float(end_sec) - 1 / H3_FPS))]
+                        if end_sec is not None else ["-sseof", "-2"]
+                    ),
                     "-i",
                     str(video_path),
                     "-map",
                     "0:v:0",
                     "-an",
+                    *( ["-frames:v", "1"] if end_sec is not None else [] ),
                     "-update",
                     "1",
                     str(target),
@@ -87,6 +98,7 @@ def build_request(
     audio_mode: str = "native",
     previous_video_path: Path | None = None,
     trace_id: str | None = None,
+    previous_video_time: float | None = None,
 ) -> dict:
     if aspect_ratio not in H3_SIZES:
         raise ValueError("Le format doit être 16:9, 9:16 ou 1:1.")
@@ -117,7 +129,7 @@ def build_request(
         payload["continuity_mode"] = "image"
     elif previous_video_path is not None:
         payload["image_base64"] = base64.b64encode(
-            _last_frame_png(Path(previous_video_path))
+            _last_frame_png(Path(previous_video_path), previous_video_time)
         ).decode("ascii")
         payload["continuity_mode"] = "last_frame"
     validate_request(payload)
@@ -129,6 +141,7 @@ class ModalH3Engine:
         self.app_name = app_name
         self.function_name = function_name
         self._results = {}
+        self.remote_terminal = False
 
     def _function(self):
         modal = _load_modal()
@@ -154,13 +167,24 @@ class ModalH3Engine:
         return self._function().spawn(payload).object_id
 
     def poll(self, call_id: str) -> dict | None:
+        self.remote_terminal = call_id in self._results
         if call_id in self._results:
             return self._results[call_id]
         modal = _load_modal()
+        from modal.exception import FunctionTimeoutError, OutputExpiredError, RemoteError
+
         try:
             result = modal.FunctionCall.from_id(call_id).get(timeout=0)
-        except TimeoutError:
-            return None
+        except Exception as exc:
+            # SDK 1.6.1 attaches this cache only to deserialized remote tracebacks.
+            if isinstance(exc, (FunctionTimeoutError, OutputExpiredError, RemoteError)) or hasattr(
+                exc, '__line_cache__',
+            ):
+                self.remote_terminal = True
+            elif isinstance(exc, TimeoutError):
+                return None
+            raise
+        self.remote_terminal = True
         if (
             not isinstance(result, dict)
             or not result.get("video_base64")
@@ -184,3 +208,32 @@ class ModalH3Engine:
             return snapshot if isinstance(snapshot, dict) else None
         except Exception:
             return None
+
+    def identity(self):
+        identity = {'workspace': None, 'environment': None, 'profile': None}
+        try:
+            _load_modal()
+            config_module = importlib.import_module("modal.config")
+            config = config_module.Config()
+            identity = {
+                "profile": config_module._profile,
+                "environment": config.get("environment") or None,
+                "workspace": None,
+            }
+            response = asyncio.run(
+                asyncio.wait_for(
+                    config_module._lookup_workspace(
+                        config.get("server_url"),
+                        config.get("token_id"),
+                        config.get("token_secret"),
+                        oauth_refresh_token=config.get("oauth_refresh_token"),
+                        oauth_client_id=config.get("oauth_client_id"),
+                        oauth_client_secret=config.get("oauth_client_secret"),
+                    ),
+                    timeout=H3_PROGRESS_TIMEOUT_SEC,
+                )
+            )
+            identity["workspace"] = response.username
+            return identity
+        except Exception:
+            return identity

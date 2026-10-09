@@ -411,18 +411,82 @@ def test_progress_retrieves_named_dict_without_submission(monkeypatch):
 
 def test_progress_cancels_blocked_async_dict_get(monkeypatch):
     import asyncio
+
     from calliope.engines import modal_h3
 
     state = {"entered": False, "cancelled": False}
+
     async def blocked(key):
         state["entered"] = True
         try:
             await asyncio.Event().wait()
         finally:
             state["cancelled"] = True
+
     store = SimpleNamespace(get=SimpleNamespace(aio=blocked))
     module = SimpleNamespace(Dict=SimpleNamespace(from_name=lambda name: store))
     monkeypatch.setitem(sys.modules, "modal", module)
     monkeypatch.setattr(modal_h3, "H3_PROGRESS_TIMEOUT_SEC", 0.01, raising=False)
     assert modal_h3.ModalH3Engine("studio-ia-h3", "render_clip").progress("take-1") is None
     assert state == {"entered": True, "cancelled": True}
+
+
+def test_identity_uses_effective_credentials_and_exposes_only_names(monkeypatch):
+    from calliope.engines import modal_h3
+
+    values = {
+        "server_url": "https://modal.test",
+        "token_id": "environment-token",
+        "token_secret": "secret",
+        "environment": "",
+    }
+    called = []
+
+    async def lookup(server, token_id, token_secret, **options):
+        called.append((server, token_id, token_secret, options))
+        return SimpleNamespace(username="actual-workspace")
+
+    module = SimpleNamespace(
+        Config=lambda: SimpleNamespace(get=lambda key: values.get(key)),
+        _profile="configured-profile",
+        _lookup_workspace=lookup,
+    )
+    monkeypatch.setitem(sys.modules, "modal.config", module)
+    monkeypatch.setattr(modal_h3, "_load_modal", lambda: None)
+    result = modal_h3.ModalH3Engine("app", "function").identity()
+    assert called[0][:3] == ("https://modal.test", "environment-token", "secret")
+    assert result == {
+        "profile": "configured-profile",
+        "workspace": "actual-workspace",
+        "environment": None,
+    }
+    assert "secret" not in str(result) and "environment-token" not in str(result)
+
+
+def test_identity_timeout_cancels_lookup_and_keeps_uncertainty(monkeypatch):
+    import asyncio
+
+    from calliope.engines import modal_h3
+
+    cancelled = []
+
+    async def lookup(*args, **options):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.append(True)
+
+    module = SimpleNamespace(
+        Config=lambda: SimpleNamespace(get=lambda key: None),
+        _profile="profile",
+        _lookup_workspace=lookup,
+    )
+    monkeypatch.setitem(sys.modules, "modal.config", module)
+    monkeypatch.setattr(modal_h3, "_load_modal", lambda: None)
+    monkeypatch.setattr(modal_h3, "H3_PROGRESS_TIMEOUT_SEC", 0.01)
+    assert modal_h3.ModalH3Engine("app", "function").identity() == {
+        "profile": "profile",
+        "workspace": None,
+        "environment": None,
+    }
+    assert cancelled == [True]

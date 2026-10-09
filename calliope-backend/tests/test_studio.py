@@ -27,6 +27,14 @@ def pause_studio_queue():
     settings.llm_active_id = old_active_id
 
 
+@pytest.fixture(autouse=True)
+def mock_studio_telemetry(monkeypatch):
+    from calliope.engines.modal_h3 import ModalH3Engine
+
+    monkeypatch.setattr(ModalH3Engine, "progress", lambda *args: None)
+    monkeypatch.setattr(ModalH3Engine, "identity", lambda *args: {"workspace": None})
+
+
 def new_board(client):
     response = client.post(
         "/api/studio/projects",
@@ -126,10 +134,10 @@ def test_video_request_preserves_dialogue_without_spoken_instructions(client, au
     ).json()
     take = result["takes"][0]
     prompt = take["prompt"]
-    assert prompt.startswith(visual_prompt)
+    assert visual_prompt in prompt
     assert "say exactly" not in prompt
     assert "Spoken dialogue" not in prompt
-    assert (f"<d>{dialogue}</d>" in prompt) is (audio_mode == "native")
+    assert (f"<d>[English] {dialogue}</d>" in prompt) is (audio_mode == "native")
     with closing(get_db(settings.db_path)) as conn:
         saved = conn.execute(
             "SELECT request_json FROM studio_takes WHERE id=?", (take["id"],)

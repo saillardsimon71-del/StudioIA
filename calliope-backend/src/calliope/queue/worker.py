@@ -150,7 +150,10 @@ class QueueWorker:
     async def stop(self) -> None:
         self._stop.set()
         if self._task:
-            await asyncio.wait([self._task], timeout=5)
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
 
     async def _loop(self) -> None:
         logger.info("Queue worker started")

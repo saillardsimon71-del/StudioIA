@@ -165,6 +165,9 @@ export interface Settings {
 	llm_active_id: string | null;
 	comfyui_base_url: string;
 	queue_concurrency: number;
+    studio_video_concurrency: number;
+    studio_render_timeout_sec: number;
+    studio_asr_checkpoint: string;
 	queue_poll_interval_sec: number;
 	queue_poll_timeout_sec: number;
 	queue_max_retries: number;

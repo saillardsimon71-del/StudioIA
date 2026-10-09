@@ -14,6 +14,7 @@ import pytest
 
 from calliope.queue.manager import queue_manager
 from calliope.studio import pacing
+from tests.test_studio import mock_studio_telemetry as mock_studio_telemetry
 from tests.test_studio import new_board, png_bytes
 
 FFMPEG_OK = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
@@ -702,7 +703,7 @@ def isolated_production(monkeypatch, client):
     queue_manager.paused = previous
 
 
-def produce(client, monkeypatch, tmp_path, plan, clip_bytes):
+def produce(client, monkeypatch, tmp_path, plan, clip_bytes, expected_error=None):
     from calliope.engines.modal_h3 import ModalH3Engine
     from calliope.studio import production, service
     from tests.test_studio_series import episode, series
@@ -728,8 +729,27 @@ def produce(client, monkeypatch, tmp_path, plan, clip_bytes):
         },
     )
     created = episode(client, series(client)["id"]).json()
+    with service.database() as conn:
+        context = json.loads(
+            conn.execute(
+                "SELECT context_json FROM studio_episodes WHERE project_id=?",
+                (created["project_id"],),
+            ).fetchone()[0]
+        )
+        context["target_seconds"] = 1.6
+        conn.execute(
+            "UPDATE studio_episodes SET context_json=? WHERE project_id=?",
+            (json.dumps(context), created["project_id"]),
+        )
+        conn.commit()
     job = queue_manager.get_job(created["job_id"])
-    asyncio.run(production.run_production(job, json.loads(job["payload_json"]), lambda: False))
+    if expected_error:
+        with pytest.raises(RuntimeError, match=expected_error):
+            asyncio.run(
+                production.run_production(job, json.loads(job["payload_json"]), lambda: False)
+            )
+    else:
+        asyncio.run(production.run_production(job, json.loads(job["payload_json"]), lambda: False))
     return created["project_id"], spawns
 
 
@@ -738,6 +758,13 @@ def test_a_good_take_is_approved_without_rerender_and_trimmed_usefully(
     client, monkeypatch, tmp_path
 ):
     from calliope.studio import service
+    monkeypatch.setattr(
+        'calliope.studio.transcription.transcribe_dialogue',
+        lambda *args: {
+            'status': 'ok', 'text': 'Un deux trois.', 'segments': [],
+            'speech_intervals': [[0.1, 1.5]], 'reason': '',
+        },
+    )
 
     clip = make_clip(tmp_path / "bonne prise.mp4", 5.1667, tone_windows=[(0.1, 1.5)])
     episode_plan = beat_plan([1.6])
@@ -761,7 +788,7 @@ def test_a_good_take_is_approved_without_rerender_and_trimmed_usefully(
 
 
 @requires_ffmpeg
-def test_one_retry_on_manifest_dialogue_failure_then_editing_goes_on(
+def test_one_retry_on_manifest_dialogue_failure_then_approval_blocks(
     client, monkeypatch, tmp_path
 ):
     from calliope.studio import service
@@ -784,14 +811,25 @@ def test_one_retry_on_manifest_dialogue_failure_then_editing_goes_on(
         return episode_plan
 
     project_id, spawns = produce(
-        client, monkeypatch, tmp_path, plan_result, silent.read_bytes()
+        client, monkeypatch, tmp_path, plan_result, silent.read_bytes(),
+        expected_error='bloqué après une relance',
     )
     # Échec manifeste deux fois de suite : une relance, pas une boucle GPU.
     assert len(spawns) == 2
     board = service.board(project_id)
-    assert board["production"]["status"] == "done"
-    assert board["scenes"][0]["shots"][0]["approved"] is True
-    assert board["exports"]
+    assert board["production"]["status"] == "failed"
+    assert board["scenes"][0]["shots"][0]["approved"] is False
+    assert not board["exports"]
+    from calliope.studio import production
+    job = queue_manager.get_job(board['production']['job_id'])
+    with pytest.raises(RuntimeError, match='bloqué après une relance'):
+        asyncio.run(production.run_production(job, json.loads(job['payload_json']), lambda: False))
+    assert len(spawns) == 2
+    response = client.post(
+        f"/api/studio/shots/{board['scenes'][0]['shots'][0]['id']}/approve",
+        json={'approved': True},
+    )
+    assert response.status_code == 409
 
 
 # ------------------------------------------------------------------- routes

@@ -56,6 +56,9 @@
 		comfyui_base_url: 'comfy',
 		dry_run: 'comfy',
 		queue_concurrency: 'queue',
+        studio_video_concurrency: 'queue',
+        studio_render_timeout_sec: 'queue',
+        studio_asr_checkpoint: 'queue',
 		queue_poll_interval_sec: 'queue',
 		queue_poll_timeout_sec: 'queue',
 		queue_max_retries: 'queue',
@@ -79,6 +82,8 @@
 	// save never trips a raw 422.
 	const NUMERIC_LIMITS: Record<string, { min: number; max: number; labelKey: string }> = {
 		queue_concurrency: { min: 1, max: 8, labelKey: 'settings.concurrencyField' },
+        studio_video_concurrency: { min: 1, max: 2, labelKey: 'settings.concurrencyField' },
+        studio_render_timeout_sec: { min: 1, max: 86400, labelKey: 'settings.pollTimeoutField' },
 		queue_poll_interval_sec: { min: 0.5, max: 60, labelKey: 'settings.pollIntervalField' },
 		queue_poll_timeout_sec: { min: 0, max: 86400, labelKey: 'settings.pollTimeoutField' },
 		queue_max_retries: { min: 0, max: 10, labelKey: 'settings.maxRetriesField' },
@@ -796,6 +801,9 @@
 				<section class="panel">
 					<h1>{t('settings.queueSection')}</h1>
 					<p class="lead">{t('settings.queueLead')}</p>
+                    <label class="field"><span class="field-label">Vidéos StudioIA simultanées</span><select class="field-input" value={String(fieldValue('studio_video_concurrency', s.studio_video_concurrency))} onchange={(e) => draft.studio_video_concurrency = Number(e.currentTarget.value)}><option value="1">1 (défaut)</option><option value="2">2</option></select></label>
+                    <label class="field"><span class="field-label">Délai global d'attente StudioIA (secondes)</span><input class="field-input" type="number" min="1" max="86400" value={String(fieldValue('studio_render_timeout_sec', s.studio_render_timeout_sec))} oninput={(e) => draft.studio_render_timeout_sec = e.currentTarget.value} onblur={(e) => clampOnBlur(e, 'studio_render_timeout_sec')} /></label>
+                    <label class="field"><span class="field-label">Checkpoint Whisper local (CPU)</span><input class="field-input" value={String(fieldValue('studio_asr_checkpoint', s.studio_asr_checkpoint))} oninput={(e) => draft.studio_asr_checkpoint = e.currentTarget.value} /><span>Vide : transcription inconnue. Aucun modèle téléchargé automatiquement.</span></label>
 					<label class="field">
 						<span class="field-label">{t('settings.concurrencyField')}</span>
 						<input

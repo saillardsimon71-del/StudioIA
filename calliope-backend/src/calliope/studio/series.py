@@ -297,6 +297,32 @@ def resume(project_id):
             raise HTTPException(404, "Production introuvable.")
         if row["status"] in ("pending", "running"):
             return service.board(project_id)
+        if row['status'] == 'done':
+            raise HTTPException(409, 'Cette production est déjà terminée.')
+        job = conn.execute("SELECT status,error FROM jobs WHERE id=?", (row["job_id"],)).fetchone()
+        if job["error"] == "cancelled":
+            raise HTTPException(409, "Cette production a été annulée.")
+        children = conn.execute(
+            "SELECT t.* FROM studio_takes t JOIN jobs j ON j.id=t.job_id "
+            "WHERE t.project_id=? AND j.status!='done' AND j.error IS NOT 'cancelled'",
+            (project_id,),
+        ).fetchall()
+        if any(t["submission_state"] == "submitting" and not t["modal_call_id"] for t in children):
+            raise HTTPException(
+                409, "Soumission Modal ambiguë. Vérifiez le tableau Modal avant de reprendre."
+            )
+        if row["status"] == "paused" and job["status"] == "done":
+            conn.execute(
+                "UPDATE jobs SET status='pending',error=NULL,completed_at=NULL "
+                "WHERE id=? AND status='done'",
+                (row["job_id"],),
+            )
+        conn.execute(
+            "UPDATE jobs SET status='pending' WHERE status='running' AND project_id=? "
+            "AND (json_extract(payload_json,'$.studio_take_id') IS NOT NULL "
+            "OR json_extract(payload_json,'$.studio_export_id') IS NOT NULL)",
+            (project_id,),
+        )
         conn.execute(
             (
                 "UPDATE studio_productions SET status='pending',pause_requested=0,error=NUL"
@@ -309,6 +335,12 @@ def resume(project_id):
     from calliope.queue.manager import queue_manager
 
     queue_manager.retry(job_id)
+    for take in children:
+        if take["modal_call_id"]:
+            service.render_event(
+                take['id'], 'RESUMING', 'Reprise explicite de la production',
+                resume_started_at=service.utc_now(),
+            )
     return service.board(project_id)
 
 

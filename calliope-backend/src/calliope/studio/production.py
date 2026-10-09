@@ -60,15 +60,25 @@ async def run_child(job_id, should_stop):
             "Une prise a été annulée. Générez et choisissez une nouvelle prise avant de reprendre."
         )
     with service.database() as conn:
-        conn.execute(
-            "UPDATE jobs SET status='running',error=NULL,started_at=CURRENT_TIMESTAMP WHERE id=?",
+        cur = conn.execute(
+            "UPDATE jobs SET status='running',error=NULL,started_at=CURRENT_TIMESTAMP WHERE id=? "
+            "AND status IN ('pending','failed') AND error IS NOT 'cancelled'",
             (job_id,),
         )
         conn.commit()
+        if not cur.rowcount:
+            raise ValueError('Ce travail est déjà actif ou annulé.')
     try:
         outputs = await service.run_studio_job(job, json.loads(job["payload_json"]), should_stop)
         queue_manager.mark_done(job_id, outputs)
         return outputs
+    except asyncio.CancelledError:
+        with service.database() as conn:
+            conn.execute(
+                "UPDATE jobs SET status='pending' WHERE id=? AND status='running'", (job_id,)
+            )
+            conn.commit()
+        raise
     except Exception as exc:
         queue_manager.mark_failed(job_id, service.safe_error(exc))
         raise
@@ -120,6 +130,11 @@ def save_episode_plan(project_id, plan):
                         row[0],
                         json.dumps(
                             {
+                                **{
+                                    key: shot[key]
+                                    for key in ('action', 'reaction', 'framing', 'camera')
+                                    if key in shot
+                                },
                                 "character_keys": shot.get("character_keys", []),
                                 "location_key": shot.get("location_key", ""),
                                 "speaker": shot.get("speaker", ""),
@@ -202,7 +217,21 @@ def generation_id(job, shot, kind, attempt=0):
 
 
 async def generate_take(job, shot, kind, should_stop, attempt=0):
-    request = {"kind": kind, "request_id": generation_id(job, shot, kind, attempt), "n_takes": 1}
+    with service.database() as conn:
+        previous = conn.execute(
+            "SELECT t.* FROM studio_takes t JOIN jobs j ON j.id=t.job_id "
+            "WHERE t.clip_id=? AND t.kind=? AND json_extract(j.payload_json,'$.parent_job_id')=? "
+            "AND t.request_id LIKE ? AND j.error IS NOT 'cancelled' "
+            "AND (j.status!='done' OR ?=1) ORDER BY t.id DESC LIMIT 1",
+            (shot["id"], kind, job["id"], "%-r1" if attempt else "%", attempt),
+        ).fetchone()
+    if previous and (attempt or not previous["request_id"].endswith("-r1")):
+        await run_child(previous["job_id"], should_stop)
+        return service.select_take(previous["id"])
+    request = {
+        "kind": kind, "request_id": generation_id(job, shot, kind, attempt),
+        "n_takes": 1, "parent_job_id": job['id'],
+    }
     queued = service.enqueue_takes(shot["id"], request)
     take = queued["takes"][0]
     await run_child(take["job_id"], should_stop)
@@ -220,10 +249,23 @@ async def assess_take(shot):
     (réplique absente, invention importante, audio inexploitable). Le reste se
     corrige au trim, jamais au rerender.
     """
-    from calliope.studio import pacing
+    from calliope.studio import pacing, transcription
+    from calliope.studio.h3_prompt import spoken_dialogue
 
     take = selected_video(shot)
-    dialogue = shot["dialogue"].strip()
+    with service.database() as conn:
+        context = service.shot_context(conn, shot["id"])
+    dialogue = spoken_dialogue(shot | context.get("shot", {}), context)
+    if take and not dialogue:
+        metadata = take.get("metadata") or {}
+        metadata.pop("dialogue_qc", None)
+        with service.database() as conn:
+            conn.execute(
+                "UPDATE studio_takes SET metadata_json=? WHERE id=?",
+                (json.dumps(metadata), take["id"]),
+            )
+            conn.commit()
+        return None
     if (
         not take
         or not dialogue
@@ -233,16 +275,64 @@ async def assess_take(shot):
     ):
         return None
     metadata = take.get("metadata") or {}
+    service.render_event(take['id'], 'VALIDATING', 'Contrôle de la parole native')
     probe = float(metadata.get("duration_sec") or 0)
     if not metadata.get("has_audio"):
-        return {
+        verdict = {
             "status": "inaudible",
             "reason": "Audio inexploitable : pas de piste son native.",
             "voice": None,
         }
-    voice = await asyncio.to_thread(pacing.detect_voice, take["output_path"], probe)
+        metadata["dialogue_qc"] = verdict
+        service.render_event(take["id"], "FAILED", verdict["reason"])
+        with service.database() as conn:
+            conn.execute(
+                "UPDATE studio_takes SET metadata_json=? WHERE id=?",
+                (json.dumps(metadata), take["id"]),
+            )
+            conn.commit()
+        return verdict
+    stat = Path(take["output_path"]).stat()
+    signature = [
+        stat.st_size,
+        stat.st_mtime_ns,
+        settings.studio_asr_checkpoint,
+        context.get("language", "en"),
+    ]
+    cached = metadata.get("transcription_cache") or {}
+    if cached.get("signature") == signature:
+        transcript = cached["transcript"]
+        voice = cached.get("activity")
+    else:
+        voice = await asyncio.to_thread(pacing.detect_voice, take["output_path"], probe)
+        transcript = await asyncio.to_thread(
+            transcription.transcribe_dialogue,
+            take["output_path"],
+            settings.studio_asr_checkpoint,
+            context.get("language", "en"),
+        )
+        metadata["transcription_cache"] = {
+            "signature": signature,
+            "transcript": transcript,
+            "activity": voice,
+        }
     verdict = pacing.assess_dialogue(dialogue, shot["duration_sec"], probe, voice)
-    verdict["voice"] = (voice or {}).get("intervals") if voice else None
+    if verdict["status"] not in ("missing", "inaudible"):
+        verdict = transcription.assess_transcript(dialogue, transcript)
+    verdict["voice"] = (
+        transcript.get("speech_intervals") if transcript.get("status") == "ok" else None
+    )
+    metadata["dialogue_qc"] = verdict
+    service.render_event(
+        take["id"],
+        "FAILED" if verdict["status"] in ("missing", "extra", "inaudible") else "DONE",
+        verdict.get("reason", "Contrôle terminé"),
+    )
+    with service.database() as conn:
+        conn.execute(
+            "UPDATE studio_takes SET metadata_json=? WHERE id=?", (json.dumps(metadata), take["id"])
+        )
+        conn.commit()
     return verdict
 
 
@@ -259,6 +349,8 @@ def trim_take(shot, voice=None):
         return
     probe = float(take["metadata"].get("duration_sec") or 0)
     if probe <= 0:
+        return
+    if shot["audio_mode"] == "native" and shot["dialogue"].strip() and not voice:
         return
     start, end = pacing.useful_window(shot["duration_sec"], probe, voice)
     if start <= 1e-9 and end >= probe - 1e-9:
@@ -317,8 +409,18 @@ async def ensure_entities(job, should_stop):
             (job["project_id"],),
         ).fetchone()
         frozen = json.loads(episode["context_json"])
-        current = series.require_series(conn, episode["series_id"])
         items = series.entities(conn, episode["series_id"])
+        planned = json.loads(
+            conn.execute(
+                "SELECT plan_json FROM studio_episodes WHERE project_id=?", (job["project_id"],)
+            ).fetchone()[0]
+        )
+        canon = {e["key"]: e for e in planned.get("entities", [])}
+        canon.update({e["key"]: e for e in frozen.get("entities", [])})
+        items = [
+            entity | canon.get(entity['key'], {})
+            for entity in items if entity['key'] in canon
+        ]
     for index, entity in enumerate(items):
         await checkpoint(
             job,
@@ -333,10 +435,12 @@ async def ensure_entities(job, should_stop):
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"entity-{entity['id']}.png"
         if not path.is_file():
-            style = frozen["bible"].get("visual_style") or current["bible"]["visual_style"]
+            style = frozen["bible"].get("visual_style") or planned.get('bible', {}).get(
+                'visual_style', ''
+            )
             prompt = (
                 f"Canonical visual reference for {entity['kind']}: {entity['description']}. "
-                f"Visual style: {style}. Universe: {current['bible']['universe']}. "
+                f"Visual style: {style}. Universe: {frozen['bible']['universe']}. "
                 "A single consistent medium view, clean composition, no collage, no watermark. "
                 + (
                     "The character's natural mouth is visible. Preserve costume and identity."
@@ -361,6 +465,80 @@ async def ensure_entities(job, should_stop):
                 (str(path), entity["id"], episode["series_id"]),
             )
             conn.commit()
+
+
+def load_shot(shot_id):
+    with service.database() as conn:
+        return service.public_shot(conn, shot_id)
+
+
+async def render_shot(job, initial, should_stop):
+    from calliope.studio.h3_prompt import compile_h3_prompt
+
+    if should_stop():
+        raise asyncio.CancelledError()
+    if queue_manager.is_cancelled(job["id"]):
+        raise ProductionPausedError()
+    shot = load_shot(initial["id"])
+    chosen = selected_video(shot)
+    if chosen and not shot["approved"] and chosen["engine"] != "import":
+        with service.database() as conn:
+            context = service.shot_context(conn, shot["id"])
+        expected = compile_h3_prompt(
+            shot | context.get("shot", {}),
+            context,
+            first_frame=bool(shot["selected_image_id"] or shot["continue_from_previous"]),
+        )
+        legacy = shot["prompt"] + (
+            "\n<d>" + shot["dialogue"].strip() + "</d>"
+            if shot["dialogue"].strip() and shot["audio_mode"] == "native"
+            else ""
+        )
+        if chosen["prompt"] not in (expected, legacy):
+            chosen = None
+    if not chosen:
+        shot = await generate_take(job, shot, "video", should_stop)
+    verdict = await assess_take(shot)
+    if verdict and verdict["status"] in ("missing", "extra", "inaudible"):
+        service.approve_shot(shot["id"], False)
+        shot = await generate_take(job, shot, "video", should_stop, attempt=1)
+        verdict = await assess_take(shot)
+        if verdict and verdict["status"] in ("missing", "extra", "inaudible"):
+            raise ValueError(f"Plan {shot['id']} bloqué après une relance : {verdict['reason']}")
+    trim_take(shot, (verdict or {}).get("voice"))
+    if should_stop():
+        raise asyncio.CancelledError()
+    if queue_manager.is_cancelled(job["id"]):
+        raise ProductionPausedError()
+    service.approve_shot(shot["id"], True)
+
+
+async def render_videos(job, shots, should_stop):
+    semaphore = asyncio.Semaphore(settings.studio_video_concurrency)
+    tasks = []
+
+    async def render(index, shot):
+        if shot["continue_from_previous"] and index:
+            await tasks[index - 1]
+        async with semaphore:
+            await checkpoint(
+                job,
+                "video",
+                0.33 + index / len(shots) * 0.55,
+                f"FastH3 : plan {index + 1}/{len(shots)}",
+                should_stop,
+            )
+            await render_shot(job, shot, should_stop)
+
+    for index, shot in enumerate(shots):
+        tasks.append(asyncio.create_task(render(index, shot)))
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 async def run_production(job, payload, should_stop):
@@ -397,52 +575,13 @@ async def run_production(job, payload, should_stop):
             if not shot["selected_image_id"]:
                 if not reuse_reference(project_id, shot):
                     shot = await generate_take(job, shot, "image", should_stop)
-        warnings = []
-        for index, initial in enumerate(shots):
-            await checkpoint(
-                job,
-                "video",
-                0.33 + index / len(shots) * 0.55,
-                f"FastH3 : plan {index + 1}/{len(shots)}",
-                should_stop,
-            )
-            with service.database() as conn:
-                shot = service.public_shot(conn, initial["id"])
-            expected = shot["prompt"] + (
-                "\n<d>" + shot["dialogue"].strip() + "</d>" if shot["dialogue"].strip() else ""
-            )
-            chosen = next((t for t in shot["takes"] if t["id"] == shot["selected_video_id"]), None)
-            if not chosen or (
-                not shot["approved"]
-                and chosen["engine"] != "import"
-                and chosen["prompt"] != expected
-            ):
-                shot = await generate_take(job, shot, "video", should_stop)
-                verdict = await assess_take(shot)
-                if verdict and verdict["status"] in ("missing", "extra", "inaudible"):
-                    # Une seule relance, uniquement sur échec manifeste.
-                    await checkpoint(
-                        job,
-                        "video",
-                        0.33 + index / len(shots) * 0.55,
-                        f"Prise à refaire : plan {index + 1}/{len(shots)} ({verdict['reason']})",
-                        should_stop,
-                    )
-                    shot = await generate_take(job, shot, "video", should_stop, attempt=1)
-                    retry = await assess_take(shot)
-                    if retry and retry["status"] in ("missing", "extra", "inaudible"):
-                        # La prise reste exploitable au montage : on continue
-                        # plutôt que de brûler du GPU sur une perfection théorique.
-                        warnings.append(f"plan {index + 1}: {retry['reason']}")
-                    verdict = retry
-                trim_take(shot, (verdict or {}).get("voice"))
-            service.approve_shot(shot["id"], True)
+        await render_videos(job, shots, should_stop)
         message = "Musique, bruitages et assemblage du MP4"
-        if warnings:
-            message += " — avertissement dialogue : " + " ; ".join(warnings[:4])
         await checkpoint(job, "mixing", 0.9, message, should_stop)
         revision = service.board(project_id)["project"]["revision"]
-        queued = service.enqueue_export(project_id, f"auto-{job['id']}-export-{revision}")
+        queued = await service.enqueue_export(
+            project_id, f"auto-{job['id']}-export-{revision}", parent_job_id=job["id"]
+        )
         outputs = await run_child(queued["job_id"], should_stop)
         with service.database() as conn:
             conn.execute(

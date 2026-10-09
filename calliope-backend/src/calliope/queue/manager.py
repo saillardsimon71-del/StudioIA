@@ -11,6 +11,14 @@ from calliope.db import get_db, row_to_dict
 logger = logging.getLogger("calliope.queue")
 
 
+def modal_call_unfinished(take):
+    return bool(
+        take['modal_call_id']
+        and not json.loads(take['render_state_json'] or '{}').get('remote_terminal')
+        and not (take['status'] == 'done' and take['output_path'])
+    )
+
+
 class QueueManager:
     def __init__(self) -> None:
         self.paused = False
@@ -56,13 +64,16 @@ class QueueManager:
             return None
         conn = get_db(config.settings.db_path)
         try:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT * FROM jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
+                "SELECT * FROM jobs WHERE status = 'pending' "
+                "AND json_extract(payload_json,'$.parent_job_id') IS NULL "
+                "ORDER BY created_at ASC,id LIMIT 1"
             ).fetchone()
             if not row:
                 return None
             job_id = row["id"]
-            conn.execute(
+            cur = conn.execute(
                 """
                 UPDATE jobs SET status = 'running', started_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND status = 'pending'
@@ -70,6 +81,8 @@ class QueueManager:
                 (job_id,),
             )
             conn.commit()
+            if not cur.rowcount:
+                return None
             claimed = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
             return row_to_dict(claimed) if claimed else None
         finally:
@@ -81,7 +94,7 @@ class QueueManager:
             conn.execute(
                 """
                 UPDATE jobs SET status = 'done', output_paths_json = ?, error = NULL,
-                completed_at = CURRENT_TIMESTAMP WHERE id = ?
+                completed_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('pending','running')
                 """,
                 (json.dumps(output_paths), job_id),
             )
@@ -95,7 +108,7 @@ class QueueManager:
             conn.execute(
                 """
                 UPDATE jobs SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP,
-                retry_count = retry_count + 1 WHERE id = ?
+                retry_count = retry_count + 1 WHERE id = ? AND error IS NOT 'cancelled'
                 """,
                 (error[:2000], job_id),
             )
@@ -107,12 +120,12 @@ class QueueManager:
         conn = get_db(config.settings.db_path)
         try:
             row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
-            if not row:
+            if not row or row['status'] != 'failed' or row['error'] == 'cancelled':
                 return None
             conn.execute(
                 """
                 UPDATE jobs SET status = 'pending', error = NULL, started_at = NULL,
-                completed_at = NULL WHERE id = ?
+                completed_at = NULL WHERE id = ? AND status='failed' AND error IS NOT 'cancelled'
                 """,
                 (job_id,),
             )
@@ -126,16 +139,31 @@ class QueueManager:
     def cancel(self, job_id: int) -> bool:
         conn = get_db(config.settings.db_path)
         try:
-            cur = conn.execute(
-                """
-                UPDATE jobs SET status = 'failed', error = 'cancelled',
-                completed_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND status IN ('pending', 'running')
-                """,
-                (job_id,),
-            )
+            conn.execute('BEGIN IMMEDIATE')
+            jobs = conn.execute(
+                "SELECT * FROM jobs WHERE id=? OR json_extract(payload_json,'$.parent_job_id')=?",
+                (job_id, job_id),
+            ).fetchall()
+            cancelled = []
+            for job in jobs:
+                take = conn.execute(
+                    'SELECT * FROM studio_takes WHERE job_id=?', (job['id'],),
+                ).fetchone()
+                if job['status'] in ('pending', 'running') or (
+                    job['status'] == 'failed' and take and modal_call_unfinished(take)
+                ):
+                    cancelled.append(job['id'])
+            parent = next((job for job in jobs if job['id'] == job_id), None)
+            if cancelled and parent and parent['status'] == 'failed' and job_id not in cancelled:
+                cancelled.append(job_id)
+            for identifier in cancelled:
+                conn.execute(
+                    "UPDATE jobs SET status='failed',error='cancelled',"
+                    "completed_at=CURRENT_TIMESTAMP "
+                    'WHERE id=?', (identifier,),
+                )
             conn.commit()
-            return cur.rowcount > 0
+            return bool(cancelled)
         finally:
             conn.close()
 

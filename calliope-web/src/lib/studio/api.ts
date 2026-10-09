@@ -1,6 +1,16 @@
 export type AspectRatio = "16:9" | "9:16" | "1:1";
 export type MediaKind = "image" | "video";
 
+export interface RenderState {
+  phase?: string;
+  events?: { phase: string; at: string; detail?: string; source?: string }[];
+  container_id?: string;
+  sampling?: { value: number; max: number };
+  poll_error?: string;
+  progress_limited?: boolean;
+  identity?: { profile?: string; workspace?: string; environment?: string };
+}
+
 export interface StudioProject {
   id: number;
   title: string;
@@ -29,6 +39,8 @@ export interface Take {
   source_take_id: number | null;
   created_at: string;
   metadata: Record<string, unknown>;
+  render_state?: RenderState;
+  modal_call_id?: string | null;
 }
 
 export interface Shot {
@@ -72,6 +84,11 @@ export interface Scene {
 
 export interface StudioJob {
   id: number;
+  can_resume?: boolean;
+  can_cancel?: boolean;
+  parent_job_id?: number | null;
+  render_state?: RenderState;
+  modal_call_id?: string | null;
   status: string;
   job_type?: string;
   type?: string;

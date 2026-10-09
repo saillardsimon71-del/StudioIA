@@ -191,6 +191,9 @@ class Settings(BaseSettings):
     studio_image_base_url: str = "https://apihub.agnes-ai.com/v1"
     studio_image_model: str = "agnes-image-2.5-flash"
     studio_image_api_key: str | None = None
+    studio_video_concurrency: int = Field(1, ge=1, le=2)
+    studio_render_timeout_sec: float = Field(5400, ge=1, le=86400)
+    studio_asr_checkpoint: str = ""
     # Comfy is HTTP-only (upload / prompt / history / view). No local input/output dirs.
 
     queue_concurrency: int = 1
@@ -533,6 +536,9 @@ class Settings(BaseSettings):
             "agent_llm_assignments": dict(self.agent_llm_assignments or {}),
             "comfyui_base_url": self.comfyui_base_url,
             "queue_concurrency": self.queue_concurrency,
+            "studio_video_concurrency": self.studio_video_concurrency,
+            "studio_render_timeout_sec": self.studio_render_timeout_sec,
+            "studio_asr_checkpoint": self.studio_asr_checkpoint,
             "queue_poll_interval_sec": self.queue_poll_interval_sec,
             "queue_poll_timeout_sec": self.queue_poll_timeout_sec,
             "queue_max_retries": self.queue_max_retries,
@@ -644,6 +650,9 @@ class Settings(BaseSettings):
             "studio_image_base_url": self.studio_image_base_url,
             "studio_image_model": self.studio_image_model,
             "studio_image_api_key": self.studio_image_api_key,
+            "studio_video_concurrency": self.studio_video_concurrency,
+            "studio_render_timeout_sec": self.studio_render_timeout_sec,
+            "studio_asr_checkpoint": self.studio_asr_checkpoint,
             "queue_concurrency": self.queue_concurrency,
             "queue_poll_interval_sec": self.queue_poll_interval_sec,
             "queue_poll_timeout_sec": self.queue_poll_timeout_sec,

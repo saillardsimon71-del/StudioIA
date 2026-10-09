@@ -201,6 +201,14 @@ async def get_job(job_id: int) -> dict[str, Any]:
 
 @router.post("/{job_id}/retry")
 async def retry_job(job_id: int) -> dict[str, Any]:
+    job = queue_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    payload = json.loads(job['payload_json'] or '{}')
+    if payload.get('parent_job_id') is not None:
+        raise HTTPException(
+            409, 'Reprenez la production pour relancer ce travail et ses dépendances.',
+        )
     job = queue_manager.retry(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -212,6 +220,14 @@ async def cancel_job(job_id: int) -> dict[str, Any]:
     job = queue_manager.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not cancellable")
+    payload = json.loads(job['payload_json'] or '{}')
+    if any(payload.get(key) for key in (
+        'studio_take_id', 'studio_export_id', 'studio_production_id',
+    )):
+        from calliope.studio import service
+
+        await service.cancel_job(job_id)
+        return {'ok': True}
     ok = queue_manager.cancel(job_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Job not cancellable")

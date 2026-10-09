@@ -388,35 +388,18 @@ async def approve(shot_id: int, payload: ApproveRequest):
     with service.database() as conn:
         shot = service.require_shot(conn, shot_id)
     series.require_editable(shot["project_id"])
+    if payload.approved:
+        from calliope.studio.production import assess_take
+
+        with service.database() as conn:
+            current = service.public_shot(conn, shot_id)
+        await assess_take(current)
     return service.approve_shot(shot_id, payload.approved)
 
 
 @router.post("/jobs/{job_id}/cancel")
 async def cancel(job_id: int):
-    job = queue_manager.get_job(job_id)
-    if not job:
-        raise HTTPException(404, "Travail introuvable.")
-    payload = json.loads(job["payload_json"] or "{}")
-    if not (payload.get("studio_take_id") or payload.get("studio_export_id")):
-        raise HTTPException(404, "Travail Studio introuvable.")
-    queue_manager.cancel(job_id)
-    if payload.get("studio_take_id") and queue_manager.get_job(job_id)["error"] == "cancelled":
-        with service.database() as conn:
-            take = conn.execute(
-                "SELECT * FROM studio_takes WHERE id=?", (payload["studio_take_id"],)
-            ).fetchone()
-        if take and take["modal_call_id"]:
-            from calliope.engines.modal_h3 import ModalH3Engine
-
-            request = json.loads(take["request_json"])
-            engine = ModalH3Engine(request["modal_app"], request["modal_function"])
-            try:
-                await asyncio.to_thread(engine.cancel, take["modal_call_id"])
-            except Exception as exc:
-                raise HTTPException(
-                    503, "Annulé localement; arrêt Modal non confirmé: " + service.safe_error(exc)
-                ) from None
-    return service.public_job(queue_manager.get_job(job_id))
+    return await service.cancel_job(job_id)
 
 
 @router.post("/jobs/{job_id}/resume")
@@ -431,14 +414,27 @@ async def resume(job_id: int):
         )
     if not (payload.get("studio_take_id") or payload.get("studio_export_id")):
         raise HTTPException(404, "Travail Studio introuvable.")
+    if payload.get('parent_job_id'):
+        raise HTTPException(
+            409, 'Reprenez la production pour relancer ce travail et ses dépendances.',
+        )
     series.require_editable(job["project_id"])
+    if not service.public_job(job)["can_resume"]:
+        raise HTTPException(
+            409, "Soumission Modal ambiguë. Vérifiez le tableau Modal avant toute nouvelle prise."
+        )
+    if payload.get("studio_take_id"):
+        service.render_event(
+            payload['studio_take_id'], 'RESUMING', 'Reprise explicite du même appel',
+            resume_started_at=service.utc_now(),
+        )
     return service.public_job(queue_manager.retry(job_id))
 
 
 @router.post("/projects/{project_id}/export")
 async def export(project_id: int, payload: ExportRequest):
     series.require_editable(project_id)
-    return service.enqueue_export(project_id, payload.request_id)
+    return await service.enqueue_export(project_id, payload.request_id)
 
 
 @router.post("/examples")

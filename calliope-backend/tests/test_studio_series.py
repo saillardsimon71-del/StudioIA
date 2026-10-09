@@ -7,6 +7,7 @@ import pytest
 
 from calliope.config import settings
 from calliope.queue.manager import queue_manager
+from tests.test_studio import mock_studio_telemetry as mock_studio_telemetry
 from tests.test_studio import png_bytes, video_bytes
 
 
@@ -32,6 +33,22 @@ def episode(client, identifier, idea="The signal names the keeper.", request="fi
         f"/api/studio/series/{identifier}/episodes",
         json={"idea": idea, "request_id": request},
     )
+
+
+def miniature_target(project_id):
+    from calliope.studio import service
+
+    with service.database() as conn:
+        row = conn.execute(
+            "SELECT context_json FROM studio_episodes WHERE project_id=?", (project_id,)
+        ).fetchone()
+        context = json.loads(row[0])
+        context["target_seconds"] = 0.6
+        conn.execute(
+            "UPDATE studio_episodes SET context_json=? WHERE project_id=?",
+            (json.dumps(context), project_id),
+        )
+        conn.commit()
 
 
 def test_series_bibles_and_episode_requests_are_separate(client):
@@ -151,6 +168,7 @@ def test_automatic_production_exports_and_next_episode_uses_only_own_history(
     monkeypatch.setattr(ModalH3Engine, "poll", poll)
     a, b = series(client), series(client, "Sunny bakery", "The baker loses her recipe.")
     first = episode(client, a["id"]).json()
+    miniature_target(first['project_id'])
     job = queue_manager.get_job(first["job_id"])
     outputs = asyncio.run(
         production.run_production(job, json.loads(job["payload_json"]), lambda: False)
@@ -162,6 +180,7 @@ def test_automatic_production_exports_and_next_episode_uses_only_own_history(
     assert board["exports"][0]["metadata"]["has_audio"]
     assert board["scenes"][0]["shots"][0]["approved"]
     next_episode = episode(client, a["id"], request="second").json()
+    miniature_target(next_episode['project_id'])
     job = queue_manager.get_job(next_episode["job_id"])
     asyncio.run(production.run_production(job, json.loads(job["payload_json"]), lambda: False))
     assert "tomorrow's radio" in json.dumps(contexts[-1])
@@ -323,6 +342,7 @@ def test_production_resumes_original_modal_call_without_another_take(client, mon
     monkeypatch.setattr(ModalH3Engine, "spawn", spawn)
     monkeypatch.setattr(ModalH3Engine, "poll", interrupted)
     first = episode(client, series(client)["id"]).json()
+    miniature_target(first['project_id'])
     job = queue_manager.get_job(first["job_id"])
     with pytest.raises(RuntimeError, match="Temporary polling"):
         asyncio.run(production.run_production(job, json.loads(job["payload_json"]), lambda: False))
@@ -395,13 +415,19 @@ def test_generation_replay_accepts_existing_pre_series_request(client):
         ).fetchone()
         parameters = json.loads(row[0])
         parameters.pop("seed")
+        for key in ("trace_id", "context", "expected_dialogue"):
+            parameters.pop(key, None)
+        parameters['prompt'] = shot['prompt']
         parameters.pop("reference_paths", None)
         digest = hashlib.sha256(
             json.dumps(
                 {"parameters": parameters, "n_takes": 1, "seed": None}, sort_keys=True
             ).encode()
         ).hexdigest()
-        conn.execute("UPDATE studio_takes SET request_hash=? WHERE id=?", (digest, take["id"]))
+        conn.execute(
+            "UPDATE studio_takes SET request_hash=?,request_json=? WHERE id=?",
+            (digest, json.dumps(parameters | {'seed': take['seed']}), take["id"]),
+        )
         conn.commit()
     assert service.enqueue_takes(shot["id"], data)["takes"][0]["id"] == take["id"]
 

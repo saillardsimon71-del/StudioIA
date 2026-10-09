@@ -1,4 +1,5 @@
 <script lang="ts">
+    import RenderProgress from './RenderProgress.svelte';
 	import { studio, isActive, statusLabel, errorMessage, type StudioJob } from './api';
 	let { jobs, onrefresh, productionActive = false }: { jobs: StudioJob[]; onrefresh: () => Promise<void>; productionActive?: boolean } = $props();
 	let busy = $state<number | null>(null);
@@ -18,7 +19,7 @@
 
 {#if jobs.length}<details class="jobs" open={jobs.some((job) => isActive(job.status) || job.status === 'failed')}><summary>Travaux de génération et d'export ({jobs.length})</summary>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
-	<div class="job-list">{#each [...jobs].sort((a, b) => b.id - a.id) as job (job.id)}<div class="job"><div class="between"><div class="row"><strong>{label(job)} {job.clip_id ? `- plan #${job.clip_id}` : ''}</strong><span class:pending={isActive(job.status)} class:failed={job.status === 'failed'} class="badge">{statusLabel(job.status)}</span></div><div class="row">{#if isActive(job.status)}<button class="small" disabled={busy !== null} onclick={() => action(job, false)}>{busy === job.id ? 'Annulation...' : 'Annuler'}</button>{:else if ['failed', 'cancelled', 'paused'].includes(job.status)}<button class="small" disabled={productionActive || busy !== null} onclick={() => action(job, true)}>{busy === job.id ? 'Reprise...' : 'Reprendre'}</button>{/if}</div></div>{#if job.error || job.error_message}<p class="job-error">{job.error || job.error_message}</p>{/if}</div>{/each}</div>
+	<div class="job-list">{#each [...jobs].sort((a, b) => b.id - a.id) as job (job.id)}<div class="job"><div class="between"><div class="row"><strong>{label(job)} {job.clip_id ? `- plan #${job.clip_id}` : ''}</strong><span class:pending={isActive(job.status)} class:failed={job.status === 'failed'} class="badge">{statusLabel(job.status)}</span></div><div class="row">{#if job.can_cancel}<button class="small" disabled={busy !== null} onclick={() => action(job, false)}>{busy === job.id ? 'Annulation...' : 'Annuler'}</button>{/if}{#if job.can_resume}<button class="small" disabled={productionActive || busy !== null} onclick={() => action(job, true)}>{busy === job.id ? 'Reprise...' : 'Reprendre'}</button>{/if}</div></div><RenderProgress state={job.render_state} callId={job.modal_call_id} />{#if job.parent_job_id && job.status === 'failed'}<p>Reprenez la production pour relancer ce travail.</p>{/if}{#if job.error || job.error_message}<p class="job-error">{job.error || job.error_message}</p>{/if}</div>{/each}</div>
 </details>{/if}
 
 <style>
