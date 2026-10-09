@@ -39,10 +39,10 @@ def test_dialogue_is_verbatim_attributed_and_never_duplicated():
     assert shot == original
 
 
-def test_silent_text_generation_has_no_image_or_speech_claim():
+def test_dialogue_free_text_generation_has_ambience_without_speech():
     result = compiler()({"prompt": "A quiet garden.", "dialogue": ""})
     assert "Picture" not in result and "<d>" not in result and "(S1)" not in result
-    assert "overall_soundscape: N/A" in result
+    assert "overall_soundscape: Quiet location ambience" in result
 
 
 def test_legacy_name_prefix_is_outside_spoken_text_without_mutating_shot():

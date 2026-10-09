@@ -255,7 +255,7 @@
                     >{/each}</select
                 ></label
               >{/if}<label
-              >Plan<select bind:value={cue.shot_index}
+              >Plan<select bind:value={cue.shot_index} onchange={() => cue.shot_id = null}
                 >{#each shotNames as name, i}<option value={i}
                     >{i + 1}. {name}</option
                   >{/each}</select

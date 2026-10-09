@@ -117,6 +117,7 @@ def save_episode_plan(project_id, plan):
                 ),
             )
         script = []
+        shot_ids = []
         for scene in plan["scenes"]:
             scene_id = service.add_scene(conn, project_id, scene)
             shots = conn.execute(
@@ -124,6 +125,7 @@ def save_episode_plan(project_id, plan):
             ).fetchall()
             script.append(scene.get("heading", ""))
             for row, shot in zip(shots, scene["shots"]):
+                shot_ids.append(row[0])
                 conn.execute(
                     "INSERT INTO studio_shot_context(clip_id,context_json) VALUES(?,?)",
                     (
@@ -133,7 +135,8 @@ def save_episode_plan(project_id, plan):
                                 **{
                                     key: shot[key]
                                     for key in ('action', 'reaction', 'framing', 'camera',
-                                                'language', 'purpose')
+                                                'language', 'purpose', 'dialogue_turns',
+                                                'soundscape', 'screen_text')
                                     if key in shot
                                 },
                                 "character_keys": shot.get("character_keys", []),
@@ -166,9 +169,13 @@ def save_episode_plan(project_id, plan):
                 project_id,
             ),
         )
+        audio_config = plan.get("audio") or audio.AudioSettings().model_dump()
+        for cue in audio_config.get("sfx", []) + audio_config.get("holds", []):
+            if cue["shot_index"] < len(shot_ids):
+                cue["shot_id"] = shot_ids[cue["shot_index"]]
         conn.execute(
             "INSERT INTO studio_audio(project_id,settings_json) VALUES(?,?)",
-            (project_id, json.dumps(plan.get("audio") or audio.AudioSettings().model_dump())),
+            (project_id, json.dumps(audio_config)),
         )
         conn.commit()
 
@@ -270,6 +277,8 @@ def generation_id(job, shot, kind, attempt=0):
     inputs = [
         shot["prompt"] if kind == "video" else shot["image_prompt"],
         shot["dialogue"],
+        shot.get("dialogue_turns", []),
+        shot.get("soundscape", ""),
         shot["duration_sec"],
         shot["selected_image_id"] if kind == "video" else None,
         settings.studio_image_model,
@@ -327,13 +336,21 @@ async def assess_take(shot):
     if take and not dialogue:
         metadata = take.get("metadata") or {}
         metadata.pop("dialogue_qc", None)
+        verdict = None
+        if shot["audio_mode"] == "native" and metadata.get("has_audio") is False:
+            verdict = {
+                "status": "inaudible", "reason": "La piste sonore native attendue est absente.",
+                "voice": None,
+            }
+            metadata["dialogue_qc"] = verdict
+            service.render_event(take["id"], "FAILED", verdict["reason"])
         with service.database() as conn:
             conn.execute(
                 "UPDATE studio_takes SET metadata_json=? WHERE id=?",
                 (json.dumps(metadata), take["id"]),
             )
             conn.commit()
-        return None
+        return verdict
     if (
         not take
         or not dialogue
@@ -388,6 +405,13 @@ async def assess_take(shot):
     verdict = pacing.assess_dialogue(dialogue, shot["duration_sec"], probe, voice)
     if verdict["status"] not in ("missing", "inaudible"):
         verdict = transcription.assess_transcript(dialogue, transcript)
+    if context.get("shot", {}).get("dialogue_turns") and verdict["status"] not in (
+        "missing", "extra", "inaudible"
+    ):
+        turns = transcription.assess_turns(context["shot"]["dialogue_turns"], transcript)
+        verdict["turns"] = turns.get("turns", [])
+        if turns["status"] == "missing":
+            verdict.update(status="missing", reason=turns["reason"])
     verdict["voice"] = (
         transcript.get("speech_intervals") if transcript.get("status") == "ok" else None
     )

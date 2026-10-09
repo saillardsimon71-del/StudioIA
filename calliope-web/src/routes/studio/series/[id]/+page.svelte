@@ -133,6 +133,10 @@
       continuity: true,
       silences: social ? "brief" : "story_driven",
       music: "postproduction",
+      music_style: social ? "tension" : "neutral",
+      music_gain_db: -18,
+      ambience_gain_db: -34,
+      number_format: "grouped_comma",
     };
   }
   async function reference(event: Event, entityId: number) {
@@ -340,6 +344,16 @@
               <label>Musique<select bind:value={profile.music}>
                 <option value="postproduction">Choisie au montage</option>
                 <option value="none">Aucune</option>
+              </select></label>
+              <label>Identité musicale<select bind:value={profile.music_style}>
+                <option value="neutral">Minimaliste</option><option value="tension">Tension</option>
+                <option value="warm">Chaleureuse</option><option value="playful">Ludique</option>
+                <option value="energetic">Énergique</option><option value="horror">Inquiétante</option>
+              </select></label>
+              <label>Format des nombres<select bind:value={profile.number_format}>
+                <option value="grouped_comma">12,349</option>
+                <option value="grouped_space">12 349</option>
+                <option value="plain">12349</option>
               </select></label>
             </div>
             <label><input type="checkbox" bind:checked={profile.active_listening} /> Personnages attentifs et réactifs pendant l'écoute</label>

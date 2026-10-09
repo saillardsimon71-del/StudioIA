@@ -9,6 +9,7 @@ python-multipart>=0.0.12
 comfy-mcp>=0.10.0
 comfy-mcp>=0.10.0
 mcp>=2.0.0
+opencv-python-headless==5.0.0.93
 
 # Dev dependencies
 pytest>=8.3.0

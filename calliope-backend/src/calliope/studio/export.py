@@ -134,11 +134,11 @@ def _check_target(duration, target, stage):
         raise ValueError("Durée cible invalide pour l'export.")
     lower_margin, upper_margin = max(3.0, target * 0.1), max(5.0, target * 0.1)
     if not target - lower_margin - 1e-6 <= duration <= target + upper_margin + 1e-6:
-        raise ValueError(
+        return (
             f"Durée {stage}: {duration:.2f} s pour une cible de {target:.2f} s "
-            f"(fenêtre autorisée {max(0, target - lower_margin):.2f}"
+            f"(fenêtre visée {max(0, target - lower_margin):.2f}"
             f"-{target + upper_margin:.2f} s). "
-            "Le contenu utile doit être ajusté avant publication; aucun padding n'est ajouté."
+            "Vérifiez le rythme avant publication; les répliques restent entières."
         )
 
 
@@ -210,6 +210,8 @@ async def assemble(
     for clip in clips:
         _check_cancel(cancel_check)
         probes.append(await asyncio.to_thread(inspect_media, Path(clip["path"])))
+        if clip["audio_mode"] == "native" and not probes[-1]["has_audio"]:
+            raise ValueError("Une prise en mode son natif n'a pas de piste audio.")
     _check_cancel(cancel_check)
     windows = [
         await asyncio.to_thread(_window_for, clip, probe)
@@ -226,6 +228,7 @@ async def assemble(
     with tempfile.TemporaryDirectory(prefix="studio-export-", dir=destination.parent) as temporary:
         work = Path(temporary)
         elapsed = 0
+        overlays = []
         for index, (clip, probe, window) in enumerate(zip(clips, probes, windows)):
             trim_start, _ = window
             duration = durations[index]
@@ -235,6 +238,16 @@ async def assemble(
                 command += ["-ss", f"{trim_start:.9f}"]
             command += ["-i", clip["path"]]
             native_audio = clip["audio_mode"] == "native" and probe["has_audio"]
+            overlay_filter = ""
+            if clip.get("screen_text"):
+                from calliope.studio.screen_text import write_overlay
+
+                overlay_filter, overlay_data = await asyncio.to_thread(
+                    write_overlay, clip["path"], clip["screen_text"], trim_start, duration,
+                    (probe["width"], probe["height"]), (width, height),
+                    work / f"text-{index}.ass",
+                )
+                overlays.append({"clip_id": clip.get("clip_id"), **overlay_data})
             if not native_audio:
                 command += ["-f", "lavfi", "-i", "anullsrc=cl=stereo:r=48000"]
             command += [
@@ -245,7 +258,8 @@ async def assemble(
                 "-vf",
                 f"scale={width}:{height}:force_original_aspect_ratio=decrease:"
                 f"force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
-                "setsar=1,fps=24,format=yuv420p,setpts=PTS-STARTPTS",
+                "setsar=1,fps=24,format=yuv420p,setpts=PTS-STARTPTS"
+                + ("," + overlay_filter if overlay_filter else ""),
                 "-af",
                 "aresample=48000,apad,asetpts=PTS-STARTPTS",
                 "-t",
@@ -332,13 +346,24 @@ async def assemble(
             )
             ready = mixed
         metadata = await asyncio.to_thread(inspect_media, ready)
-        _check_target(metadata["duration_sec"], frozen.get("target_seconds"), "du MP4 réel")
+        if abs(metadata["duration_sec"] - total_duration) > max(0.1, len(clips) / 24 + 0.01):
+            raise ValueError("Durée du MP4 incohérente avec les plans conservés au montage.")
+        warning = _check_target(
+            metadata["duration_sec"], frozen.get("target_seconds"), "du MP4 réel"
+        )
+        if warning:
+            metadata["duration_warning"] = warning
+        if frozen.get("target_seconds") is not None:
+            metadata["target_seconds"] = float(frozen["target_seconds"])
         metadata.pop("has_video")
         metadata["clip_count"] = len(clips)
         metadata["cuts_sec"] = [
             [round(start, 4), round(end, 4)] for start, end in windows
         ]
         metadata["grid_fps"] = 24
+        if overlays:
+            metadata["screen_text"] = overlays
+        metadata["audio"] = frozen.get("audio", {"enabled": False})
         _check_cancel(cancel_check)
         ready.replace(destination)
     await _progress(progress_callback, 1, "Film exporté")

@@ -148,7 +148,7 @@ def test_video_request_preserves_dialogue_without_spoken_instructions(client, au
 def test_rerender_keeps_selected_video_and_request_is_idempotent(client, tmp_path):
     _, board = new_board(client)
     shot = board["scenes"][0]["shots"][0]
-    take = upload(client, shot["id"], video_bytes(tmp_path), "video")
+    take = upload(client, shot["id"], video_bytes(tmp_path, audio=True), "video")
     client.post(f"/api/studio/takes/{take['id']}/select").raise_for_status()
     client.post(
         f"/api/studio/shots/{shot['id']}/approve", json={"approved": True}
@@ -176,7 +176,7 @@ def test_changed_reference_invalidates_approval_without_deleting_takes(client, t
     shot_id = board["scenes"][0]["shots"][0]["id"]
     image = upload(client, shot_id, png_bytes())
     client.post(f"/api/studio/takes/{image['id']}/select").raise_for_status()
-    video = upload(client, shot_id, video_bytes(tmp_path), "video")
+    video = upload(client, shot_id, video_bytes(tmp_path, audio=True), "video")
     client.post(f"/api/studio/takes/{video['id']}/select").raise_for_status()
     client.post(f"/api/studio/shots/{shot_id}/approve", json={"approved": True}).raise_for_status()
     replacement = upload(client, shot_id, png_bytes())

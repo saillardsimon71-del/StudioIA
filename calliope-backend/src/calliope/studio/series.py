@@ -163,12 +163,26 @@ def require_services():
 def context(conn, series_id):
     result = require_series(conn, series_id)
     result["entities"] = entities(conn, series_id)
+    result["speaker_ids"] = {
+        entity["key"]: f"S{index + 1}"
+        for index, entity in enumerate(e for e in result["entities"] if e["kind"] == "character")
+    }
     result["history"] = []
+    result["display_values"] = {}
     for row in conn.execute(
         "SELECT e.*,p.title FROM studio_episodes e JOIN projects p ON p.id=e.project_id "
         "WHERE e.series_id=? AND e.canon_revision IS NOT NULL ORDER BY e.number",
         (series_id,),
     ):
+        exported = conn.execute(
+            "SELECT snapshot_json FROM studio_exports WHERE project_id=? AND revision=? "
+            "AND output_path IS NOT NULL ORDER BY id DESC LIMIT 1",
+            (row["project_id"], row["canon_revision"]),
+        ).fetchone()
+        if exported:
+            for clip in json.loads(exported[0]).get("clips", []):
+                for label in clip.get("screen_text", []):
+                    result["display_values"][label["key"]] = label["text"]
         shots = [
             dict(r)
             for r in conn.execute(

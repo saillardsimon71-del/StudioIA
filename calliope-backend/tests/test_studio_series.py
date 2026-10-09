@@ -483,7 +483,7 @@ def test_planner_repairs_short_episode_before_any_gpu_render(monkeypatch):
     assert len(result["scenes"][0]["shots"]) == 14
 
 
-def test_dialogue_free_shots_do_not_export_unscripted_native_speech():
+def test_dialogue_free_shots_keep_native_ambient_sound():
     from calliope.studio.series_planner import normalize_plan
 
     plan = planned_episode({})
@@ -491,7 +491,7 @@ def test_dialogue_free_shots_do_not_export_unscripted_native_speech():
     shot["dialogue"] = ""
     shot["speaker"] = ""
     result = normalize_plan(plan, {"entities": []})
-    assert result["scenes"][0]["shots"][0]["audio_mode"] == "silent"
+    assert result["scenes"][0]["shots"][0]["audio_mode"] == "native"
 
 
 def test_outro_language_and_speaker_survive_episode_persistence(client):

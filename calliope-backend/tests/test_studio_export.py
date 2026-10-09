@@ -121,7 +121,7 @@ async def test_square_export_preserves_full_takes_and_audio_modes(export_module,
     native, silent = media
     snapshot = snapshot_for(
         (native, 0.25, "native"),
-        (silent, 0.25, "native"),
+        (silent, 0.25, "silent"),
         (native, 0.25, "silent"),
     )
     original = copy.deepcopy(snapshot)
@@ -171,7 +171,7 @@ async def test_export_orientation(export_module, media, tmp_path, aspect_ratio, 
     _, silent = media
     destination = tmp_path / "film.mp4"
     result = await export_module.assemble(
-        snapshot_for((silent, 0.75, "native"), aspect_ratio=aspect_ratio), destination,
+        snapshot_for((silent, 0.75, "silent"), aspect_ratio=aspect_ratio), destination,
     )
     assert result["width"] / result["height"] == pytest.approx(ratio)
     assert audio_rms(destination, 0.1, 0.3) < 10
@@ -179,7 +179,7 @@ async def test_export_orientation(export_module, media, tmp_path, aspect_ratio, 
 
 async def test_export_freezes_snapshot_before_awaiting_progress(export_module, media, tmp_path):
     _, silent = media
-    snapshot = snapshot_for((silent, 0.75, "native"))
+    snapshot = snapshot_for((silent, 0.75, "silent"))
 
     async def progress(event):
         snapshot["aspect_ratio"] = "9:16"
@@ -204,7 +204,7 @@ async def test_missing_clip_leaves_destination_untouched(export_module, tmp_path
 
 
 @pytest.mark.parametrize("target", [65, 0.1])
-async def test_target_rejects_short_or_long_useful_windows_before_publication(
+async def test_target_warns_without_blocking_or_padding_valid_content(
     export_module, media, tmp_path, target,
 ):
     native, _ = media
@@ -212,9 +212,11 @@ async def test_target_rejects_short_or_long_useful_windows_before_publication(
     destination.write_bytes(b"previous film")
     snapshot = snapshot_for(*[(native, 5, "silent")] * 13)
     snapshot["target_seconds"] = target
-    with pytest.raises(ValueError, match="Durée.*cible"):
-        await export_module.assemble(snapshot, destination)
-    assert destination.read_bytes() == b"previous film"
+    result = await export_module.assemble(snapshot, destination)
+    assert result["duration_sec"] == pytest.approx(16.25, abs=0.05)
+    assert result["target_seconds"] == target
+    assert "cible" in result["duration_warning"]
+    assert destination.read_bytes() != b"previous film"
     assert list(tmp_path.iterdir()) == [destination]
 
 
@@ -241,7 +243,7 @@ async def test_export_checks_real_mp4_duration_before_replacing_destination(
     snapshot["target_seconds"] = 4
     destination = tmp_path / "existing.mp4"
     destination.write_bytes(b"previous film")
-    with pytest.raises(ValueError, match="Durée.*cible"):
+    with pytest.raises(ValueError, match="Durée.*montage"):
         await export_module.assemble(snapshot, destination)
     assert destination.read_bytes() == b"previous film"
     assert sorted(path.name for path in tmp_path.iterdir()) == [
@@ -262,10 +264,9 @@ def test_export_accepts_a_useful_episode_near_the_requested_duration(export_modu
     export_module._check_target(duration, 65, "fenêtres utiles")
 
 
-@pytest.mark.parametrize("duration", [55.0, 74.0])
-def test_export_still_rejects_a_clearly_wrong_episode_duration(export_module, duration):
-    with pytest.raises(ValueError, match="Durée.*cible"):
-        export_module._check_target(duration, 65, "fenêtres utiles")
+@pytest.mark.parametrize("duration", [55.0, 74.0, 80.62])
+def test_export_reports_duration_drift_including_the_first_real_run(export_module, duration):
+    assert "cible" in export_module._check_target(duration, 65, "fenêtres utiles")
 
 
 async def test_imported_music_honors_hold_at_the_same_time(
@@ -331,7 +332,7 @@ async def test_cancel_stops_encoding_and_removes_partial_files(
 
     with pytest.raises(InterruptedError):
         await asyncio.wait_for(export_module.assemble(
-            snapshot_for((long_video, 8, "native")), destination,
+            snapshot_for((long_video, 8, "silent")), destination,
             progress_callback=progress, cancel_check=lambda: cancel,
         ), timeout=5)
     assert cancel

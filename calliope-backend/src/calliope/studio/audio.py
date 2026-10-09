@@ -26,6 +26,7 @@ class Cue(BaseModel):
         "click", "beep", "impact", "boom", "whoosh", "riser", "door", "footstep"
     ] = "click"
     shot_index: int = Field(default=0, ge=0, le=1000)
+    shot_id: int | None = Field(default=None, gt=0)
     at_sec: float = Field(default=0, ge=0, le=120)
     gain_db: float = Field(default=-24, ge=-60, le=0)
     asset_id: int | None = None
@@ -37,6 +38,7 @@ class Hold(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     shot_index: int = Field(default=0, ge=0, le=1000)
+    shot_id: int | None = Field(default=None, gt=0)
     at_sec: float = Field(default=0, ge=0, le=120)
     duration_sec: float = Field(default=0.8, gt=0, le=30)
     drop_db: float = Field(default=-36, ge=-90, lt=0)
@@ -75,6 +77,18 @@ def get_audio(conn, project_id):
             (project_id,),
         )
     ]
+    shot_ids = [
+        row[0] for row in conn.execute(
+            "SELECT c.id FROM clips c JOIN scenes s ON s.id=c.scene_id WHERE c.project_id=? "
+            "ORDER BY s.order_index,s.id,c.order_index,c.id", (project_id,)
+        )
+    ]
+    for key in ("sfx", "holds"):
+        config[key] = [
+            cue | {"shot_index": shot_ids.index(cue["shot_id"])}
+            if cue.get("shot_id") else cue
+            for cue in config[key] if not cue.get("shot_id") or cue["shot_id"] in shot_ids
+        ]
     return config
 
 
@@ -95,6 +109,17 @@ def save_audio(project_id, data):
         current = get_audio(conn, project_id)
         current.pop("assets")
         config = AudioSettings.model_validate(current | data).model_dump()
+        shot_ids = [
+            r[0] for r in conn.execute(
+                "SELECT c.id FROM clips c JOIN scenes s ON s.id=c.scene_id WHERE c.project_id=? "
+                "ORDER BY s.order_index,s.id,c.order_index,c.id", (project_id,)
+            )
+        ]
+        for cue in config["sfx"] + config["holds"]:
+            if cue.get("shot_id") and cue["shot_id"] not in shot_ids:
+                raise HTTPException(422, "Ce bruitage référence un plan étranger à l'épisode.")
+            if not cue.get("shot_id") and cue["shot_index"] < len(shot_ids):
+                cue["shot_id"] = shot_ids[cue["shot_index"]]
         asset_ids = [config["music_asset_id"]] + [c["asset_id"] for c in config["sfx"]]
         for identifier in filter(None, asset_ids):
             if not conn.execute(
@@ -256,6 +281,10 @@ def render_stems(config, durations, directory):
                 previous = previous * 0.97 + noise * 0.03
                 value = previous * 0.8
             effects[index] = value * gain
+    rms = math.sqrt(sum(value * value for value in effects) / max(1, len(effects)))
+    if rms > 0:
+        scale = gain / rms
+        effects = array.array("f", (value * scale for value in effects))
     offsets, elapsed = [], 0
     for duration in durations:
         offsets.append(elapsed)
@@ -320,6 +349,10 @@ def render_stems(config, durations, directory):
             music[index] *= weight
             effects[index] *= weight
     music_path, fx_path = Path(directory) / "music.wav", Path(directory) / "effects.wav"
+    rms = math.sqrt(sum(value * value for value in music) / max(1, len(music)))
+    if rms > 0:
+        gain = min(10 ** (-14 / 20) / rms, 0.9 / max(abs(value) for value in music))
+        music = array.array("f", (value * gain for value in music))
     _write_wave(music_path, music, rate)
     _write_wave(fx_path, effects, rate)
     return music_path, fx_path

@@ -82,6 +82,38 @@ def _tokens(text):
     return re.findall(r"\w+", text)
 
 
+def assess_turns(turns, transcript):
+    if not transcript or transcript.get("status") != "ok":
+        return {"status": "unknown", "reason": "Transcription indisponible."}
+    wanted = [_tokens(turn["text"]) for turn in turns]
+    heard = _tokens(transcript.get("text"))
+    flat = [word for turn in wanted for word in turn]
+    matching = set()
+    for block in SequenceMatcher(None, flat, heard, autojunk=False).get_matching_blocks():
+        matching.update(range(block.a, block.a + block.size))
+    probabilities = [
+        word.get("probability", 0) for segment in transcript.get("segments", [])
+        for word in segment.get("words", [])
+    ]
+    reliable = probabilities and sum(probabilities) / len(probabilities) >= 0.8
+    offset, checks = 0, []
+    for index, words in enumerate(wanted):
+        matched = sum(i in matching for i in range(offset, offset + len(words)))
+        coverage = matched / max(1, len(words))
+        status = "missing" if reliable and len(words) >= 3 and coverage < 0.45 else "ok"
+        checks.append({"turn": index, "speaker": turns[index]["speaker"],
+                       "expected": turns[index]["text"], "coverage": coverage, "status": status})
+        offset += len(words)
+    missing = next((item for item in checks if item["status"] == "missing"), None)
+    return {
+        "status": "missing" if missing else "ok",
+        "reason": (
+            f"Tour de parole {missing['turn'] + 1} absent du transcript fiable." if missing else ""
+        ),
+        "turns": checks,
+    }
+
+
 def assess_transcript(expected, transcript):
     expected_words = _tokens(expected)
     if not expected_words:

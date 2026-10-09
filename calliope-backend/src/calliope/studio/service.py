@@ -59,6 +59,7 @@ def shot_context(conn, shot_id):
         **{k: v for k, v in context.get("bible", {}).items() if v},
     }
     context["shot"] = json.loads(row["shot_json"] or "{}") if row else {}
+    context["speaker_ids"] = (plan.get("speaker_ids") or {}) | (context.get("speaker_ids") or {})
     return context
 
 
@@ -239,6 +240,10 @@ def public_shot(conn, shot_id):
     clip["approved"] = bool(clip["approved"])
     clip["continue_from_previous"] = bool(clip["continue_from_previous"])
     clip["duration_sec"] = clip["duration_sec"] or 5
+    context = shot_context(conn, shot_id)["shot"]
+    clip["dialogue_turns"] = context.get("dialogue_turns", [])
+    clip["soundscape"] = context.get("soundscape", "")
+    clip["screen_text"] = context.get("screen_text", [])
     clip["takes"] = [
         public_take(conn, r)
         for r in conn.execute(
@@ -246,6 +251,24 @@ def public_shot(conn, shot_id):
         )
     ]
     return clip
+
+
+def archive_shot(conn, shot_id):
+    shot = public_shot(conn, shot_id)
+    data = {
+        "archived_at": utc_now(), "shot": shot,
+        "context": shot_context(conn, shot_id),
+        "takes": [dict(row) for row in conn.execute(
+            "SELECT * FROM studio_takes WHERE clip_id=? ORDER BY id", (shot_id,)
+        )],
+        "jobs": [dict(row) for row in conn.execute(
+            "SELECT * FROM jobs WHERE clip_id=? ORDER BY id", (shot_id,)
+        )],
+    }
+    directory = settings.assets_dir / str(shot["project_id"]) / "studio/diagnostics"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"deleted-shot-{shot_id}-{uuid.uuid4().hex}.json"
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def board(project_id):
@@ -433,6 +456,36 @@ def update_shot(project_id, shot_id, data):
     with database() as conn:
         require_shot(conn, shot_id, project_id)
         current = public_shot(conn, shot_id)
+        if "dialogue_turns" in data:
+            from calliope.studio.series_planner import canonical_key, normalize_dialogue
+
+            context = shot_context(conn, shot_id)
+            for turn in data["dialogue_turns"]:
+                speaker = canonical_key(turn["speaker"], context["entities"], "character")
+                if not any(
+                    e["key"] == speaker and e["kind"] == "character" for e in context["entities"]
+                ):
+                    raise HTTPException(422, "Le locuteur de cette réplique est inconnu.")
+                try:
+                    text, speaker = normalize_dialogue(turn["text"], speaker, context["entities"])
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc)) from exc
+                if not text:
+                    raise HTTPException(422, "Cette réplique est vide.")
+                turn.update(speaker=speaker, text=text)
+            if data["dialogue_turns"]:
+                data["dialogue"] = " ".join(t["text"] for t in data["dialogue_turns"])
+        elif "dialogue" in data and current.get("dialogue_turns"):
+            data["dialogue_turns"] = []
+        if "screen_text" in data:
+            from calliope.studio.h3_prompt import directing_profile
+            from calliope.studio.screen_text import ScreenText
+
+            profile = directing_profile(shot_context(conn, shot_id).get("directing_profile"))
+            data["screen_text"] = [
+                ScreenText.model_validate(label | {"number_format": profile["number_format"]})
+                .model_dump() for label in data["screen_text"]
+            ]
         changed = any(current.get(k) != v for k, v in data.items())
         trim = {
             key: data.get(key, current.get(key))
@@ -463,6 +516,23 @@ def update_shot(project_id, shot_id, data):
         if changed:
             conn.execute("UPDATE studio_shots SET approved=0 WHERE clip_id=?", (shot_id,))
             touch(conn, project_id)
+        context_data = shot_context(conn, shot_id)["shot"]
+        for key in ("dialogue_turns", "soundscape", "screen_text"):
+            if key in data:
+                context_data[key] = data[key]
+        if data.get("dialogue_turns"):
+            speakers = {t["speaker"] for t in data["dialogue_turns"]}
+            context_data["speaker"] = next(iter(speakers)) if len(speakers) == 1 else ""
+            context_data["character_keys"] = list(dict.fromkeys(
+                context_data.get("character_keys", [])
+                + [t["speaker"] for t in data["dialogue_turns"]]
+            ))
+        if any(key in data for key in ("dialogue_turns", "soundscape", "screen_text")):
+            conn.execute(
+                "INSERT INTO studio_shot_context(clip_id,context_json) VALUES(?,?) "
+                "ON CONFLICT(clip_id) DO UPDATE SET context_json=excluded.context_json",
+                (shot_id, json.dumps(context_data)),
+            )
         result = public_shot(conn, shot_id)
         conn.commit()
         return result
@@ -897,6 +967,7 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
                     "trim_start_sec": shot.get("trim_start_sec"),
                     "trim_end_sec": shot.get("trim_end_sec"),
                     "audio_mode": shot["audio_mode"],
+                    "screen_text": shot.get("screen_text", []),
                     "transcript": (effective.get('transcription_cache') or {}).get('transcript'),
                 }
             )

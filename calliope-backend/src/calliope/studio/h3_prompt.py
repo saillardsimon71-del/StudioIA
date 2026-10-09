@@ -1,7 +1,7 @@
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class DirectingProfile(BaseModel):
@@ -15,6 +15,10 @@ class DirectingProfile(BaseModel):
     continuity: bool = True
     silences: Literal["story_driven", "brief"] = "story_driven"
     music: Literal["postproduction", "none"] = "postproduction"
+    music_style: Literal["neutral", "tension", "warm", "playful", "energetic", "horror"] = "neutral"
+    music_gain_db: float = Field(default=-18, ge=-60, le=0)
+    ambience_gain_db: float = Field(default=-34, ge=-60, le=0)
+    number_format: Literal["plain", "grouped_comma", "grouped_space"] = "grouped_comma"
 
     @model_validator(mode="before")
     @classmethod
@@ -26,6 +30,7 @@ class DirectingProfile(BaseModel):
                 "dialogue_density": "brisk",
                 "reactions": "immediate",
                 "silences": "brief",
+                "music_style": "tension",
             } | value
         return value
 
@@ -95,7 +100,10 @@ def spoken_dialogue(shot, context=None) -> str:
     if shot.get("audio_mode", "native") != "native":
         return ""
     context = context or {}
-    dialogue = str(shot.get("dialogue") or "").strip()
+    if shot.get("dialogue_turns"):
+        dialogue = " ".join(str(turn["text"]).strip() for turn in shot["dialogue_turns"])
+    else:
+        dialogue = str(shot.get("dialogue") or "").strip()
     _, _, prefix_end = _speaker_identity(shot, context)
     dialogue = dialogue[prefix_end:]
     if re.search(r"<\s*/?\s*d\s*>", dialogue, flags=re.I):
@@ -127,7 +135,7 @@ def compile_h3_prompt(shot, context=None, first_frame=False) -> str:
     style = context.get("bible", {}).get("visual_style")
     if style:
         parts.append(validate_h3_prose(style))
-    if entity.get("description"):
+    if entity.get("description") and not shot.get("dialogue_turns"):
         parts.append(f"{name}: {validate_h3_prose(entity['description'])}")
     if prompt:
         parts.append(prompt)
@@ -151,20 +159,45 @@ def compile_h3_prompt(shot, context=None, first_frame=False) -> str:
         )
     if dialogue:
         language = dialogue_language(shot.get("language") or context.get("language"))
-        voice = entity.get("voice_description")
-        if voice:
-            parts.append(f"{name}'s voice: {validate_h3_prose(voice)}")
+        turns = shot.get("dialogue_turns") or [{"speaker": shot.get("speaker"), "text": dialogue}]
+        entities = context.get("entities", [])
+        ids = dict(context.get("speaker_ids") or {})
+        for item in entities:
+            if item.get("kind", "character") == "character" and item["key"] not in ids:
+                ids[item["key"]] = f"S{len(ids) + 1}"
         delivery = "brisk conversational" if profile["dialogue_density"] == "brisk" else "natural"
-        parts.append(
-            f"{name} (S1) speaks with clear {delivery} {language} delivery: "
-            f"<d>[{language}] {dialogue}</d>"
-        )
+        for turn in turns:
+            who, identity, _ = _speaker_identity(
+                {"speaker": turn.get("speaker"), "dialogue": turn["text"]}, context
+            )
+            if not turn.get("speaker"):
+                who = name
+            if shot.get("dialogue_turns") and identity.get("description"):
+                parts.append(f"{who}: {validate_h3_prose(identity['description'])}")
+            voice = identity.get("voice_description")
+            if voice:
+                parts.append(f"{who}'s voice: {validate_h3_prose(voice)}")
+            if turn.get("action"):
+                parts.append(validate_h3_prose(turn["action"]))
+            speaker_id = ids.get(turn.get("speaker"), "S1")
+            parts.append(
+                f"{validate_h3_prose(who)} ({speaker_id}) speaks with clear "
+                f"{delivery} {language} delivery: <d>[{language}] {turn['text']}</d>"
+            )
+            if turn.get("reaction"):
+                parts.append(validate_h3_prose(turn["reaction"]))
+        if len(turns) > 1:
+            parts.append("The speakers take turns in this order, without overlapping speech.")
         soundscape = "Very faint location ambience beneath the clearly audible dialogue."
     else:
         parts.append(
             "The characters remain silent, expressing the beat through gestures and posture."
         )
+        soundscape = "Quiet location ambience and natural physical action sounds, without voices."
+    if shot.get("audio_mode") == "silent":
         soundscape = "N/A"
+    elif shot.get("soundscape"):
+        soundscape = validate_h3_prose(shot["soundscape"])
     reaction = shot.get("reaction") or context.get("reaction")
     if reaction:
         parts.append(validate_h3_prose(reaction))

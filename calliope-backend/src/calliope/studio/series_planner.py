@@ -72,10 +72,12 @@ identical blocks. Never stretch a shot to fill time; the edit trims any dead
 footage by itself, so script ZERO dead time. A shot beyond 8 s needs a strong
 reason, never exceed 15 s.
 Alternate story actions and short dialogue; each shot must advance the story.
-Each rendered shot has exactly ONE speaking character. Listeners never speak
-in that shot; put their reply in another shot with their own speaker field.
-Several sentences by this speaker may belong to one continuous shot. Choose
-shot/reverse-shot or a two-shot when it helps the scene, never one sentence per cut.
+One continuous shot may contain several speakers taking turns, with immediate
+reactions in the same composition. Use dialogue_turns for an ordered exchange;
+each turn has one speaker key and exact plain text, plus optional action/reaction.
+No overlapping speech. Cut for a reveal, reaction or stronger composition, never
+just because the speaker changes. Prefer simple two-shots for a short exchange.
+Do not add a decorative silent establishing shot at the start of each scene.
 Dialogue is plain speech, without speaker names, quotes or instructions. Never
 put H3 tags, language markers or speaker IDs in dialogue; the compiler adds them.
 Keep dialogue
@@ -113,11 +115,18 @@ Return ONLY JSON with these fields:
 "image_prompt":"still composition matching motion prompt", "dialogue":"plain speech",
 "speaker":"character key or empty", "character_keys":["key"], "location_key":"key or empty",
 "reference_key":"composition key", "duration_sec":3.4, "audio_mode":"native",
+"dialogue_turns":[{"speaker":"character key","text":"plain speech",
+"action":"optional gesture","reaction":"optional reaction after this turn"}],
+"soundscape":"quiet specific location and physical sounds; no speech or music",
+"screen_text":[{"key":"stable label key","entity_key":"character key or empty",
+"value":12349,"text":"optional literal label; omit for numeric values",
+"x":0.5,"y":0.12,"anchor":"screen or character",
+"anchor_box":[0.2,0.2,0.5,0.6],"event":"none/appear/change/reveal"}],
 "action":"simple physical action", "reaction":"listener or speaker reaction",
 "framing":"composition appropriate to the action", "camera":"simple camera behavior"}]}],
 "audio":{"enabled":true,"music":"none/neutral/tension/warm/playful/energetic/horror",
-"tempo":72,"music_gain_db":-28,"voice_gain_db":-5,"ducking":true,
-"ambience":"none/room/wind/rain/cafe/night/city/forest", "ambience_gain_db":-38,
+"tempo":72,"music_gain_db":-18,"voice_gain_db":0,"ducking":true,
+"ambience":"none/room/wind/rain/cafe/night/city/forest", "ambience_gain_db":-34,
 "sfx":[{"effect":"click/beep/impact/boom/whoosh/riser/door/footstep","shot_index":0,
 "at_sec":0.2,"gain_db":-24}],
 "holds":[{"shot_index":0,"at_sec":0.0,"duration_sec":0.8,"drop_db":-36}]}}.
@@ -128,6 +137,19 @@ impact or boom on it), and use at most one or two holds — short voluntary
 silences right before a reveal — never under a spoken line. Summary and events
 must describe what the episode actually shows, not future intentions. Never
 claim that a cliffhanger has already been resolved."""
+    prompt += """
+Exact scores, numbers or labels important to the story belong in screen_text.
+For a number use value as an integer, never punctuation in text. The software
+formats all numbers with the series number_format. For a literal label use text.
+Keep their exact spelling stable until an explicit change/reveal beat. Reuse
+display_values from the series canon. Never ask the image/video model to write
+these values: describe a blank illuminated panel or empty score position instead.
+Coordinates are normalized to the reference image. Use screen anchors for a
+fixed display; character anchors require a tight, textured anchor_box around the
+correct character, excluding other characters. Keep the composition simple.
+No decorative score changes. Mark event=appear/change/reveal only at real beats.
+The software adds the exact text and event sound in post-production.
+"""
     public_context = {k: v for k, v in context.items() if k != "entities"}
     public_context["directing_profile"] = directing_profile(context.get("directing_profile"))
     public_context["entities"] = [
@@ -189,10 +211,9 @@ claim that a cliffhanger has already been resolved."""
                             "without stretching any shot. "
                             "Preserve the story and series canon. Shorten dialogue if needed. "
                             "Repair the identified field, preserving unaffected shots. "
-                            "Each shot must have one speaker and plain verbatim dialogue. "
-                            "If there are multiple voices, split that exchange into shots "
-                            "with one speaker each and natural useful durations, then "
-                            "update dependent shot indexes in audio cues. Do not discard "
+                            "Each dialogue turn must have one speaker and plain verbatim text. "
+                            "For multiple voices use ordered dialogue_turns inside the same "
+                            "shot when the composition supports the exchange. Do not discard "
                             "a character's reply or hide it in another field. "
                             "Return the complete corrected JSON, with all scenes and shots."
                         ),
@@ -355,7 +376,12 @@ def normalize_plan(result, context):
         known.add(entity["key"])
     all_entities = context.get("entities", []) + new_entities
     characters = {e["key"] for e in all_entities if e.get("kind", "character") == "character"}
+    result["speaker_ids"] = dict(context.get("speaker_ids") or {})
+    for entity in all_entities:
+        if entity["key"] in characters and entity["key"] not in result["speaker_ids"]:
+            result["speaker_ids"][entity["key"]] = f"S{len(result['speaker_ids']) + 1}"
     total_duration = 0
+    display_values = dict(context.get("display_values") or {})
     if not result["scenes"]:
         raise ValueError("L'épisode doit contenir au moins une scène.")
     for scene_index, scene in enumerate(result["scenes"]):
@@ -381,12 +407,35 @@ def normalize_plan(result, context):
                     "Chaque plan doit viser une durée utile entre 1 et 15 secondes."
                 )
             duration = round(duration, 1)
-            dialogue = str(shot.get("dialogue") or "").strip()
-            speaker = canonical_key(shot.get("speaker"), all_entities, "character")
-            try:
-                dialogue, speaker = normalize_dialogue(
-                    dialogue, speaker, all_entities
+            turns = shot.get("dialogue_turns") or []
+            if not isinstance(turns, list) or len(turns) > 30:
+                raise ValueError("Les tours de parole doivent être une liste ordonnée.")
+            for turn_index, turn in enumerate(turns):
+                field = f"scenes[{scene_index}].shots[{shot_index}].dialogue_turns[{turn_index}]"
+                if not isinstance(turn, dict):
+                    raise ValueError(f"{field}: Tour de parole invalide.")
+                turn_speaker = canonical_key(turn.get("speaker"), all_entities, "character")
+                if turn_speaker not in characters:
+                    raise ValueError(f"{field}.speaker: Locuteur inconnu {turn_speaker!r}.")
+                text, turn_speaker = normalize_dialogue(
+                    turn.get("text"), turn_speaker, all_entities
                 )
+                if not text:
+                    raise ValueError(f"{field}.text: Réplique vide.")
+                turn.update(speaker=turn_speaker, text=text)
+                for key in ("action", "reaction"):
+                    if key in turn:
+                        validate_h3_prose(turn[key])
+            dialogue = " ".join(t["text"] for t in turns) if turns else str(
+                shot.get("dialogue") or ""
+            ).strip()
+            speaker = canonical_key(shot.get("speaker"), all_entities, "character")
+            if turns:
+                voices = {t["speaker"] for t in turns}
+                speaker = turns[0]["speaker"] if len(voices) == 1 else ""
+            try:
+                if not turns:
+                    dialogue, speaker = normalize_dialogue(dialogue, speaker, all_entities)
             except ValueError as exc:
                 field = f"scenes[{scene_index}].shots[{shot_index}].dialogue"
                 excerpt = str(shot.get("dialogue"))[:240]
@@ -397,7 +446,7 @@ def normalize_plan(result, context):
                     f"Le locuteur {speaker!r} est inconnu. "
                     f"Clés de personnages autorisées: {sorted(characters)!r}."
                 )
-            if dialogue and not speaker:
+            if dialogue and not speaker and not turns:
                 raise ValueError("Chaque réplique doit avoir un unique locuteur identifié.")
             keys = shot.get("character_keys") or []
             if isinstance(keys, list):
@@ -411,17 +460,54 @@ def normalize_plan(result, context):
                 raise ValueError("Un plan utilise une référence étrangère à cette série.")
             if speaker and speaker not in keys:
                 raise ValueError("Le locuteur doit être visible dans son plan.")
+            if any(t["speaker"] not in keys for t in turns):
+                raise ValueError("Chaque locuteur doit être visible dans son plan.")
             shot["duration_sec"] = duration
             total_duration += duration
             shot["dialogue"] = dialogue
             shot["speaker"] = speaker
             shot["character_keys"] = keys
             shot["location_key"] = location
-            shot["audio_mode"] = "native" if dialogue else "silent"
+            from calliope.studio.screen_text import ScreenText
+
+            labels = shot.get("screen_text") or []
+            if not isinstance(labels, list) or len(labels) > 12:
+                raise ValueError("Liste de textes à l'écran invalide.")
+            shot["screen_text"] = [
+                ScreenText.model_validate(
+                    label | {"number_format": directing_profile(
+                        context.get("directing_profile")
+                    )["number_format"]}
+                    if isinstance(label, dict) and label.get("value") is not None else label
+                ).model_dump() for label in labels
+            ]
+            for raw_label, label in zip(labels, shot["screen_text"]):
+                label["entity_key"] = canonical_key(
+                    label["entity_key"], all_entities, "character"
+                )
+                if label["entity_key"] and label["entity_key"] not in keys:
+                    raise ValueError("Un texte référence un personnage absent du plan.")
+                previous = display_values.get(label["key"])
+                if previous is not None and previous != label["text"] and label["event"] not in (
+                    "change", "reveal"
+                ):
+                    raise ValueError("Une valeur affichée change sans événement narratif.")
+                display_values[label["key"]] = label["text"]
+                blank = (
+                    " Render a blank illuminated display with no letters or digits at normalized "
+                    f"position ({label['x']:g}, {label['y']:g}); exact text is added in editing."
+                )
+                for key in ("prompt", "image_prompt"):
+                    shot[key] = str(shot[key]).replace(label["text"], "a blank display") + blank
+                    if raw_label.get("text"):
+                        shot[key] = shot[key].replace(raw_label["text"], "a blank display")
+            shot["audio_mode"] = "native" if dialogue else shot.get("audio_mode", "native")
+            if shot["audio_mode"] not in ("native", "silent"):
+                raise ValueError("Mode audio invalide.")
             shot["prompt"] = re.sub(
                 r"<d>.*?</d>", "", str(shot["prompt"]), flags=re.S | re.I
             ).strip()
-            for field in ("action", "reaction", "framing", "camera"):
+            for field in ("action", "reaction", "framing", "camera", "soundscape"):
                 if field in shot and (
                     not isinstance(shot[field], str) or len(shot[field]) > 5000
                 ):
@@ -445,8 +531,21 @@ def normalize_plan(result, context):
                 "répliques, sans étirer les plans."
             )
     result["audio"] = AudioSettings.model_validate(result.get("audio") or {}).model_dump()
-    if directing_profile(context.get("directing_profile"))["music"] == "none":
+    profile = directing_profile(context.get("directing_profile"))
+    if profile["music"] == "none":
         result["audio"]["music"] = "none"
+    elif result["audio"]["music"] == "none" and not result["audio"].get("music_asset_id"):
+        result["audio"]["music"] = profile["music_style"]
+    result["audio"]["music_gain_db"] = profile["music_gain_db"]
+    result["audio"]["ambience_gain_db"] = profile["ambience_gain_db"]
+    result["display_values"] = display_values
+    for shot_index, shot in enumerate(s for scene in result["scenes"] for s in scene["shots"]):
+        for label in shot.get("screen_text", []):
+            effect = {"appear": "click", "change": "beep", "reveal": "impact"}.get(label["event"])
+            if effect and not any(c["shot_index"] == shot_index for c in result["audio"]["sfx"]):
+                result["audio"]["sfx"].append({
+                    "effect": effect, "shot_index": shot_index, "at_sec": 0.15, "gain_db": -24,
+                })
     result["bible"] = {
         key: str(value) for key, value in (result.get("bible") or {}).items() if key in BIBLE_FIELDS
     }

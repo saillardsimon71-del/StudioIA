@@ -13,6 +13,7 @@ from calliope.queue.manager import queue_manager
 from calliope.routers.studio_series import router as series_router
 from calliope.studio import series, service
 from calliope.studio.planner import parse_script, plan_with_llm
+from calliope.studio.screen_text import ScreenText
 
 router = APIRouter()
 router.include_router(series_router)
@@ -42,6 +43,13 @@ class SceneUpdate(BaseModel):
     dialog: str | None = Field(default=None, max_length=100000)
 
 
+class DialogueTurn(BaseModel):
+    speaker: str = Field(min_length=1, max_length=80)
+    text: str = Field(min_length=1, max_length=50000)
+    action: str = Field(default="", max_length=5000)
+    reaction: str = Field(default="", max_length=5000)
+
+
 class ShotCreate(BaseModel):
     description: str = Field(default="", max_length=50000)
     prompt: str = Field(default="", max_length=50000)
@@ -58,6 +66,9 @@ class ShotUpdate(BaseModel):
     prompt: str | None = Field(default=None, max_length=50000)
     image_prompt: str | None = Field(default=None, max_length=50000)
     dialogue: str | None = Field(default=None, max_length=50000)
+    dialogue_turns: list[DialogueTurn] | None = Field(default=None, max_length=30)
+    soundscape: str | None = Field(default=None, max_length=5000)
+    screen_text: list[ScreenText] | None = Field(default=None, max_length=12)
     duration_sec: float | None = Field(default=None, ge=1, le=15)
     trim_start_sec: float | None = Field(default=None, ge=0, le=900)
     trim_end_sec: float | None = Field(default=None, ge=0, le=900)
@@ -308,6 +319,7 @@ async def delete_shot(project_id: int, shot_id: int):
             "SELECT 1 FROM jobs WHERE clip_id=? AND status IN ('pending','running')", (shot_id,)
         ).fetchone():
             raise HTTPException(409, "Annulez le rendu actif avant de supprimer ce plan.")
+        service.archive_shot(conn, shot_id)
         conn.execute("DELETE FROM clips WHERE id=?", (shot_id,))
         service.touch(conn, project_id)
         conn.commit()

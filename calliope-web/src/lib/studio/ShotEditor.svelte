@@ -28,7 +28,7 @@
 	$effect(() => {
 		if (initializedId === shot.id) return;
 		initializedId = shot.id;
-		draft = { description: shot.description ?? '', prompt: shot.prompt ?? '', image_prompt: shot.image_prompt ?? '', dialogue: shot.dialogue ?? '', duration_sec: shot.duration_sec, audio_mode: shot.audio_mode, continue_from_previous: shot.continue_from_previous ?? false };
+		draft = { description: shot.description ?? '', prompt: shot.prompt ?? '', image_prompt: shot.image_prompt ?? '', dialogue: shot.dialogue ?? '', dialogue_turns: structuredClone(shot.dialogue_turns ?? []), soundscape: shot.soundscape ?? '', screen_text: structuredClone(shot.screen_text ?? []), duration_sec: shot.duration_sec, audio_mode: shot.audio_mode, continue_from_previous: shot.continue_from_previous ?? false };
 		saved = JSON.stringify(draft);
 		error = ''; message = '';
 	});
@@ -85,7 +85,37 @@
 		<form onsubmit={save} class="stack">
 			<label>Titre du plan<input required bind:value={draft.description} /></label>
 			<label>Prompt vidéo et mouvement<textarea bind:value={draft.prompt} rows="5" placeholder="Sujet, action, cadrage, mouvement de caméra et ambiance."></textarea></label>
-			<label>Dialogue<textarea bind:value={draft.dialogue} rows="2" placeholder="Réplique ou parole à entendre dans ce plan."></textarea></label>
+			{#if draft.dialogue_turns?.length}
+				{#each draft.dialogue_turns as turn, index}
+					<label>Réplique {index + 1} - {turn.speaker}<textarea bind:value={turn.text} rows="2"></textarea></label>
+				{/each}
+			{:else}
+				<label>Dialogue<textarea bind:value={draft.dialogue} rows="2" placeholder="Réplique ou parole à entendre dans ce plan."></textarea></label>
+			{/if}
+			<label>Ambiance du plan<textarea bind:value={draft.soundscape} rows="2" placeholder="Sons de lieu et d'action, sans paroles ni musique."></textarea></label>
+			{#each draft.screen_text ?? [] as label}
+				{#if label.value !== undefined && label.value !== null}
+					<label>Valeur exacte - {label.key}<input type="number" step="1" bind:value={label.value} /></label>
+				{:else}
+					<label>Texte exact - {label.key}<input bind:value={label.text} /></label>
+				{/if}
+				<details><summary>Position du texte</summary><div class="columns">
+					<label>Horizontal<input type="number" min="0" max="1" step="0.01" bind:value={label.x} /></label>
+					<label>Vertical<input type="number" min="0" max="1" step="0.01" bind:value={label.y} /></label>
+				</div><label>Ancrage<select bind:value={label.anchor}>
+					<option value="screen">Position fixe dans l'image</option>
+					<option value="character" disabled={!label.anchor_box}>Suivre le personnage</option>
+				</select></label>
+				{#if label.anchor === 'character' && label.anchor_box}
+					<div class="columns">
+						<label>Zone de suivi - gauche<input type="number" min="0" max="1" step="0.01" bind:value={label.anchor_box[0]} /></label>
+						<label>Haut<input type="number" min="0" max="1" step="0.01" bind:value={label.anchor_box[1]} /></label>
+						<label>Largeur<input type="number" min="0.01" max="1" step="0.01" bind:value={label.anchor_box[2]} /></label>
+						<label>Hauteur<input type="number" min="0.01" max="1" step="0.01" bind:value={label.anchor_box[3]} /></label>
+					</div>
+				{/if}
+				<p class="hint">0 correspond au bord gauche ou haut, 1 au bord droit ou bas. La zone de suivi doit entourer uniquement le personnage concerné.</p></details>
+			{/each}
 			<div class="columns"><label>Durée utile (secondes)<input type="number" min="1" max="15" step="0.1" required bind:value={draft.duration_sec} /></label><label>Son<select bind:value={draft.audio_mode}><option value="native">Son généré avec la vidéo</option><option value="silent">Sans son</option></select></label></div>
 			<p class="hint">Le moteur rend un clip plus long que nécessaire ; le montage ne garde que la durée utile de la réplique ou de l'action, sans rallonger la prise.</p>
 			{#if shot.trim_start_sec !== null || shot.trim_end_sec !== null}<p class="hint">Partie conservée au montage : {(shot.trim_start_sec ?? 0).toFixed(2)} s → {(shot.trim_end_sec ?? 0).toFixed(2)} s de la prise choisie.</p>{/if}

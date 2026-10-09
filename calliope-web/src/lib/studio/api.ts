@@ -51,6 +51,12 @@ export interface Shot {
   prompt: string;
   image_prompt: string;
   dialogue: string;
+  dialogue_turns?: { speaker: string; text: string; action?: string; reaction?: string }[];
+  soundscape?: string;
+  screen_text?: { key: string; text: string; x: number; y: number;
+    value?: number | null; number_format?: "plain" | "grouped_comma" | "grouped_space";
+    entity_key?: string; anchor?: "screen" | "character"; anchor_box?: number[];
+    size?: number; color?: string; event?: "none" | "appear" | "change" | "reveal" }[];
   duration_sec: number;
   trim_start_sec: number | null;
   trim_end_sec: number | null;
@@ -68,6 +74,9 @@ export type ShotDraft = Pick<
   | "prompt"
   | "image_prompt"
   | "dialogue"
+  | "dialogue_turns"
+  | "soundscape"
+  | "screen_text"
   | "duration_sec"
   | "audio_mode"
   | "continue_from_previous"
@@ -110,6 +119,8 @@ export interface StudioExport {
   stale: boolean;
   metadata: {
     duration_sec?: number;
+    duration_warning?: string;
+    target_seconds?: number;
     width?: number;
     height?: number;
     fps?: number;
@@ -143,12 +154,14 @@ export interface Board {
 export interface AudioCue {
   effect: string;
   shot_index: number;
+  shot_id?: number | null;
   at_sec: number;
   gain_db: number;
   asset_id?: number | null;
 }
 export interface AudioHold {
   shot_index: number;
+  shot_id?: number | null;
   at_sec: number;
   duration_sec: number;
   drop_db: number;
@@ -222,6 +235,10 @@ export interface DirectingProfile {
   continuity: boolean;
   silences: "story_driven" | "brief";
   music: "postproduction" | "none";
+  music_style: "neutral" | "tension" | "warm" | "playful" | "energetic" | "horror";
+  music_gain_db: number;
+  ambience_gain_db: number;
+  number_format: "plain" | "grouped_comma" | "grouped_space";
 }
 
 export interface StudioConfig {
