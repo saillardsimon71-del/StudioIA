@@ -41,6 +41,128 @@ def test_two_speakers_are_normalized_without_an_artificial_cut():
     assert shots[0]["audio_mode"] == "native"
 
 
+@pytest.mark.parametrize("listed", [[], ["Blueberry"]])
+def test_planner_includes_a_known_speaker_omitted_from_visual_references(listed):
+    shot = exchange()
+    shot.pop("dialogue_turns")
+    shot.update(speaker="Mango", dialogue="Look at me.", character_keys=listed)
+    plan = series_planner.normalize_plan({"scenes": [{"shots": [shot]}]}, context())
+    normalized = plan["scenes"][0]["shots"][0]
+    assert normalized["speaker"] == "mango"
+    assert normalized["dialogue"] == "Look at me."
+    assert "mango" in normalized["character_keys"]
+    assert "speaking characters visibly" in normalized["prompt"]
+    assert "speaking characters visibly" in normalized["image_prompt"]
+
+
+def test_planner_includes_both_known_speakers_in_a_continuous_exchange():
+    shot = exchange()
+    shot["character_keys"] = []
+    plan = series_planner.normalize_plan({"scenes": [{"shots": [shot]}]}, context())
+    shots = plan["scenes"][0]["shots"]
+    assert len(shots) == 1
+    assert shots[0]["character_keys"] == ["mango", "blueberry"]
+    assert len(shots[0]["dialogue_turns"]) == 2
+    assert "Mango, Blueberry" in shots[0]["image_prompt"]
+
+
+def test_unspoken_speaker_field_does_not_block_a_reaction_shot():
+    shot = exchange()
+    shot.pop("dialogue_turns")
+    shot.update(speaker="Mango", dialogue="", character_keys=["blueberry"])
+    plan = series_planner.normalize_plan({"scenes": [{"shots": [shot]}]}, context())
+    normalized = plan["scenes"][0]["shots"][0]
+    assert normalized["speaker"] == ""
+    assert normalized["character_keys"] == ["blueberry"]
+    assert normalized["audio_mode"] == "native"
+
+
+def test_planner_identifies_all_undeclared_locations_and_unassigned_system_voices():
+    shots = []
+    for location in ("ultra-luxury-maternity", "academy-corridor", "maximilian-office"):
+        shot = exchange()
+        shot["location_key"] = location
+        shots.append(shot)
+    shots[0]["dialogue_turns"] = [{
+        "speaker": "", "text": 'REGISTRY: "Value confirmed."'
+    }]
+    with pytest.raises(ValueError) as failure:
+        series_planner.normalize_plan({"scenes": [{"shots": shots}]}, context())
+    error = str(failure.value)
+    for index, shot in enumerate(shots):
+        assert f"scenes[0].shots[{index}].location_key" in error
+        assert shot["location_key"] in error
+    assert "dialogue_turns[0].speaker" in error
+    assert "REGISTRY" in error
+
+
+def test_dialogue_turn_speaker_is_recovered_from_an_unambiguous_known_prefix():
+    shot = exchange()
+    shot["dialogue_turns"][0].update(speaker="", text='Mango: "Look at me."')
+    plan = series_planner.normalize_plan({"scenes": [{"shots": [shot]}]}, context())
+    turn = plan["scenes"][0]["shots"][0]["dialogue_turns"][0]
+    assert turn["speaker"] == "mango"
+    assert turn["text"] == "Look at me."
+
+
+def test_planner_maps_a_chime_notification_to_an_existing_audible_effect():
+    plan = {"scenes": [{"shots": [exchange()]}], "audio": {
+        "sfx": [{"effect": "chime", "shot_index": 0, "at_sec": 0.2}]
+    }}
+    normalized = series_planner.normalize_plan(plan, context())
+    assert normalized["audio"]["sfx"][0]["effect"] == "beep"
+
+
+def test_planner_still_rejects_an_unsupported_sound_effect():
+    plan = {"scenes": [{"shots": [exchange()]}], "audio": {
+        "sfx": [{"effect": "unsupported", "shot_index": 0, "at_sec": 0.2}]
+    }}
+    with pytest.raises(ValueError):
+        series_planner.normalize_plan(plan, context())
+
+
+@pytest.mark.asyncio
+async def test_planner_recovers_visibility_on_last_attempt_and_preserves_raw_outputs(
+    monkeypatch, tmp_path
+):
+    from calliope.config import settings
+
+    missing_voice = exchange()
+    missing_voice["dialogue_turns"][0]["speaker"] = ""
+    missing_visual_reference = exchange()
+    missing_visual_reference.pop("dialogue_turns")
+    missing_visual_reference.update(speaker="mango", dialogue="Look at me.",
+                                    character_keys=["blueberry"], duration_sec=5)
+    responses = [
+        {"scenes": [{"shots": []}]},
+        {"scenes": [{"shots": [missing_voice]}]},
+        {"scenes": [{"shots": [missing_visual_reference]}]},
+    ]
+    requests = []
+
+    async def generate(messages, **options):
+        requests.append(copy.deepcopy(messages))
+        return copy.deepcopy(responses[len(requests) - 1])
+
+    monkeypatch.setattr(settings, "assets_dir", tmp_path)
+    monkeypatch.setattr(series_planner, "generate_structured", generate)
+    config = context() | {"target_seconds": 13, "_planner_trace": {
+        "project_id": 15, "job_id": 162
+    }}
+    plan = await series_planner.plan_episode(config, "A confrontation", "")
+    assert len(requests) == 3
+    assert plan["scenes"][0]["shots"][0]["character_keys"] == ["blueberry", "mango"]
+    assert "_planner_trace" not in requests[0][1]["content"]
+    traces = sorted(tmp_path.glob("15/studio/diagnostics/planner-162-*-attempt-*.json"))
+    assert len(traces) == 3
+    records = [json.loads(path.read_text(encoding="utf-8")) for path in traces]
+    assert "scène vide" in records[0]["validation_error"]
+    assert "Locuteur inconnu" in records[1]["validation_error"]
+    assert records[2]["validation_error"] is None
+    assert records[2]["response"] == responses[2]
+    assert records[2]["messages"] == requests[2]
+
+
 def test_compiler_attributes_ordered_turns_and_keeps_ids_across_shots():
     shot = exchange()
     shot["dialogue_turns"][0]["speaker"] = "mango"

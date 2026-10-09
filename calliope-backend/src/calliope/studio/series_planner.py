@@ -2,8 +2,11 @@ import copy
 import json
 import logging
 import re
+import uuid
+from datetime import datetime, timezone
 
 from calliope.agent.llm import generate_structured
+from calliope.config import settings
 from calliope.studio.audio import AudioSettings
 from calliope.studio.h3_prompt import (
     LANGUAGES,
@@ -58,6 +61,8 @@ The supplied series context is the ONLY canon. Never borrow names, rules or
 events from unrelated series. Preserve existing identities, relationships,
 wardrobe, geography and unresolved events. Respect the requested genre and
 language. New entities must have stable lowercase ASCII keys.
+Every character or location key used by a shot must exist in the supplied canon
+or in entities. Declare ALL new locations, including rooms and corridors.
 Develop missing bible fields from the concept; do not contradict filled fields.
 Open with an immediate visual hook, develop one coherent event, end with a
 revelation or compelling next question. No padding, no unexplained location jumps.
@@ -77,6 +82,11 @@ reactions in the same composition. Use dialogue_turns for an ordered exchange;
 each turn has one speaker key and exact plain text, plus optional action/reaction.
 No overlapping speech. Cut for a reveal, reaction or stronger composition, never
 just because the speaker changes. Prefer simple two-shots for a short exchange.
+List every speaking character in character_keys and in the still composition.
+When no one speaks, use speaker="", dialogue="" and dialogue_turns=[].
+Never invent an unidentified Registry, scanner or UI voice. A system notification
+without a visible speaking character is a visual event with a chime or effect,
+not a dialogue turn. Attribute every spoken turn to an actual character key.
 Do not add a decorative silent establishing shot at the start of each scene.
 Dialogue is plain speech, without speaker names, quotes or instructions. Never
 put H3 tags, language markers or speaker IDs in dialogue; the compiler adds them.
@@ -150,7 +160,11 @@ correct character, excluding other characters. Keep the composition simple.
 No decorative score changes. Mark event=appear/change/reveal only at real beats.
 The software adds the exact text and event sound in post-production.
 """
-    public_context = {k: v for k, v in context.items() if k != "entities"}
+    trace = context.get("_planner_trace")
+    trace_token = uuid.uuid4().hex
+    public_context = {
+        k: v for k, v in context.items() if k not in ("entities", "_planner_trace")
+    }
     public_context["directing_profile"] = directing_profile(context.get("directing_profile"))
     public_context["entities"] = [
         {k: e[k] for k in ("key", "kind", "name", "description")}
@@ -185,15 +199,18 @@ The software adds the exact text and event sound in post-production.
         },
     ]
     for attempt in range(3):
+        request_messages = copy.deepcopy(messages)
         result = await generate_structured(
             messages,
             temperature=0.45,
             max_tokens=max(4096, min(16000, estimated_shots * 650 + 2000)),
         )
+        validation_error = None
         try:
             plan = normalize_plan(copy.deepcopy(result), context | {"target_seconds": target})
             return append_outro(plan, context)
         except ValueError as exc:
+            validation_error = str(exc)
             logger.warning("Planner validation failed attempt=%s: %s", attempt + 1, exc)
             if attempt == 2:
                 raise
@@ -220,6 +237,22 @@ The software adds the exact text and event sound in post-production.
                     },
                 ]
             )
+        finally:
+            if trace:
+                directory = (
+                    settings.assets_dir / str(trace["project_id"]) / "studio" / "diagnostics"
+                )
+                directory.mkdir(parents=True, exist_ok=True)
+                path = directory / (
+                    f"planner-{trace['job_id']}-{trace_token}-attempt-{attempt + 1}.json"
+                )
+                path.write_text(json.dumps({
+                    "project_id": trace["project_id"], "job_id": trace["job_id"],
+                    "attempt": attempt + 1,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "messages": request_messages, "response": result,
+                    "validation_error": validation_error,
+                }, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def canonical_key(value, entities, kind):
@@ -327,7 +360,7 @@ def normalize_dialogue(dialogue, speaker, entities):
         aliases.get(label.strip().casefold()) != {speaker} for label in labels
     ):
         raise ValueError(
-            "La réplique contient plusieurs voix non identifiées; séparez les plans."
+            "La réplique contient plusieurs voix non identifiées; utilisez dialogue_turns."
         )
     lines = []
     for index, line in enumerate(dialogue.splitlines()):
@@ -337,7 +370,7 @@ def normalize_dialogue(dialogue, speaker, entities):
         if owners:
             if len(owners) != 1 or (speaker and speaker not in owners):
                 raise ValueError(
-                    "La réplique contient plusieurs voix; séparez les locuteurs en plans."
+                    "La réplique contient plusieurs voix; séparez les locuteurs en dialogue_turns."
                 )
             speaker = next(iter(owners))
             line = line[prefix.end():].strip()
@@ -380,6 +413,47 @@ def normalize_plan(result, context):
     for entity in all_entities:
         if entity["key"] in characters and entity["key"] not in result["speaker_ids"]:
             result["speaker_ids"][entity["key"]] = f"S{len(result['speaker_ids']) + 1}"
+    reference_errors = []
+    for scene_index, scene in enumerate(result["scenes"]):
+        if not isinstance(scene, dict) or not isinstance(scene.get("shots"), list):
+            continue
+        for shot_index, shot in enumerate(scene["shots"]):
+            if not isinstance(shot, dict):
+                continue
+            field = f"scenes[{scene_index}].shots[{shot_index}]"
+            location = canonical_key(shot.get("location_key"), all_entities, "location")
+            if location and location not in known:
+                reference_errors.append(f"{field}.location_key: Lieu non déclaré {location!r}.")
+            turns = shot.get("dialogue_turns") or []
+            if not isinstance(turns, list) or len(turns) > 30:
+                continue
+            for turn_index, turn in enumerate(turns):
+                turn_field = f"{field}.dialogue_turns[{turn_index}]"
+                if not isinstance(turn, dict):
+                    reference_errors.append(f"{turn_field}: Tour de parole invalide.")
+                    continue
+                try:
+                    turn_speaker = canonical_key(turn.get("speaker"), all_entities, "character")
+                    text, turn_speaker = normalize_dialogue(
+                        str(turn.get("text") or "").strip(), turn_speaker, all_entities
+                    )
+                    if turn_speaker not in characters:
+                        raise ValueError(
+                            f"speaker: Locuteur inconnu {turn_speaker!r}. "
+                            f"Réplique: {str(turn.get('text'))[:240]!r}."
+                        )
+                    if not text:
+                        raise ValueError("text: Réplique vide.")
+                    turn.update(speaker=turn_speaker, text=text)
+                except ValueError as exc:
+                    reference_errors.append(f"{turn_field}.{exc}")
+    if reference_errors:
+        raise ValueError(
+            "Références du scénario à corriger ensemble: " + "\n".join(reference_errors)
+            + "\nDéclarez tous les lieux dans entities. Attribuez chaque réplique à un "
+            "personnage connu; une notification sans personnage parlant est un son ou "
+            "une action, pas une réplique sans locuteur."
+        )
     total_duration = 0
     display_values = dict(context.get("display_values") or {})
     if not result["scenes"]:
@@ -411,18 +485,6 @@ def normalize_plan(result, context):
             if not isinstance(turns, list) or len(turns) > 30:
                 raise ValueError("Les tours de parole doivent être une liste ordonnée.")
             for turn_index, turn in enumerate(turns):
-                field = f"scenes[{scene_index}].shots[{shot_index}].dialogue_turns[{turn_index}]"
-                if not isinstance(turn, dict):
-                    raise ValueError(f"{field}: Tour de parole invalide.")
-                turn_speaker = canonical_key(turn.get("speaker"), all_entities, "character")
-                if turn_speaker not in characters:
-                    raise ValueError(f"{field}.speaker: Locuteur inconnu {turn_speaker!r}.")
-                text, turn_speaker = normalize_dialogue(
-                    turn.get("text"), turn_speaker, all_entities
-                )
-                if not text:
-                    raise ValueError(f"{field}.text: Réplique vide.")
-                turn.update(speaker=turn_speaker, text=text)
                 for key in ("action", "reaction"):
                     if key in turn:
                         validate_h3_prose(turn[key])
@@ -440,6 +502,8 @@ def normalize_plan(result, context):
                 field = f"scenes[{scene_index}].shots[{shot_index}].dialogue"
                 excerpt = str(shot.get("dialogue"))[:240]
                 raise ValueError(f"{field}: {exc} Extrait brut: {excerpt!r}") from None
+            if not dialogue:
+                speaker = ""
             if speaker and speaker not in characters:
                 raise ValueError(
                     f"scenes[{scene_index}].shots[{shot_index}].speaker: "
@@ -458,10 +522,20 @@ def normalize_plan(result, context):
                 or (location and location not in known)
             ):
                 raise ValueError("Un plan utilise une référence étrangère à cette série.")
-            if speaker and speaker not in keys:
-                raise ValueError("Le locuteur doit être visible dans son plan.")
-            if any(t["speaker"] not in keys for t in turns):
-                raise ValueError("Chaque locuteur doit être visible dans son plan.")
+            speaking_keys = (
+                [t["speaker"] for t in turns] if turns else [speaker] if dialogue else []
+            )
+            missing_keys = [key for key in dict.fromkeys(speaking_keys) if key not in keys]
+            if missing_keys:
+                keys.extend(missing_keys)
+                names = {e["key"]: e.get("name") or e["key"] for e in all_entities}
+                direction = (
+                    " Keep these speaking characters visibly in the frame throughout the "
+                    f"continuous shot: {', '.join(names[key] for key in missing_keys)}. "
+                    "Use a composition that includes every speaking character; no offscreen speech."
+                )
+                for field in ("prompt", "image_prompt"):
+                    shot[field] = str(shot[field]) + direction
             shot["duration_sec"] = duration
             total_duration += duration
             shot["dialogue"] = dialogue
@@ -530,7 +604,12 @@ def normalize_plan(result, context):
                 f"durée demandée ({target:g} s). Ajustez le découpage ou les "
                 "répliques, sans étirer les plans."
             )
-    result["audio"] = AudioSettings.model_validate(result.get("audio") or {}).model_dump()
+    raw_audio = result.get("audio") or {}
+    if isinstance(raw_audio, dict):
+        for cue in raw_audio.get("sfx") or []:
+            if isinstance(cue, dict) and cue.get("effect") == "chime":
+                cue["effect"] = "beep"
+    result["audio"] = AudioSettings.model_validate(raw_audio).model_dump()
     profile = directing_profile(context.get("directing_profile"))
     if profile["music"] == "none":
         result["audio"]["music"] = "none"

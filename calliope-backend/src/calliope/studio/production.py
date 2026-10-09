@@ -648,7 +648,9 @@ async def run_production(job, payload, should_stop):
             )
         if not has_plan:
             plan = await plan_episode(
-                json.loads(episode["context_json"]), episode["idea"], episode["objective"]
+                json.loads(episode["context_json"]) | {
+                    "_planner_trace": {"project_id": project_id, "job_id": job["id"]}
+                }, episode["idea"], episode["objective"]
             )
             await checkpoint(job, "writing", 0.1, "Scénario préparé", should_stop)
             save_episode_plan(project_id, plan)
