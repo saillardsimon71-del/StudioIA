@@ -101,10 +101,10 @@ def test_pack_of_free_durations_hits_the_65_second_format():
     )
     with pytest.raises(ValueError, match="durée utile|trop courte"):
         normalize(beat_plan([5.0] * 4), {"entities": [], "target_seconds": 65})
-    # 60 s de contenu utile ne suffit pas pour un format qui demande 65 s : le
-    # montage n'étirant jamais les plans, l'épisode sortirait sous le format.
+    shorter = normalize(beat_plan([2.4] * 25), {"entities": [], "target_seconds": 65})
+    assert sum(s["duration_sec"] for s in shorter["scenes"][0]["shots"]) == pytest.approx(60)
     with pytest.raises(ValueError, match="trop courte"):
-        normalize(beat_plan([2.4] * 25), {"entities": [], "target_seconds": 65})
+        normalize(beat_plan([2.2] * 25), {"entities": [], "target_seconds": 65})
     # Une proche marge de garde (décimales, grille 24 fps) reste acceptée : ce
     # n'est pas une règle narrative, seul l'écart manifeste est réparé.
     close = normalize(
@@ -724,10 +724,15 @@ def produce(client, monkeypatch, tmp_path, plan, clip_bytes, expected_error=None
         ModalH3Engine,
         "poll",
         lambda self, call_id: {
-            "video_base64": base64.b64encode(clip_bytes).decode(),
+            "video_base64": base64.b64encode(
+                outro_bytes if "Want to make videos too?" in spawns[int(call_id.split('-')[1]) - 1][
+                    "prompt"
+                ] else clip_bytes
+            ).decode(),
             "metadata": {},
         },
     )
+    outro_bytes = make_clip(tmp_path / "outro.mp4", 8, tone_windows=[(0.1, 7.8)]).read_bytes()
     created = episode(client, series(client)["id"]).json()
     with service.database() as conn:
         context = json.loads(
@@ -736,7 +741,7 @@ def produce(client, monkeypatch, tmp_path, plan, clip_bytes, expected_error=None
                 (created["project_id"],),
             ).fetchone()[0]
         )
-        context["target_seconds"] = 1.6
+        context["target_seconds"] = 9.6
         conn.execute(
             "UPDATE studio_episodes SET context_json=? WHERE project_id=?",
             (json.dumps(context), created["project_id"]),
@@ -773,7 +778,7 @@ def test_a_good_take_is_approved_without_rerender_and_trimmed_usefully(
         return episode_plan
 
     project_id, spawns = produce(client, monkeypatch, tmp_path, plan_result, clip.read_bytes())
-    assert len(spawns) == 1  # aucun rerender GPU pour une prise exploitable
+    assert len(spawns) == 2  # une prise par plan: histoire et fin, aucun rerender
     board = service.board(project_id)
     shot = board["scenes"][0]["shots"][0]
     assert shot["approved"] is True
@@ -783,7 +788,7 @@ def test_a_good_take_is_approved_without_rerender_and_trimmed_usefully(
     exports = board["exports"]
     assert exports and exports[0]["url"]
     assert exports[0]["metadata"]["duration_sec"] == pytest.approx(
-        pacing.quantize(1.6), abs=0.05
+        pacing.quantize(1.6) + 8, abs=0.05
     )
 
 

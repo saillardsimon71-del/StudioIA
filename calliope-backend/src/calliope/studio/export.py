@@ -132,10 +132,12 @@ def _check_target(duration, target, stage):
         raise ValueError("Durée cible invalide pour l'export.") from exc
     if not math.isfinite(target) or target <= 0:
         raise ValueError("Durée cible invalide pour l'export.")
-    if not target - 3 - 1e-6 <= duration <= target + 5 + 1e-6:
+    lower_margin, upper_margin = max(3.0, target * 0.1), max(5.0, target * 0.1)
+    if not target - lower_margin - 1e-6 <= duration <= target + upper_margin + 1e-6:
         raise ValueError(
             f"Durée {stage}: {duration:.2f} s pour une cible de {target:.2f} s "
-            f"(fenêtre autorisée {max(0, target - 3):.2f}-{target + 5:.2f} s). "
+            f"(fenêtre autorisée {max(0, target - lower_margin):.2f}"
+            f"-{target + upper_margin:.2f} s). "
             "Le contenu utile doit être ajusté avant publication; aucun padding n'est ajouté."
         )
 

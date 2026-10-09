@@ -257,6 +257,17 @@ async def test_target_accepts_actual_export_in_tolerance(export_module, media, t
     assert result["duration_sec"] == pytest.approx(1.25, abs=0.05)
 
 
+@pytest.mark.parametrize("duration", [59.8, 70.8])
+def test_export_accepts_a_useful_episode_near_the_requested_duration(export_module, duration):
+    export_module._check_target(duration, 65, "fenêtres utiles")
+
+
+@pytest.mark.parametrize("duration", [55.0, 74.0])
+def test_export_still_rejects_a_clearly_wrong_episode_duration(export_module, duration):
+    with pytest.raises(ValueError, match="Durée.*cible"):
+        export_module._check_target(duration, 65, "fenêtres utiles")
+
+
 async def test_imported_music_honors_hold_at_the_same_time(
     export_module, tmp_path, monkeypatch,
 ):

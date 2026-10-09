@@ -7,7 +7,7 @@ from calliope.config import settings
 from calliope.events.bus import event_bus
 from calliope.queue.manager import queue_manager
 from calliope.studio import audio, series, service
-from calliope.studio.series_planner import plan_episode
+from calliope.studio.series_planner import append_outro, plan_episode
 
 
 class ProductionPausedError(Exception):
@@ -132,7 +132,8 @@ def save_episode_plan(project_id, plan):
                             {
                                 **{
                                     key: shot[key]
-                                    for key in ('action', 'reaction', 'framing', 'camera')
+                                    for key in ('action', 'reaction', 'framing', 'camera',
+                                                'language', 'purpose')
                                     if key in shot
                                 },
                                 "character_keys": shot.get("character_keys", []),
@@ -168,6 +169,51 @@ def save_episode_plan(project_id, plan):
         conn.execute(
             "INSERT INTO studio_audio(project_id,settings_json) VALUES(?,?)",
             (project_id, json.dumps(plan.get("audio") or audio.AudioSettings().model_dump())),
+        )
+        conn.commit()
+
+
+def ensure_outro(project_id):
+    with service.database() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        episode = conn.execute(
+            "SELECT context_json,plan_json,series_id FROM studio_episodes WHERE project_id=?",
+            (project_id,),
+        ).fetchone()
+        if not episode:
+            return
+        last = conn.execute(
+            "SELECT sc.context_json FROM clips c JOIN scenes s ON s.id=c.scene_id "
+            "LEFT JOIN studio_shot_context sc ON sc.clip_id=c.id WHERE c.project_id=? "
+            "ORDER BY s.order_index DESC,s.id DESC,c.order_index DESC,c.id DESC LIMIT 1",
+            (project_id,),
+        ).fetchone()
+        if last and json.loads(last[0] or "{}").get("purpose") == "outro":
+            return
+        context = json.loads(episode["context_json"])
+        plan = append_outro(json.loads(episode["plan_json"] or "{}"), context)
+        ending = plan["scenes"][-1]
+        host = next(
+            e for e in context.get("entities", []) + plan["entities"]
+            if e["key"] == ending["shots"][0]["speaker"]
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO studio_entities(series_id,entity_key,kind,name,description) "
+            "VALUES(?,?,?,?,?)",
+            (episode["series_id"], host["key"], host["kind"], host["name"], host["description"]),
+        )
+        scene_id = service.add_scene(conn, project_id, ending)
+        clip_id = conn.execute("SELECT id FROM clips WHERE scene_id=?", (scene_id,)).fetchone()[0]
+        shot = ending["shots"][0]
+        fields = ("action", "reaction", "framing", "camera", "language", "purpose",
+                  "speaker", "character_keys", "location_key", "reference_key")
+        conn.execute(
+            "INSERT INTO studio_shot_context(clip_id,context_json) VALUES(?,?)",
+            (clip_id, json.dumps({key: shot[key] for key in fields})),
+        )
+        conn.execute(
+            "UPDATE studio_episodes SET plan_json=? WHERE project_id=?",
+            (json.dumps(plan), project_id),
         )
         conn.commit()
 
@@ -559,6 +605,7 @@ async def run_production(job, payload, should_stop):
             )
             await checkpoint(job, "writing", 0.1, "Scénario préparé", should_stop)
             save_episode_plan(project_id, plan)
+        ensure_outro(project_id)
         await ensure_entities(job, should_stop)
         board = service.board(project_id)
         shots = [s for scene in board["scenes"] for s in scene["shots"]]

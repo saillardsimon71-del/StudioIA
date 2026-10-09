@@ -73,6 +73,13 @@ def test_unsupported_language_is_explicit():
         compiler()({"dialogue": "Hello."}, {"language": "xx"})
 
 
+def test_explicit_shot_language_overrides_the_series_language():
+    prompt = compiler()(
+        {"dialogue": "Want to make videos too?", "language": "en"}, {"language": "fr"}
+    )
+    assert "<d>[English] Want to make videos too?</d>" in prompt
+
+
 def test_profile_is_validated_and_frozen_for_episode(client, monkeypatch):
     from calliope.queue.manager import queue_manager
     from calliope.studio import series, service

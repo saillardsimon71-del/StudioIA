@@ -143,3 +143,69 @@ def test_planner_keeps_repair_bounded_and_logs_the_rejected_field(monkeypatch, c
         )
     assert "attempt=3" in caplog.text
     assert "Blueberry" in caplog.text
+
+
+@pytest.mark.parametrize("speaker", ["Mango", "MANGO", " mango "])
+def test_planner_resolves_character_names_to_canonical_keys(speaker):
+    plan = manifest("You're kidding.", speaker)
+    plan["scenes"][0]["shots"][0]["character_keys"] = ["Mango", "BLUEBERRY"]
+    shot = series_planner.normalize_plan(plan, {"entities": []})["scenes"][0]["shots"][0]
+    assert shot["speaker"] == "mango"
+    assert shot["character_keys"] == ["mango", "blueberry"]
+    assert shot["dialogue"] == "You're kidding."
+
+
+def test_unknown_speaker_reports_the_field_and_valid_character_keys():
+    with pytest.raises(ValueError) as caught:
+        series_planner.normalize_plan(manifest("Hello.", "stranger"), {"entities": []})
+    assert "scenes[0].shots[0].speaker" in str(caught.value)
+    assert "stranger" in str(caught.value)
+    assert "mango" in str(caught.value)
+    assert "blueberry" in str(caught.value)
+
+
+def test_duration_near_target_is_accepted_without_padding():
+    plan = manifest("Hello.")
+    shot = plan["scenes"][0]["shots"][0]
+    plan["scenes"][0]["shots"] = [copy.deepcopy(shot) for _ in range(10)]
+    plan["scenes"][0]["shots"][-1]["duration_sec"] = 5.8
+    result = series_planner.normalize_plan(plan, {"entities": [], "target_seconds": 65})
+    durations = [s["duration_sec"] for s in result["scenes"][0]["shots"]]
+    assert durations == [6.0] * 9 + [5.8]
+    assert sum(durations) == pytest.approx(59.8)
+
+
+@pytest.mark.parametrize("language", ["en", "fr", "ja"])
+def test_each_episode_gets_an_english_fruit_outro_after_the_story(monkeypatch, language):
+    from calliope.studio.h3_prompt import compile_h3_prompt
+
+    requests = []
+
+    async def generate(messages, **options):
+        requests.append(copy.deepcopy(messages))
+        plan = manifest("Hello.", "Mango")
+        shot = plan["scenes"][0]["shots"][0]
+        plan["scenes"][0]["shots"] = [copy.deepcopy(shot) for _ in range(10)]
+        plan["scenes"][0]["shots"][-1]["duration_sec"] = 5.8
+        return plan
+
+    monkeypatch.setattr(series_planner, "generate_structured", generate)
+    context = {"entities": [], "target_seconds": 65, "language": language}
+    result = asyncio.run(series_planner.plan_episode(context, "An unexpected discovery.", ""))
+    assert len(requests) == 1
+    assert len(result["scenes"]) == 2
+    assert sum(s["duration_sec"] for s in result["scenes"][0]["shots"]) == pytest.approx(59.8)
+    ending = result["scenes"][-1]["shots"]
+    assert len(ending) == 1
+    shot = ending[0]
+    assert shot["dialogue"] == (
+        "Want to make videos too? Copy this video's link, like, subscribe, and comment GO!"
+    )
+    assert shot["speaker"] == "studio_cta_host"
+    assert shot["character_keys"] == ["studio_cta_host"]
+    assert shot["language"] == "en"
+    host = next(e for e in result["entities"] if e["key"] == "studio_cta_host")
+    assert "apple" in host["description"].lower()
+    compiled = compile_h3_prompt(shot, context | {"entities": result["entities"]})
+    assert "<d>[English] Want to make videos too?" in compiled
+    assert "<d>" not in shot["dialogue"]

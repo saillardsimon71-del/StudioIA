@@ -150,7 +150,7 @@ def compile_h3_prompt(shot, context=None, first_frame=False) -> str:
             "Continue the first frame's identity, clothing, lighting and screen direction."
         )
     if dialogue:
-        language = dialogue_language(context.get("language") or shot.get("language"))
+        language = dialogue_language(shot.get("language") or context.get("language"))
         voice = entity.get("voice_description")
         if voice:
             parts.append(f"{name}'s voice: {validate_h3_prose(voice)}")

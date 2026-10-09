@@ -330,7 +330,9 @@ def test_production_resumes_original_modal_call_without_another_take(client, mon
     content = video_bytes(tmp_path, audio=True)
 
     def spawn(self, request):
-        calls.append("original-call")
+        calls.append(
+            "outro-call" if "Want to make videos too?" in request["prompt"] else "original-call"
+        )
         return calls[-1]
 
     def interrupted(self, call_id):
@@ -360,7 +362,7 @@ def test_production_resumes_original_modal_call_without_another_take(client, mon
     board = service.board(first["project_id"])
     takes = board["scenes"][0]["shots"][0]["takes"]
     assert len([t for t in takes if t["kind"] == "video"]) == 1
-    assert calls == ["original-call"]
+    assert calls == ["original-call", "outro-call"]
     assert board["production"]["status"] == "done"
 
 
@@ -438,6 +440,7 @@ def test_70_second_script_keeps_large_output_budget_on_json_retry(monkeypatch):
 
     budgets = []
     plan = planned_episode({})
+    plan["scenes"][0]["shots"][0]["duration_sec"] = 4.4
     plan["scenes"][0]["shots"] *= 14
 
     class Client:
@@ -464,6 +467,7 @@ def test_planner_repairs_short_episode_before_any_gpu_render(monkeypatch):
         requests.append(list(messages))
         plan = planned_episode({})
         if len(requests) > 1:
+            plan["scenes"][0]["shots"][0]["duration_sec"] = 4.4
             plan["scenes"][0]["shots"] *= 14
         return plan
 
@@ -488,3 +492,39 @@ def test_dialogue_free_shots_do_not_export_unscripted_native_speech():
     shot["speaker"] = ""
     result = normalize_plan(plan, {"entities": []})
     assert result["scenes"][0]["shots"][0]["audio_mode"] == "silent"
+
+
+def test_outro_language_and_speaker_survive_episode_persistence(client):
+    from calliope.studio import production, series_planner, service
+    from calliope.studio.h3_prompt import compile_h3_prompt
+
+    created = series(client)
+    client.patch(f"/api/studio/series/{created['id']}", json={"language": "fr"})
+    project = episode(client, created["id"]).json()["project_id"]
+    plan = series_planner.append_outro(planned_episode({}), {"entities": []})
+    production.save_episode_plan(project, plan)
+    board = service.board(project)
+    ending = board["scenes"][-1]["shots"][0]
+    with service.database() as conn:
+        context = service.shot_context(conn, ending["id"])
+    assert context["shot"]["speaker"] == "studio_cta_host"
+    assert context["shot"]["language"] == "en"
+    assert context["shot"]["purpose"] == "outro"
+    compiled = compile_h3_prompt(ending | context["shot"], context, first_frame=True)
+    assert "<d>[English] Want to make videos too?" in compiled
+
+
+def test_resume_adds_missing_outro_once_to_an_existing_episode(client):
+    from calliope.studio import production, service
+
+    created = series(client)
+    project = episode(client, created["id"]).json()["project_id"]
+    production.save_episode_plan(project, planned_episode({}))
+    production.ensure_outro(project)
+    production.ensure_outro(project)
+    board = service.board(project)
+    assert len(board["scenes"]) == 2
+    assert board["scenes"][0]["shots"][0]["dialogue"] == "That's my name. Who is calling?"
+    assert board["scenes"][-1]["shots"][0]["dialogue"] == (
+        "Want to make videos too? Copy this video's link, like, subscribe, and comment GO!"
+    )

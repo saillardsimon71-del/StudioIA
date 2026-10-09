@@ -9,6 +9,11 @@ from calliope.studio.h3_prompt import LANGUAGES, directing_profile, validate_h3_
 from calliope.studio.series import BIBLE_FIELDS
 
 logger = logging.getLogger(__name__)
+OUTRO_SECONDS = 8.0
+OUTRO_KEY = "studio_cta_host"
+OUTRO_DIALOGUE = (
+    "Want to make videos too? Copy this video's link, like, subscribe, and comment GO!"
+)
 
 
 async def plan_episode(context, idea, objective):
@@ -90,10 +95,13 @@ claim that a cliffhanger has already been resolved."""
     public_context = {k: v for k, v in context.items() if k != "entities"}
     public_context["directing_profile"] = directing_profile(context.get("directing_profile"))
     public_context["entities"] = [
-        {k: e[k] for k in ("key", "kind", "name", "description")} for e in context["entities"]
+        {k: e[k] for k in ("key", "kind", "name", "description")}
+        for e in context["entities"] if e["key"] != OUTRO_KEY
     ]
-    target = context.get("target_seconds", 65)
-    estimated_shots = max(8, round(target / 3))
+    episode_target = float(context.get("target_seconds", 65))
+    target = max(5.0, episode_target - OUTRO_SECONDS)
+    public_context["target_seconds"] = target
+    estimated_shots = max(8, round(episode_target / 3))
     messages = [
         {"role": "system", "content": prompt},
         {
@@ -104,6 +112,10 @@ claim that a cliffhanger has already been resolved."""
                     "idea": idea,
                     "objective": objective,
                     "target_seconds": target,
+                    "ending": (
+                        "The software adds an English promotional outro after your story. "
+                        "Do not write the promotion or include its host in the story."
+                    ),
                     "pacing": (
                         "free shot count, one decimal duration_sec per shot, "
                         "each as short as its beat allows, total near target_seconds"
@@ -120,7 +132,8 @@ claim that a cliffhanger has already been resolved."""
             max_tokens=max(4096, min(16000, estimated_shots * 650 + 2000)),
         )
         try:
-            return normalize_plan(copy.deepcopy(result), context)
+            plan = normalize_plan(copy.deepcopy(result), context | {"target_seconds": target})
+            return append_outro(plan, context)
         except ValueError as exc:
             logger.warning("Planner validation failed attempt=%s: %s", attempt + 1, exc)
             if attempt == 2:
@@ -134,6 +147,8 @@ claim that a cliffhanger has already been resolved."""
                             f"Validation failed: {exc}. Repair the complete JSON episode. "
                             f"Keep free per-shot durations; adjust the cutting or the "
                             f"dialogue so the useful total stays near {target} seconds "
+                            f"of story plus an automatic {OUTRO_SECONDS:g}-second outro "
+                            f"for an episode near {episode_target:g} seconds, "
                             "without stretching any shot. "
                             "Preserve the story and series canon. Shorten dialogue if needed. "
                             "Repair the identified field, preserving unaffected shots. "
@@ -147,6 +162,67 @@ claim that a cliffhanger has already been resolved."""
                     },
                 ]
             )
+
+
+def canonical_key(value, entities, kind):
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    candidates = [e for e in entities if e.get("kind", "character") == kind]
+    if any(e["key"] == value for e in candidates):
+        return value
+    normalized = re.sub(r"[\s_-]+", "_", value.casefold())
+    keys = {
+        e["key"] for e in candidates
+        if normalized in {
+            re.sub(r"[\s_-]+", "_", str(e.get(field) or "").strip().casefold())
+            for field in ("key", "name")
+        }
+    }
+    return next(iter(keys)) if len(keys) == 1 else value
+
+
+def append_outro(plan, context):
+    plan.setdefault("entities", [])
+    if plan.get("scenes") and any(
+        s.get("purpose") == "outro" for s in plan["scenes"][-1].get("shots", [])
+    ):
+        return plan
+    if not any(e["key"] == OUTRO_KEY for e in context.get("entities", []) + plan["entities"]):
+        plan["entities"].append({
+            "key": OUTRO_KEY, "kind": "character", "name": "Studio host",
+            "description": (
+                "Friendly anthropomorphic red apple with a small green leaf, "
+                "expressive eyes, clearly visible mouth, small arms, navy jacket, "
+                "consistent proportions. Clear warm English voice."
+            ),
+        })
+    shot = {
+        "description": "The fruit host invites the viewer to make videos.",
+        "prompt": (
+            "A friendly red apple host addresses the viewer in a clean softly lit studio. "
+            "One visible speaker, expressive face, a welcoming hand gesture, "
+            "clear speech, no other character, no text on screen."
+        ),
+        "image_prompt": (
+            "Vertical portrait of a friendly anthropomorphic red apple with green leaf, "
+            "expressive eyes, visible mouth, small arms and navy jacket in a clean studio. "
+            "Medium close-up, the host fills the frame, soft lighting, no text."
+        ),
+        "dialogue": OUTRO_DIALOGUE, "speaker": OUTRO_KEY,
+        "character_keys": [OUTRO_KEY], "location_key": "",
+        "reference_key": "studio-cta-host-studio", "duration_sec": OUTRO_SECONDS,
+        "audio_mode": "native", "language": "en", "purpose": "outro",
+        "framing": "Medium close-up, visible speaker dominates the vertical frame.",
+        "camera": "Static camera.",
+        "action": "The host speaks directly to the viewer and gestures invitingly.",
+        "reaction": "The host finishes with an enthusiastic smile.",
+    }
+    plan["scenes"].append({
+        "heading": "Studio - Make your own videos", "action": shot["action"],
+        "dialog": OUTRO_DIALOGUE, "shots": [shot],
+    })
+    return plan
 
 
 def normalize_dialogue(dialogue, speaker, entities):
@@ -235,6 +311,8 @@ def normalize_plan(result, context):
         ):
             raise ValueError("Une identité visuelle est incomplète.")
         known.add(entity["key"])
+    all_entities = context.get("entities", []) + new_entities
+    characters = {e["key"] for e in all_entities if e.get("kind", "character") == "character"}
     total_duration = 0
     if not result["scenes"]:
         raise ValueError("L'épisode doit contenir au moins une scène.")
@@ -262,21 +340,27 @@ def normalize_plan(result, context):
                 )
             duration = round(duration, 1)
             dialogue = str(shot.get("dialogue") or "").strip()
-            speaker = str(shot.get("speaker") or "").strip()
+            speaker = canonical_key(shot.get("speaker"), all_entities, "character")
             try:
                 dialogue, speaker = normalize_dialogue(
-                    dialogue, speaker, context.get("entities", []) + new_entities
+                    dialogue, speaker, all_entities
                 )
             except ValueError as exc:
                 field = f"scenes[{scene_index}].shots[{shot_index}].dialogue"
                 excerpt = str(shot.get("dialogue"))[:240]
                 raise ValueError(f"{field}: {exc} Extrait brut: {excerpt!r}") from None
-            if speaker and speaker not in known:
-                raise ValueError("Le locuteur ne fait pas partie des personnages de cette série.")
+            if speaker and speaker not in characters:
+                raise ValueError(
+                    f"scenes[{scene_index}].shots[{shot_index}].speaker: "
+                    f"Le locuteur {speaker!r} est inconnu. "
+                    f"Clés de personnages autorisées: {sorted(characters)!r}."
+                )
             if dialogue and not speaker:
                 raise ValueError("Chaque réplique doit avoir un unique locuteur identifié.")
             keys = shot.get("character_keys") or []
-            location = shot.get("location_key") or ""
+            if isinstance(keys, list):
+                keys = [canonical_key(key, all_entities, "character") for key in keys]
+            location = canonical_key(shot.get("location_key"), all_entities, "location")
             if (
                 not isinstance(keys, list)
                 or any(key not in known for key in keys)
@@ -289,6 +373,8 @@ def normalize_plan(result, context):
             total_duration += duration
             shot["dialogue"] = dialogue
             shot["speaker"] = speaker
+            shot["character_keys"] = keys
+            shot["location_key"] = location
             shot["audio_mode"] = "native" if dialogue else "silent"
             shot["prompt"] = re.sub(
                 r"<d>.*?</d>", "", str(shot["prompt"]), flags=re.S | re.I
@@ -302,17 +388,15 @@ def normalize_plan(result, context):
                     validate_h3_prose(shot[field])
     if "target_seconds" in context:
         target = float(context["target_seconds"])
-        # Le montage coupe mais n'étire jamais : un scénario manifestement plus
-        # court ou plus long que le format est réparé avant tout rendu GPU, la
-        # manière de découper restant entièrement libre.
-        if total_duration < target - 2.0:
+        tolerance = max(2.0, target * 0.1)
+        if total_duration < target - tolerance:
             raise ValueError(
                 f"Le scénario ne remplit que {total_duration:g} s utiles sur "
                 f"les {target:g} s du format : l'histoire est trop courte. "
                 "Développez l'événement ou ajoutez une action/réaction utile, "
                 "sans jamais étirer un plan existant."
             )
-        if total_duration > target + 5.0:
+        if total_duration > target + tolerance:
             raise ValueError(
                 f"La durée utile du scénario ({total_duration:g} s) dépasse la "
                 f"durée demandée ({target:g} s). Ajustez le découpage ou les "
