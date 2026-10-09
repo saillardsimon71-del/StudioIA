@@ -1,11 +1,14 @@
 import copy
 import json
+import logging
 import re
 
 from calliope.agent.llm import generate_structured
 from calliope.studio.audio import AudioSettings
-from calliope.studio.h3_prompt import directing_profile, validate_h3_prose
+from calliope.studio.h3_prompt import LANGUAGES, directing_profile, validate_h3_prose
 from calliope.studio.series import BIBLE_FIELDS
+
+logger = logging.getLogger(__name__)
 
 
 async def plan_episode(context, idea, objective):
@@ -28,10 +31,13 @@ identical blocks. Never stretch a shot to fill time; the edit trims any dead
 footage by itself, so script ZERO dead time. A shot beyond 8 s needs a strong
 reason, never exceed 15 s.
 Alternate story actions and short dialogue; each shot must advance the story.
-Each rendered shot has ONE dominant speaking character, with listeners allowed.
+Each rendered shot has exactly ONE speaking character. Listeners never speak
+in that shot; put their reply in another shot with their own speaker field.
 Several sentences by this speaker may belong to one continuous shot. Choose
 shot/reverse-shot or a two-shot when it helps the scene, never one sentence per cut.
-Dialogue is plain speech, without speaker names, quotes or instructions. Keep dialogue
+Dialogue is plain speech, without speaker names, quotes or instructions. Never
+put H3 tags, language markers or speaker IDs in dialogue; the compiler adds them.
+Keep dialogue
 naturally speakable within the shot duration. Prefer short lines, but do not force
 an exact words-per-second ratio; the final take is validated from the generated audio.
 No narrator, offscreen voices,
@@ -116,6 +122,7 @@ claim that a cliffhanger has already been resolved."""
         try:
             return normalize_plan(copy.deepcopy(result), context)
         except ValueError as exc:
+            logger.warning("Planner validation failed attempt=%s: %s", attempt + 1, exc)
             if attempt == 2:
                 raise
             messages.extend(
@@ -129,11 +136,87 @@ claim that a cliffhanger has already been resolved."""
                             f"dialogue so the useful total stays near {target} seconds "
                             "without stretching any shot. "
                             "Preserve the story and series canon. Shorten dialogue if needed. "
+                            "Repair the identified field, preserving unaffected shots. "
+                            "Each shot must have one speaker and plain verbatim dialogue. "
+                            "If there are multiple voices, split that exchange into shots "
+                            "with one speaker each and natural useful durations, then "
+                            "update dependent shot indexes in audio cues. Do not discard "
+                            "a character's reply or hide it in another field. "
                             "Return the complete corrected JSON, with all scenes and shots."
                         ),
                     },
                 ]
             )
+
+
+def normalize_dialogue(dialogue, speaker, entities):
+    aliases = {}
+    for entity in entities:
+        if entity.get("kind") == "location":
+            continue
+        for name in (entity.get("key"), entity.get("name")):
+            if name:
+                aliases.setdefault(str(name).strip().casefold(), set()).add(entity["key"])
+    quotes = {'"': '"', "'": "'", "\u201c": "\u201d", "\u2018": "\u2019", "\u00ab": "\u00bb"}
+    had_label = False
+    while True:
+        before = dialogue
+        if len(dialogue) >= 2 and quotes.get(dialogue[0]) == dialogue[-1]:
+            dialogue = dialogue[1:-1].strip()
+        prefix = re.match(r"^([^:\n]{1,80}):\s*", dialogue)
+        owners = aliases.get(prefix[1].strip().casefold(), set()) if prefix else set()
+        if owners:
+            if len(owners) != 1 or (speaker and speaker not in owners):
+                raise ValueError(
+                    "La réplique contient plusieurs voix ou un locuteur contradictoire."
+                )
+            speaker = next(iter(owners))
+            dialogue = dialogue[prefix.end():].strip()
+            had_label = True
+        wrapper = re.fullmatch(r"<d>\s*(.*?)\s*</d>", dialogue, re.S | re.I)
+        if wrapper and not re.search(r"<[^>]+>", wrapper[1]):
+            dialogue = wrapper[1].strip()
+            language = re.match(r"^\[([^\]]+)\]\s*", dialogue)
+            if language and language[1].casefold() in (
+                name.casefold() for name in LANGUAGES.values()
+            ):
+                dialogue = dialogue[language.end():].strip()
+        if before == dialogue:
+            break
+    labels = re.findall(r"(?:^|\s)([^\W\d_][\w '-]{0,30}):", dialogue, re.I)
+    if len(labels) > 1 and any(
+        aliases.get(label.strip().casefold()) != {speaker} for label in labels
+    ):
+        raise ValueError(
+            "La réplique contient plusieurs voix non identifiées; séparez les plans."
+        )
+    lines = []
+    for index, line in enumerate(dialogue.splitlines()):
+        line = line.strip()
+        prefix = re.match(r"^([^:\n]{1,80}):\s*", line)
+        owners = aliases.get(prefix[1].strip().casefold(), set()) if prefix else set()
+        if owners:
+            if len(owners) != 1 or (speaker and speaker not in owners):
+                raise ValueError(
+                    "La réplique contient plusieurs voix; séparez les locuteurs en plans."
+                )
+            speaker = next(iter(owners))
+            line = line[prefix.end():].strip()
+            had_label = True
+        elif index and had_label and prefix:
+            raise ValueError(f"La réplique contient plusieurs voix possibles: {prefix[1]!r}.")
+        lines.append(line)
+    dialogue = " ".join(" ".join(lines).split())
+    for alias in aliases:
+        if re.search(r"(?<!\w)" + re.escape(alias) + r"\s*:", dialogue, re.I):
+            raise ValueError(
+                "La réplique contient plusieurs voix ou une étiquette de locuteur interne."
+            )
+    if re.search(
+        r"<[^>]+>|\[[^\]]*\]|\([^)]*\)|\bsay exactly\b|\bspoken dialogue\b", dialogue, re.I
+    ):
+        raise ValueError("La réplique contient des instructions ou une syntaxe H3 non isolable.")
+    return dialogue, speaker
 
 
 def normalize_plan(result, context):
@@ -155,14 +238,14 @@ def normalize_plan(result, context):
     total_duration = 0
     if not result["scenes"]:
         raise ValueError("L'épisode doit contenir au moins une scène.")
-    for scene in result["scenes"]:
+    for scene_index, scene in enumerate(result["scenes"]):
         if (
             not isinstance(scene, dict)
             or not isinstance(scene.get("shots"), list)
             or not scene["shots"]
         ):
             raise ValueError("Le scénario contient une scène vide.")
-        for shot in scene["shots"]:
+        for shot_index, shot in enumerate(scene["shots"]):
             if (
                 not isinstance(shot, dict)
                 or not str(shot.get("prompt", "")).strip()
@@ -179,20 +262,19 @@ def normalize_plan(result, context):
                 )
             duration = round(duration, 1)
             dialogue = str(shot.get("dialogue") or "").strip()
-            speaker = str(shot.get("speaker") or "")
+            speaker = str(shot.get("speaker") or "").strip()
+            try:
+                dialogue, speaker = normalize_dialogue(
+                    dialogue, speaker, context.get("entities", []) + new_entities
+                )
+            except ValueError as exc:
+                field = f"scenes[{scene_index}].shots[{shot_index}].dialogue"
+                excerpt = str(shot.get("dialogue"))[:240]
+                raise ValueError(f"{field}: {exc} Extrait brut: {excerpt!r}") from None
             if speaker and speaker not in known:
                 raise ValueError("Le locuteur ne fait pas partie des personnages de cette série.")
             if dialogue and not speaker:
                 raise ValueError("Chaque réplique doit avoir un unique locuteur identifié.")
-            if re.search(
-                r"<[^>]+>|\n|(?:^|\s)[A-Z][\w -]{0,30}:|say exactly|spoken dialogue", dialogue, re.I
-            ):
-                raise ValueError(
-                    (
-                        "Une réplique contient plusieurs voix ou des instructions. Corrigez"
-                        " le scénario avant le rendu."
-                    )
-                )
             keys = shot.get("character_keys") or []
             location = shot.get("location_key") or ""
             if (
@@ -206,6 +288,7 @@ def normalize_plan(result, context):
             shot["duration_sec"] = duration
             total_duration += duration
             shot["dialogue"] = dialogue
+            shot["speaker"] = speaker
             shot["audio_mode"] = "native" if dialogue else "silent"
             shot["prompt"] = re.sub(
                 r"<d>.*?</d>", "", str(shot["prompt"]), flags=re.S | re.I
