@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .visual_identity import strip_generated_text, visual_description
+from .visual_identity import scene_direction, strip_generated_text, visual_description
 
 
 class DirectingProfile(BaseModel):
@@ -192,10 +192,10 @@ def compile_h3_prompt(shot, context=None, first_frame=False) -> str:
             )
     if prompt:
         parts.append(prompt)
-    for field in ("framing", "camera", "action"):
-        value = shot.get(field) or context.get(field)
-        if value:
-            parts.append(visual_prose(value))
+    parts.extend(visual_prose(part) for part in scene_direction(shot, context))
+    action = shot.get("action") or context.get("action")
+    if action:
+        parts.append(visual_prose(action))
     if (
         not (shot.get("framing") or context.get("framing"))
         and profile["framing"] == "close_preferred"

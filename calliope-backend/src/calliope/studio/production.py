@@ -145,7 +145,8 @@ def save_episode_plan(project_id, plan):
                                     key: shot[key]
                                     for key in ('action', 'reaction', 'framing', 'camera',
                                                 'language', 'purpose', 'dialogue_turns',
-                                                'soundscape', 'screen_text')
+                                                'soundscape', 'screen_text', 'blocking',
+                                                'listener_keys')
                                     if key in shot
                                 },
                                 "character_keys": shot.get("character_keys", []),
@@ -230,7 +231,7 @@ def ensure_midroll(project_id):
         ).fetchall()
         fields = ("action", "reaction", "framing", "camera", "language", "purpose",
                   "speaker", "character_keys", "location_key", "reference_key", "dialogue_turns",
-                  "soundscape", "screen_text")
+                  "soundscape", "screen_text", "blocking", "listener_keys")
         live_scenes = []
         for scene in conn.execute(
             "SELECT * FROM scenes WHERE project_id=? ORDER BY order_index,id", (project_id,)

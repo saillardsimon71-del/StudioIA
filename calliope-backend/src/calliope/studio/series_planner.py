@@ -86,12 +86,19 @@ just because the speaker changes. Prefer simple two-shots for a short exchange.
 List every speaking AND listening character in character_keys and in the still
 composition. Also declare listener_keys for silent participants in the exchange.
 Do not omit a conversation partner simply because they are not speaking yet.
+Declare scene blocking: fixed positions, furniture, entrances, conversation axis
+and eyelines. Each shot inherits it unless a visible action motivates a change.
+Establish a shared side or three-quarter composition when the exchange needs
+several faces and a desk. Explicit scene geometry overrides generic close-up
+preferences. Embed short silent reactions inside the exchange when possible.
 Example of ONE SHOT containing an exchange (adapt to the actual series):
 character_keys=["character_a","character_b"], dialogue_turns=[
 {"speaker":"character_a","text":"Did you sell it?","reaction":"B looks unimpressed."},
 {"speaker":"character_b","text":"It was a good deal.","reaction":"A stares in disbelief."}].
 Both characters are present in image_prompt; duration covers the whole exchange.
 When no one speaks, use speaker="", dialogue="" and dialogue_turns=[].
+In the social fiction preset, these nonverbal shots use audio_mode="silent";
+physical sounds and ambience are added in postproduction, never invented speech.
 Never invent an unidentified Registry, scanner or UI voice. A system notification
 without a visible speaking character is a visual event with a chime or effect,
 not a dialogue turn. Attribute every spoken turn to an actual character key.
@@ -108,7 +115,7 @@ visible, clothes, location, lighting, camera, expression and quiet native
 ambience. Keep the established visual style; no default cartoon or dystopian
 style. Apply the directing_profile supplied in the context: it controls realization,
 not story content. A generalist profile follows the scene. The social dialogue
-preset favors close framing, simple camera, brisk naturally spoken exchanges,
+preset favors readable shared framing, simple camera, brisk naturally spoken exchanges,
 immediate reactions and active listeners. Wider shots and full-body two-shots
 remain useful when the action needs them. Density comes from useful story beats,
 not artificially accelerated words or stretched durations. Keep canon masks,
@@ -138,6 +145,7 @@ not a prediction of performance. Name concrete beats and unresolved weaknesses.
 "variant_of":"existing identity key for an age variant or empty",
 "attached_value":null,"label_key":"stable label key shared by variants or empty"}}],
 "scenes":[{"heading":"scene title","action":"action","dialog":"full scene dialogue",
+"blocking":"fixed character positions, furniture, camera axis and eyelines",
 "shots":[{"description":"story beat","prompt":"visual motion and native sound",
 "image_prompt":"still composition including speakers and listeners",
 "character_keys":["key"], "listener_keys":["silent conversation partner key"],
@@ -378,6 +386,7 @@ def insert_midroll(plan, context):
         "speaker": speaker,
         "character_keys": [speaker],
         "location_key": location,
+        "blocking": preceding.get("blocking", ""),
         "reference_key": f"studio-midroll-{speaker}-{location or 'setting'}",
         "duration_sec": MIDROLL_SECONDS,
         "audio_mode": "native",
@@ -606,6 +615,10 @@ def normalize_plan(result, context):
             or not scene["shots"]
         ):
             raise ValueError("Le scénario contient une scène vide.")
+        blocking = scene.get("blocking", "")
+        if not isinstance(blocking, str) or len(blocking) > 5000:
+            raise ValueError("La disposition de la scène est invalide.")
+        validate_h3_prose(blocking)
         for shot_index, shot in enumerate(scene["shots"]):
             if (
                 not isinstance(shot, dict)
@@ -613,6 +626,8 @@ def normalize_plan(result, context):
                 or not str(shot.get("image_prompt", "")).strip()
             ):
                 raise ValueError("Le scénario contient un plan sans prompt.")
+            if blocking and not shot.get("blocking"):
+                shot["blocking"] = blocking
             try:
                 duration = float(shot.get("duration_sec") or 0)
             except (TypeError, ValueError):
@@ -786,10 +801,12 @@ def normalize_plan(result, context):
             shot["audio_mode"] = "native" if dialogue else shot.get("audio_mode", "native")
             if shot["audio_mode"] not in ("native", "silent"):
                 raise ValueError("Mode audio invalide.")
+            if not dialogue and profile["preset"] == "fast_dialogue_social_fiction":
+                shot["audio_mode"] = "silent"
             shot["prompt"] = re.sub(
                 r"<d>.*?</d>", "", str(shot["prompt"]), flags=re.S | re.I
             ).strip()
-            for field in ("action", "reaction", "framing", "camera", "soundscape"):
+            for field in ("action", "reaction", "framing", "camera", "soundscape", "blocking"):
                 if field in shot and (not isinstance(shot[field], str) or len(shot[field]) > 5000):
                     raise ValueError("Une directive de réalisation est invalide.")
                 if field in shot:

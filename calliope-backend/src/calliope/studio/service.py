@@ -692,7 +692,7 @@ def select_take(take_id):
 
 
 def visual_review_contract(context, shot):
-    from calliope.studio.visual_identity import contract_hash
+    from calliope.studio.visual_identity import contract_hash, scene_direction
 
     info = context.get("shot") or {}
     keys = list(info.get("character_keys") or [])
@@ -712,6 +712,7 @@ def visual_review_contract(context, shot):
             "identities": identities,
             "labels": labels,
             "visual_style": context.get("bible", {}).get("visual_style", ""),
+            "scene_direction": scene_direction(shot, context),
         }
     )
 

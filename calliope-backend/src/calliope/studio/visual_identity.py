@@ -21,6 +21,45 @@ def visual_description(entity):
     ).strip()
 
 
+def scene_direction(shot, context):
+    info = (context.get("shot") or {}) | shot
+    bible = context.get("bible") or {}
+    parts = []
+    for field, label in (("world_rules", "World rules"), ("locations", "Fixed geography"),
+                         ("continuity", "Continuity rules")):
+        if bible.get(field):
+            parts.append(f"{label}: {bible[field]}")
+    for field, label in (("blocking", "Character positions and eyelines"),
+                         ("framing", "Shot composition"), ("camera", "Camera")):
+        value = info.get(field) or context.get(field)
+        if value:
+            parts.append(f"{label}: {value}")
+    keys = info.get("character_keys") or []
+    if keys:
+        parts.append(
+            "Visible cast: " + ", ".join(keys)
+            + ". Do not add extra characters, duplicate a character or change their identity."
+        )
+    if len(keys) > 1 and info.get("purpose") != "midroll":
+        parts.append(
+            "Keep the listed conversation partners in the shared composition. "
+            "They look at their interlocutors, not into the camera. "
+            "A tighter framing must not relocate anyone or reverse the conversation axis."
+        )
+    if info.get("purpose") == "midroll":
+        parts.append(
+            "During this fourth-wall aside, only the speaking character turns their gaze "
+            "toward the viewer. This temporary gaze overrides the narrative eyelines; "
+            "the established positions, furniture and setting remain unchanged."
+        )
+    if info.get("blocking") or info.get("framing") or info.get("camera"):
+        parts.append(
+            "The explicit shot composition and positions take precedence over generic "
+            "style preferences for close-ups or camera movement."
+        )
+    return parts
+
+
 def ordered_entities(entities):
     by_key = {entity["key"]: entity for entity in entities}
     result, visiting, visited = [], set(), set()
@@ -273,14 +312,23 @@ def compile_image_request(shot, context, *, canonical_entity=None):
     style = strip_generated_text(context.get("bible", {}).get("visual_style", ""), labels)
     if style:
         parts.append(f"Visual style: {style}.")
+    if canonical_entity:
+        if context.get("bible", {}).get("world_rules"):
+            parts.append(f"World rules: {context['bible']['world_rules']}")
+    else:
+        parts.extend(strip_generated_text(part, labels) for part in scene_direction(shot, context))
     for binding in bindings:
         parts.append(
             f"Reference image {binding['index']}: {binding['entity_key']} ({binding['kind']}). "
-            "Use this image only for this entity's visual identity."
+            + ("Preserve this environment's architecture, furniture and spatial layout; "
+               "use the requested camera angle."
+               if binding["kind"] == "location"
+               else "Use this image only for this entity's visual identity.")
         )
     if canonical_entity:
         parts.append(
-            "A single consistent medium view, clean composition, no collage, no watermark."
+            "One single image with one consistent view, clean composition, "
+            "no panels, no contact sheet, no collage, no watermark."
         )
         parts.append(
             "The character's natural eyes and mouth are visible. Preserve costume and identity."
