@@ -274,7 +274,7 @@ def test_social_series_receives_music_unless_its_profile_requests_none():
     plan = {"scenes": [{"shots": [shot]}], "audio": {"music": "none"}}
     result = series_planner.normalize_plan(copy.deepcopy(plan), config)
     assert result["audio"]["music"] == "tension"
-    assert result["audio"]["music_gain_db"] == -18
+    assert result["audio"]["music_gain_db"] == -12
     config["directing_profile"]["music"] = "none"
     assert series_planner.normalize_plan(plan, config)["audio"]["music"] == "none"
 

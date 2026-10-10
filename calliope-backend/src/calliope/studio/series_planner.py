@@ -151,15 +151,21 @@ Return ONLY JSON with these fields:
 "action":"simple physical action", "reaction":"listener or speaker reaction",
 "framing":"composition appropriate to the action", "camera":"simple camera behavior"}]}],
 "audio":{"enabled":true,"music":"none/neutral/tension/warm/playful/energetic/horror",
-"tempo":72,"music_gain_db":-18,"voice_gain_db":0,"ducking":true,
+"tempo":72,"music_gain_db":-12,"voice_gain_db":0,"ducking":true,
 "ambience":"none/room/wind/rain/cafe/night/city/forest", "ambience_gain_db":-34,
-"sfx":[{"effect":"click/beep/impact/boom/whoosh/riser/door/footstep","shot_index":0,
-"at_sec":0.2,"gain_db":-24}],
+"sfx":[{"effect":"click/beep/impact/boom/whoosh/riser/door/footstep/pop/boing/scratch","shot_index":0,
+"at_sec":0.2,"gain_db":-18}],
 "holds":[{"shot_index":0,"at_sec":0.0,"duration_sec":0.8,"drop_db":-36}]}}.
 Sound design is post-production, synchronized with the real beats: pick the
-ambience that matches the main location, keep the music bed VERY light so it
-never masks the voices, keep sfx sparse (a riser into the final reveal, one
-impact or boom on it), and use at most one or two holds — short voluntary
+ambience that matches the main location. The instrumental bed must be audible
+between lines; ducking protects speech. Follow the series musical identity.
+Place occasional sound accents on specific narrative events, not on a timer:
+pop for a sudden appearance, boing for an absurd bounce or physical gag,
+scratch for an interrupted boast or power reversal, impact for a reveal,
+beep/click for a notification, riser before a cliffhanger. Avoid stacking
+effects on every cut or adding effects under important words. Keep cue gains
+around -18 dB, with quieter accents at -22 dB. Never use spoken or sung effects.
+Use at most one or two holds — short voluntary
 silences right before a reveal — never under a spoken line. Summary and events
 must describe what the episode actually shows, not future intentions. Never
 claim that a cliffhanger has already been resolved."""
@@ -777,7 +783,7 @@ def normalize_plan(result, context):
     profile = directing_profile(context.get("directing_profile"))
     if profile["music"] == "none":
         result["audio"]["music"] = "none"
-    elif result["audio"]["music"] == "none" and not result["audio"].get("music_asset_id"):
+    elif not result["audio"].get("music_asset_id"):
         result["audio"]["music"] = profile["music_style"]
     result["audio"]["music_gain_db"] = profile["music_gain_db"]
     result["audio"]["ambience_gain_db"] = profile["ambience_gain_db"]
@@ -793,7 +799,7 @@ def normalize_plan(result, context):
                         "at_sec": label.get("changes", [{}])[0].get("at_sec", 0.15)
                         if label.get("changes")
                         else 0.15,
-                        "gain_db": -24,
+                        "gain_db": -18,
                     }
                 )
     result["bible"] = {

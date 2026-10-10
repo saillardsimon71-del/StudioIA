@@ -18,7 +18,7 @@ class DirectingProfile(BaseModel):
     silences: Literal["story_driven", "brief"] = "story_driven"
     music: Literal["postproduction", "none"] = "postproduction"
     music_style: Literal["neutral", "tension", "warm", "playful", "energetic", "horror"] = "neutral"
-    music_gain_db: float = Field(default=-18, ge=-60, le=0)
+    music_gain_db: float = Field(default=-12, ge=-60, le=0)
     ambience_gain_db: float = Field(default=-34, ge=-60, le=0)
     number_format: Literal["plain", "grouped_comma", "grouped_space"] = "grouped_comma"
     attached_values: bool = False

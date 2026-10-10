@@ -136,7 +136,7 @@
       silences: social ? "brief" : "story_driven",
       music: "postproduction",
       music_style: social ? "tension" : "neutral",
-      music_gain_db: -18,
+      music_gain_db: -12,
       ambience_gain_db: -34,
       number_format: "grouped_comma",
       attached_values: profile?.attached_values ?? false,
@@ -364,6 +364,7 @@
                 <option value="warm">Chaleureuse</option><option value="playful">Ludique</option>
                 <option value="energetic">Énergique</option><option value="horror">Inquiétante</option>
               </select></label>
+              <label>Volume musical (dB)<input type="number" min="-60" max="0" bind:value={profile.music_gain_db} /></label>
               <label>Format des nombres<select bind:value={profile.number_format}>
                 <option value="grouped_comma">12,349</option>
                 <option value="grouped_space">12 349</option>

@@ -45,6 +45,9 @@
     ["riser", "Montée de tension"],
     ["door", "Porte"],
     ["footstep", "Pas"],
+    ["pop", "Pop bref"],
+    ["boing", "Rebond comique"],
+    ["scratch", "Arrêt comique"],
   ];
   onMount(() => dialog.showModal());
   async function persist() {
@@ -97,7 +100,7 @@
             effect: "click",
             shot_index: 0,
             at_sec: 0,
-            gain_db: -24,
+            gain_db: -18,
             asset_id: asset.id,
           },
         ];
@@ -115,7 +118,7 @@
         effect: "click",
         shot_index: 0,
         at_sec: 0.2,
-        gain_db: -24,
+        gain_db: -18,
         asset_id: null,
       },
     ];
@@ -148,7 +151,8 @@
           ></label
         >
         <p class="hint">
-          Composition instrumentale discrète, synthétisée localement. Vous
+          Fond instrumental synthétisé localement. Les styles ludique, tension
+          et énergique incluent un rythme. Vous
           pouvez importer une autre musique.
         </p>
         <label
@@ -194,6 +198,8 @@
           ><input type="checkbox" bind:checked={draft.ducking} />Baisser
           automatiquement la musique pendant les voix</label
         >
+        <p class="hint">Point de départ conseillé : musique à -12 dB, puis
+          ajuster à l'écoute. Elle baisse pendant les voix sans disparaître.</p>
       </fieldset>
       <fieldset class="stack">
         <legend>Ambiance supplémentaire</legend><label
@@ -224,6 +230,9 @@
             >Ajouter un bruitage</button
           >
         </div>
+        <p class="hint">Placez les accents sur une chute, une surprise, une
+          notification ou un retournement. Un rebond comique ou un arrêt bref
+          suffit ; évitez de ponctuer chaque cut.</p>
         <label
           >Importer un bruitage<input
             type="file"

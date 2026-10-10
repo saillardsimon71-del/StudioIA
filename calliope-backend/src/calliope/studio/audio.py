@@ -16,19 +16,23 @@ from calliope.studio import service
 from calliope.studio.pacing import quantize
 
 MUSIC = ("none", "neutral", "tension", "warm", "playful", "energetic", "horror")
-EFFECTS = ("click", "beep", "impact", "boom", "whoosh", "riser", "door", "footstep")
+EFFECTS = (
+    "click", "beep", "impact", "boom", "whoosh", "riser", "door", "footstep",
+    "pop", "boing", "scratch",
+)
 AMBIENCE = ("none", "room", "wind", "rain", "cafe", "night", "city", "forest")
 
 
 class Cue(BaseModel):
     model_config = ConfigDict(extra="forbid")
     effect: Literal[
-        "click", "beep", "impact", "boom", "whoosh", "riser", "door", "footstep"
+        "click", "beep", "impact", "boom", "whoosh", "riser", "door", "footstep",
+        "pop", "boing", "scratch",
     ] = "click"
     shot_index: int = Field(default=0, ge=0, le=1000)
     shot_id: int | None = Field(default=None, gt=0)
     at_sec: float = Field(default=0, ge=0, le=120)
-    gain_db: float = Field(default=-24, ge=-60, le=0)
+    gain_db: float = Field(default=-18, ge=-60, le=0)
     asset_id: int | None = None
 
 
@@ -50,7 +54,7 @@ class AudioSettings(BaseModel):
     music: Literal["none", "neutral", "tension", "warm", "playful", "energetic", "horror"] = (
         "neutral"
     )
-    music_gain_db: float = Field(default=-28, ge=-60, le=0)
+    music_gain_db: float = Field(default=-12, ge=-60, le=0)
     voice_gain_db: float = Field(default=-5, ge=-24, le=6)
     tempo: int = Field(default=72, ge=40, le=160)
     ducking: bool = True
@@ -216,6 +220,8 @@ def render_stems(config, durations, directory):
             "horror": ([40, 39, 40, 38], [0, 1, 7]),
         }[preset]
         beat = 60 / config.get("tempo", 72)
+        rhythm = preset in ("tension", "playful", "energetic")
+        percussion_rng = random.Random(31415)
         for index in range(frames):
             t = index / rate
             chord_index = int(t / (beat * 4)) % 4
@@ -228,15 +234,35 @@ def render_stems(config, durations, directory):
                 )
                 / 3
             )
-            pulse_time = t % (beat * 2)
-            note = root + intervals[int(t / (beat * 2)) % len(intervals)] + 12
-            pulse = math.sin(2 * math.pi * (440 * 2 ** ((note - 69) / 12)) * t) * math.exp(
-                -pulse_time * 4
-            )
+            pulse_time = t % (beat / 2 if rhythm else beat)
+            note = root + intervals[int(t / (beat / 2 if rhythm else beat)) % 3] + 12
+            frequency = 440 * 2 ** ((note - 69) / 12)
+            pulse = (
+                math.sin(2 * math.pi * frequency * pulse_time)
+                + 0.25 * math.sin(4 * math.pi * frequency * pulse_time)
+            ) * math.exp(-pulse_time * 9) * min(1, pulse_time / 0.005)
+            percussion, bass = 0.0, 0.0
+            if rhythm:
+                beat_time = t % beat
+                bass_frequency = 440 * 2 ** ((root - 12 - 69) / 12)
+                bass = math.sin(2 * math.pi * bass_frequency * beat_time) * math.exp(
+                    -beat_time * 5
+                ) * min(1, beat_time / 0.005)
+                kick_time = t % (beat * 2 if preset == "tension" else beat)
+                kick = math.sin(2 * math.pi * (
+                    45 * kick_time + 1.5 * (1 - math.exp(-kick_time * 35))
+                )) * math.exp(-kick_time * 25)
+                noise = percussion_rng.uniform(-1, 1)
+                hat_time = t % (beat / 2)
+                hat = noise * math.exp(-hat_time * 90)
+                snare_time = (t - beat) % (beat * 2)
+                snare = noise * math.exp(-snare_time * 35)
+                percussion = kick * 0.065 + hat * 0.045 + snare * 0.04
             envelope = min(1, t / 1.2, (total - t) / 1.5)
-            music[index] = (pad * (0.1 + 0.03 * math.sin(phase * math.pi)) + pulse * 0.05) * max(
-                0, envelope
-            )
+            music[index] = (
+                pad * (0.035 + 0.01 * math.sin(phase * math.pi))
+                + pulse * 0.09 + bass * 0.06 + percussion
+            ) * max(0, envelope)
     rng = random.Random(2718)
     ambience = config.get("ambience", "none")
     gain = 10 ** (config.get("ambience_gain_db", -38) / 20)
@@ -305,9 +331,13 @@ def render_stems(config, durations, directory):
             "door": 0.65,
             "boom": 0.9,
             "riser": 2.2,
+            "pop": 0.1,
+            "boing": 0.42,
+            "scratch": 0.45,
         }[effect]
         scale = 10 ** (cue["gain_db"] / 20)
-        for index in range(min(int(length * rate), max(0, frames - int(start * rate)))):
+        cue_samples = array.array("f")
+        for index in range(int(length * rate)):
             t = index / rate
             noise = rng.uniform(-1, 1)
             if effect == "beep":
@@ -320,11 +350,26 @@ def render_stems(config, durations, directory):
                 value = (noise * 0.25 + sweep * 0.3) * (t / length) ** 1.5
             elif effect == "boom":
                 value = (math.sin(2 * math.pi * 48 * t) * 0.7 + noise * 0.3) * math.exp(-t * 7)
+            elif effect == "pop":
+                value = math.sin(2 * math.pi * (700 * t - 2500 * t * t)) * math.exp(-t * 45)
+            elif effect == "boing":
+                value = math.sin(2 * math.pi * 180 * t + 9 * math.sin(2 * math.pi * 10 * t))
+                value *= math.exp(-t * 7) * min(1, t / 0.002)
+            elif effect == "scratch":
+                value = (noise * 0.6 + math.sin(2 * math.pi * (450 * t + 1600 * t * t)) * 0.4)
+                value *= math.sin(math.pi * t / length) * (
+                    0.6 + 0.4 * math.sin(2 * math.pi * 18 * t)
+                )
             elif effect in ("impact", "door", "footstep"):
                 value = (math.sin(2 * math.pi * 65 * t) * 0.5 + noise * 0.2) * math.exp(-t * 14)
             else:
                 value = noise * math.exp(-t * 70) * 0.5
-            effects[int(start * rate) + index] += value * scale
+            cue_samples.append(value)
+        # A cue's gain uses a consistent -1 dBFS source peak, independently of ambience.
+        peak = max(abs(value) for value in cue_samples)
+        scale *= 10 ** (-1 / 20) / peak
+        for index in range(min(len(cue_samples), max(0, frames - int(start * rate)))):
+            effects[int(start * rate) + index] += cue_samples[index] * scale
     for hold in config.get("holds", []):
         # Silence volontaire : musique et fond sonore s'effacent avec de courtes
         # rampes ; les voix (piste native des prises) ne sont jamais touchées.
@@ -351,8 +396,8 @@ def render_stems(config, durations, directory):
     music_path, fx_path = Path(directory) / "music.wav", Path(directory) / "effects.wav"
     rms = math.sqrt(sum(value * value for value in music) / max(1, len(music)))
     if rms > 0:
-        gain = min(10 ** (-14 / 20) / rms, 0.9 / max(abs(value) for value in music))
-        music = array.array("f", (value * gain for value in music))
+        gain = 10 ** (-14 / 20) / rms
+        music = array.array("f", (0.9 * math.tanh(value * gain / 0.9) for value in music))
     _write_wave(music_path, music, rate)
     _write_wave(fx_path, effects, rate)
     return music_path, fx_path
@@ -414,12 +459,12 @@ def mix_command(base, source, config, durations, directory, ready):
     filters = [
         f"[0:a]volume={config.get('voice_gain_db', -5)}dB,asplit=2[voice][key]",
         f"[1:a]aresample=48000,atrim=duration={total:.9f},asetpts=PTS-STARTPTS,"
-        f"volume={config.get('music_gain_db', -28)}dB,afade=t=in:d=1,"
+        f"volume={config.get('music_gain_db', -12)}dB,afade=t=in:d=1,"
         f"afade=t=out:st={max(0, total - 1.5):.9f}:d=1.5{imported_holds}[bed]",
     ]
     if config.get("ducking", True):
         filters.append(
-            "[bed][key]sidechaincompress=threshold=0.015:ratio=6:attack=15:release=350[ducked]"
+            "[bed][key]sidechaincompress=threshold=0.03:ratio=4:attack=15:release=250:mix=0.65[ducked]"
         )
     else:
         filters.extend(["[key]anullsink", "[bed]anull[ducked]"])

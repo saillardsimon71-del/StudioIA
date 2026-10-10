@@ -681,8 +681,8 @@ async def test_ducking_lowers_the_bed_under_voices(tmp_path):
     ducked_free = audio_rms(ducked, 2.5, 1.2, lowpass=700)
     plain_free = audio_rms(plain, 2.5, 1.2, lowpass=700)
     assert ducked_free == pytest.approx(plain_free, rel=0.15)
-    # La voix domine toujours le mix : musique et SFX ne masquent jamais les voix.
-    assert audio_rms(ducked, 0.4, 1.2) > ducked_voice * 8
+    # La voix domine le mix, avec un lit désormais audible (au moins 12 dB d'écart).
+    assert audio_rms(ducked, 0.4, 1.2) > ducked_voice * 4
 
 
 # ---------------------------------------------------------------- production
