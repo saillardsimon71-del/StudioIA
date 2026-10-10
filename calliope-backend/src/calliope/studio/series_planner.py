@@ -68,8 +68,8 @@ Open with an immediate visual hook, develop one coherent event, end with a
 revelation or compelling next question. No padding, no unexplained location jumps.
 The target duration is a real format constraint: the story must carry about
 target_seconds of USEFUL screen time, no more, no less. Write the story FIRST,
-then cut it into shots. The number of shots is FREE (usually 10 to 30). Each
-shot lasts ONLY the time its line, action or reaction honestly needs, then ends
+then cut it into shots. The number of shots is FREE; there is no shot-count
+target. Each shot lasts ONLY the time its exchange, action or reaction needs, then ends
 as soon as its beat is over: a quick reaction is 1.5-2.5 s, a spoken line is
 2-6 s, a movement or suspense beat is 3-8 s. Give duration_sec one decimal,
 for example 1.6, 3.4, 2.1 or 4.8, and vary it: never quantize the episode into
@@ -77,12 +77,24 @@ identical blocks. Never stretch a shot to fill time; the edit trims any dead
 footage by itself, so script ZERO dead time. A shot beyond 8 s needs a strong
 reason, never exceed 15 s.
 Alternate story actions and short dialogue; each shot must advance the story.
+Build conversations as shared compositions, not one isolated portrait per reply.
+For a short question and answer in the same location, keep both characters in
+one continuous shot by default; cut only when a new visual beat benefits from it.
+The responder and listener stay visible together, with matching eyelines and
+immediate reactions. A close framing can still include both characters.
 One continuous shot may contain several speakers taking turns, with immediate
 reactions in the same composition. Use dialogue_turns for an ordered exchange;
 each turn has one speaker key and exact plain text, plus optional action/reaction.
 No overlapping speech. Cut for a reveal, reaction or stronger composition, never
 just because the speaker changes. Prefer simple two-shots for a short exchange.
-List every speaking character in character_keys and in the still composition.
+List every speaking AND listening character in character_keys and in the still
+composition. Also declare listener_keys for silent participants in the exchange.
+Do not omit a conversation partner simply because they are not speaking yet.
+Example of ONE SHOT containing an exchange (adapt to the actual series):
+character_keys=["character_a","character_b"], dialogue_turns=[
+{"speaker":"character_a","text":"Did you sell it?","reaction":"B looks unimpressed."},
+{"speaker":"character_b","text":"It was a good deal.","reaction":"A stares in disbelief."}].
+Both characters are present in image_prompt; duration covers the whole exchange.
 When no one speaks, use speaker="", dialogue="" and dialogue_turns=[].
 Never invent an unidentified Registry, scanner or UI voice. A system notification
 without a visible speaking character is a visual event with a chime or effect,
@@ -125,8 +137,9 @@ Return ONLY JSON with these fields:
 "attached_value":null,"label_key":"stable label key shared by variants or empty"}}],
 "scenes":[{"heading":"scene title","action":"action","dialog":"full scene dialogue",
 "shots":[{"description":"story beat","prompt":"visual motion and native sound",
-"image_prompt":"still composition matching motion prompt", "dialogue":"plain speech",
-"speaker":"character key or empty", "character_keys":["key"], "location_key":"key or empty",
+"image_prompt":"still composition including speakers and listeners",
+"character_keys":["key"], "listener_keys":["silent conversation partner key"],
+"location_key":"key or empty",
 "reference_key":"composition key", "duration_sec":3.4, "audio_mode":"native",
 "dialogue_turns":[{"speaker":"character key","text":"plain speech",
 "action":"optional gesture","reaction":"optional reaction after this turn"}],
@@ -597,12 +610,20 @@ def normalize_plan(result, context):
             speaking_keys = (
                 [t["speaker"] for t in turns] if turns else [speaker] if dialogue else []
             )
-            missing_keys = [key for key in dict.fromkeys(speaking_keys) if key not in keys]
+            listeners = shot.get("listener_keys") or []
+            if not isinstance(listeners, list):
+                raise ValueError("Les personnages qui écoutent doivent être une liste de clés.")
+            listeners = [canonical_key(key, all_entities, "character") for key in listeners]
+            if any(key not in characters for key in listeners):
+                raise ValueError("Un personnage qui écoute est inconnu dans cette série.")
+            shot["listener_keys"] = listeners
+            missing_keys = [key for key in dict.fromkeys(speaking_keys + listeners) if key not in keys]
             if missing_keys:
                 keys.extend(missing_keys)
                 names = {e["key"]: e.get("name") or e["key"] for e in all_entities}
+                participants = "speaking and listening" if listeners else "speaking"
                 direction = (
-                    " Keep these speaking characters visibly in the frame throughout the "
+                    f" Keep these {participants} characters visibly in the frame throughout the "
                     f"continuous shot: {', '.join(names[key] for key in missing_keys)}. "
                     "Use a composition that includes every speaking character; no offscreen speech."
                 )

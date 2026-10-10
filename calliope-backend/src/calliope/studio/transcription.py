@@ -241,6 +241,27 @@ def assess_transcript(expected, transcript):
     actual_words = _tokens(transcript.get("text"))
     if not actual_words:
         return {"status": "missing", "reason": "Réplique attendue absente du transcript fiable."}
+    occurrences = len(actual_words) // len(expected_words)
+    if len(expected_words) >= 3 and occurrences > 1 and actual_words == expected_words * occurrences:
+        timed = []
+        for segment in transcript.get("segments") or []:
+            for word in segment.get("words") or []:
+                timed.extend((token, word) for token in _tokens(word["word"]))
+        if [token for token, _ in timed] == actual_words:
+            first = [word for _, word in timed[:len(expected_words)]]
+            following = timed[len(expected_words)][1]
+            times = [word.get(key) for word in first for key in ("start", "end")]
+            limit = following.get("start")
+            if all(isinstance(t, (int, float)) and math.isfinite(t) and t >= 0
+                   for t in times + [limit]):
+                start, end = min(times[::2]), max(times[1::2])
+                if start < end <= limit and all(w["start"] <= w["end"] for w in first):
+                    return {
+                        "status": "ok", "reason": "Répétition finale supprimable au montage.",
+                        "voice": [[start, end]], "trim_end_limit_sec": limit,
+                        "repeated_occurrences": occurrences,
+                    }
+        return {"status": "extra", "reason": "Réplique répétée sans coupe temporelle fiable."}
     wanted, wanted_spans = _comparison_tokens(expected_words)
     heard, heard_spans = _comparison_tokens(actual_words)
     matcher = SequenceMatcher(None, wanted, heard, autojunk=False)

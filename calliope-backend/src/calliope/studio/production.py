@@ -461,9 +461,9 @@ async def assess_take(shot):
         verdict["turns"] = turns.get("turns", [])
         if turns["status"] == "missing":
             verdict.update(status="missing", reason=turns["reason"])
-    verdict["voice"] = (
+    verdict.setdefault("voice", (
         transcript.get("speech_intervals") if transcript.get("status") == "ok" else None
-    )
+    ))
     metadata["dialogue_qc"] = verdict
     if verdict["status"] == "extra":
         with service.database() as conn:
@@ -487,7 +487,7 @@ async def assess_take(shot):
     return verdict
 
 
-def trim_take(shot, voice=None):
+def trim_take(shot, voice=None, end_limit=None):
     """Calcule et enregistre la fenêtre utile d'une prise conservée.
 
     Une prise déjà à la bonne taille n'a aucun point à enregistrer ; le montage
@@ -504,6 +504,8 @@ def trim_take(shot, voice=None):
     if shot["audio_mode"] == "native" and shot["dialogue"].strip() and not voice:
         return
     start, end = pacing.useful_window(shot["duration_sec"], probe, voice)
+    if end_limit is not None:
+        end = min(end, pacing.floor_grid(end_limit))
     if start <= 1e-9 and end >= probe - 1e-9:
         return
     with service.database() as conn:
@@ -698,7 +700,7 @@ async def render_shot(job, initial, should_stop):
         verdict = await assess_take(shot)
         if verdict and verdict["status"] in ("missing", "extra", "inaudible"):
             raise ValueError(f"Plan {shot['id']} bloqué après une relance : {verdict['reason']}")
-    trim_take(shot, (verdict or {}).get("voice"))
+    trim_take(shot, (verdict or {}).get("voice"), (verdict or {}).get("trim_end_limit_sec"))
     if should_stop():
         raise asyncio.CancelledError()
     if queue_manager.is_cancelled(job["id"]):
@@ -719,20 +721,27 @@ async def render_shot(job, initial, should_stop):
 
 async def render_videos(job, shots, should_stop):
     semaphore = asyncio.Semaphore(settings.studio_video_concurrency)
+    aborted = asyncio.Event()
     tasks = []
 
     async def render(index, shot):
         if shot["continue_from_previous"] and index:
             await tasks[index - 1]
         async with semaphore:
-            await checkpoint(
-                job,
-                "video",
-                0.33 + index / len(shots) * 0.55,
-                f"FastH3 : plan {index + 1}/{len(shots)}",
-                should_stop,
-            )
-            await render_shot(job, shot, should_stop)
+            if aborted.is_set():
+                return
+            try:
+                await checkpoint(
+                    job,
+                    "video",
+                    0.33 + index / len(shots) * 0.55,
+                    f"FastH3 : plan {index + 1}/{len(shots)}",
+                    should_stop,
+                )
+                await render_shot(job, shot, should_stop)
+            except BaseException:
+                aborted.set()
+                raise
 
     for index, shot in enumerate(shots):
         tasks.append(asyncio.create_task(render(index, shot)))
@@ -848,6 +857,10 @@ async def run_production(job, payload, should_stop):
             conn.commit()
         return outputs
     except ProductionPausedError:
+        with service.database() as conn:
+            conn.execute("UPDATE studio_productions SET status='paused' WHERE project_id=?",
+                         (project_id,))
+            conn.commit()
         return []
     except Exception as exc:
         with service.database() as conn:
