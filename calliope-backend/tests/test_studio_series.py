@@ -154,7 +154,11 @@ def test_automatic_production_exports_and_next_episode_uses_only_own_history(
     async def image(request):
         return service.normalized_image(png_bytes())
 
+    async def assess(shot):
+        return {"status": "ok", "reason": ""}
+
     monkeypatch.setattr(production, "plan_episode", plan)
+    monkeypatch.setattr(production, "assess_take", assess)
     monkeypatch.setattr(service, "_generate_image", image)
     content = video_bytes(tmp_path, audio=True)
 
@@ -326,6 +330,9 @@ def test_production_resumes_original_modal_call_without_another_take(client, mon
     async def image(request):
         return service.normalized_image(png_bytes())
 
+    async def assess(shot):
+        return {"status": "ok", "reason": ""}
+
     calls = []
     content = video_bytes(tmp_path, audio=True)
 
@@ -340,6 +347,7 @@ def test_production_resumes_original_modal_call_without_another_take(client, mon
         raise RuntimeError("Temporary polling failure")
 
     monkeypatch.setattr(production, "plan_episode", plan)
+    monkeypatch.setattr(production, "assess_take", assess)
     monkeypatch.setattr(service, "_generate_image", image)
     monkeypatch.setattr(ModalH3Engine, "spawn", spawn)
     monkeypatch.setattr(ModalH3Engine, "poll", interrupted)

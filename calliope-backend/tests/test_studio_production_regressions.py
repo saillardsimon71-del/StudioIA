@@ -168,3 +168,52 @@ def test_pause_prevents_the_next_shot_from_overwriting_paused_state(client, monk
         assert state['message'] == 'Review the real video.'
     finally:
         queue_manager.paused = previous
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,approved,needs_listening", [
+    ("unknown", False, True), ("unknown", True, False), ("ok", False, False),
+])
+async def test_uncertain_audio_requires_listening_without_automatic_gpu_retry(
+    client, monkeypatch, status, approved, needs_listening
+):
+    previous = queue_manager.paused
+    queue_manager.paused = True
+    monkeypatch.setattr(settings, 'dry_run', False)
+    monkeypatch.setattr(settings, 'llm_base_url', 'http://localhost:9001/v1')
+    monkeypatch.setattr(settings, 'studio_image_base_url', 'http://localhost:9002/v1')
+    try:
+        created = episode(client, series(client)['id']).json()
+        production.save_episode_plan(created['project_id'], planned_episode({}))
+        shot = service.board(created['project_id'])['scenes'][0]['shots'][0]
+        shot.update(approved=approved, selected_video_id=242,
+                    takes=[{'id': 242, 'engine': 'import'}])
+        decisions = []
+        monkeypatch.setattr(production, 'load_shot', lambda identifier: shot)
+        monkeypatch.setattr(queue_manager, 'is_cancelled', lambda identifier: False)
+        monkeypatch.setattr(production, 'trim_take', lambda *args: None)
+        monkeypatch.setattr(service, 'approve_shot', lambda *args: decisions.append(args))
+
+        async def assess(value):
+            return {'status': status, 'reason': 'Transcription incertaine ou aucune parole reconnue.',
+                    'voice': None}
+
+        async def generate(*args, **kwargs):
+            pytest.fail('Une transcription incertaine ne doit pas déclencher de rendu GPU.')
+
+        monkeypatch.setattr(production, 'assess_take', assess)
+        monkeypatch.setattr(production, 'generate_take', generate)
+        job = queue_manager.get_job(created['job_id'])
+        if needs_listening:
+            with pytest.raises(production.ProductionPausedError):
+                await production.render_shot(job, shot, lambda: False)
+            assert decisions == []
+            state = service.board(created['project_id'])['production']
+            assert state['status'] == 'paused'
+            assert 'écoutez' in state['message']
+            assert 'incertain' in state['message']
+        else:
+            await production.render_shot(job, shot, lambda: False)
+            assert decisions == [(shot['id'], True)]
+    finally:
+        queue_manager.paused = previous

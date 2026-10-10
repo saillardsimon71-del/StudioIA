@@ -763,12 +763,21 @@ def test_a_good_take_is_approved_without_rerender_and_trimmed_usefully(
     client, monkeypatch, tmp_path
 ):
     from calliope.studio import service
+    from calliope.studio.series_planner import OUTRO_DIALOGUES
+
+    transcripts = iter([
+        ('Un deux trois.', [[0.1, 1.5]]),
+        (OUTRO_DIALOGUES['en'], [[0.1, 7.8]]),
+    ])
+
+    def transcribe(*args):
+        text, intervals = next(transcripts)
+        return {'status': 'ok', 'text': text, 'segments': [],
+                'speech_intervals': intervals, 'reason': ''}
+
     monkeypatch.setattr(
         'calliope.studio.transcription.transcribe_dialogue',
-        lambda *args: {
-            'status': 'ok', 'text': 'Un deux trois.', 'segments': [],
-            'speech_intervals': [[0.1, 1.5]], 'reason': '',
-        },
+        transcribe,
     )
 
     clip = make_clip(tmp_path / "bonne prise.mp4", 5.1667, tone_windows=[(0.1, 1.5)])

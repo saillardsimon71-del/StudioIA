@@ -705,6 +705,15 @@ async def render_shot(job, initial, should_stop):
         raise asyncio.CancelledError()
     if queue_manager.is_cancelled(job["id"]):
         raise ProductionPausedError()
+    if verdict and verdict["status"] == "unknown" and not shot["approved"]:
+        with service.database() as conn:
+            conn.execute(
+                "UPDATE studio_productions SET status='paused',message=? WHERE project_id=?",
+                ("Contrôle parole incertain : écoutez la vidéo, puis approuvez le plan "
+                 "si le son est correct, ou régénérez cette prise.", job["project_id"]),
+            )
+            conn.commit()
+        raise ProductionPausedError()
     try:
         service.approve_shot(shot["id"], True)
     except service.HTTPException as exc:
