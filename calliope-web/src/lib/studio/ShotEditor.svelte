@@ -29,7 +29,7 @@
 	$effect(() => {
 		if (initializedId === shot.id) return;
 		initializedId = shot.id;
-		draft = { description: shot.description ?? '', prompt: shot.prompt ?? '', image_prompt: shot.image_prompt ?? '', dialogue: shot.dialogue ?? '', dialogue_turns: structuredClone(shot.dialogue_turns ?? []), soundscape: shot.soundscape ?? '', screen_text: structuredClone(shot.screen_text ?? []), duration_sec: shot.duration_sec, audio_mode: shot.audio_mode, continue_from_previous: shot.continue_from_previous ?? false };
+		draft = { description: shot.description ?? '', prompt: shot.prompt ?? '', image_prompt: shot.image_prompt ?? '', dialogue: shot.dialogue ?? '', dialogue_turns: $state.snapshot(shot.dialogue_turns ?? []), soundscape: shot.soundscape ?? '', screen_text: $state.snapshot(shot.screen_text ?? []), duration_sec: shot.duration_sec, audio_mode: shot.audio_mode, continue_from_previous: shot.continue_from_previous ?? false };
 		saved = JSON.stringify(draft);
 		error = ''; message = '';
 	});
