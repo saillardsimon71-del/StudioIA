@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import re
 
 import pytest
 
@@ -214,5 +215,8 @@ def test_each_episode_gets_a_fruit_outro_in_its_language(monkeypatch, language, 
     host = next(e for e in result["entities"] if e["key"] == "studio_cta_host")
     assert "apple" in host["description"].lower()
     compiled = compile_h3_prompt(shot, context | {"entities": result["entities"]})
-    assert f"<d>[{label}] {dialogue}</d>" in compiled
+    spoken = re.findall(r"<d>\[([^\]]+)\]\s*(.*?)</d>", compiled)
+    assert len(spoken) == 2
+    assert all(turn_language == label for turn_language, _ in spoken)
+    assert "".join("".join(text for _, text in spoken).split()) == "".join(dialogue.split())
     assert "<d>" not in shot["dialogue"]

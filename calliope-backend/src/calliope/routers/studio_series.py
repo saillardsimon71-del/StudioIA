@@ -224,6 +224,15 @@ async def pause(project_id: int):
     return series.pause(project_id)
 
 
+class ProductionMode(BaseModel):
+    mode: Literal["automatic", "manual"]
+
+
+@router.patch("/projects/{project_id}/production/mode")
+async def production_mode(project_id: int, payload: ProductionMode):
+    return series.set_production_mode(project_id, payload.mode)
+
+
 @router.post("/projects/{project_id}/production/resume")
 async def resume(project_id: int):
     return series.resume(project_id)

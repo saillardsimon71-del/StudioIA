@@ -23,10 +23,19 @@ class DirectingProfile(BaseModel):
     number_format: Literal["plain", "grouped_comma", "grouped_space"] = "grouped_comma"
     attached_values: bool = False
     require_reference_approval: bool = False
+    production_mode: Literal["automatic", "manual"] = "automatic"
+    transitions: Literal["cuts", "scene_fades"] = "scene_fades"
 
     @model_validator(mode="before")
     @classmethod
     def preset_defaults(cls, value):
+        if isinstance(value, dict):
+            value = dict(value)
+            value.setdefault(
+                "production_mode",
+                "manual" if value.get("require_reference_approval") else "automatic",
+            )
+            value["require_reference_approval"] = value["production_mode"] == "manual"
         if isinstance(value, dict) and value.get("preset") == "fast_dialogue_social_fiction":
             return {
                 "framing": "close_preferred",
@@ -208,7 +217,10 @@ def compile_h3_prompt(shot, context=None, first_frame=False) -> str:
         for item in entities:
             if item.get("kind", "character") == "character" and item["key"] not in ids:
                 ids[item["key"]] = f"S{len(ids) + 1}"
-        delivery = "brisk conversational" if profile["dialogue_density"] == "brisk" else "natural"
+        outro = shot.get("purpose") == "outro"
+        delivery = (
+            "natural" if outro or profile["dialogue_density"] != "brisk" else "brisk conversational"
+        )
         for index, turn in enumerate(turns, start=1):
             who, identity, _ = _speaker_identity(
                 {"speaker": turn.get("speaker"), "dialogue": turn["text"]}, context
@@ -234,6 +246,11 @@ def compile_h3_prompt(shot, context=None, first_frame=False) -> str:
                         f"After spoken turn {index}, show this visible reaction: {reaction}."
                     )
         parts.append("Only the tagged words below are spoken, in the listed order.")
+        if outro:
+            parts.append(
+                "Each tagged line is spoken exactly once, with clear unhurried articulation. "
+                "After the last line, the host stays silent and holds a welcoming smile."
+            )
         if len(turns) > 1:
             parts.append("The speakers take turns in this order, without overlapping speech.")
         soundscape = "Very faint location ambience beneath the clearly audible dialogue."
@@ -259,7 +276,7 @@ def compile_h3_prompt(shot, context=None, first_frame=False) -> str:
         parts.append(
             "The character reacts immediately through expression or gesture after the beat."
         )
-    if dialogue and profile["active_listening"]:
+    if dialogue and profile["active_listening"] and shot.get("purpose") != "outro":
         parts.append(
             "Any listener follows the speaker with attentive posture and responsive gestures."
         )

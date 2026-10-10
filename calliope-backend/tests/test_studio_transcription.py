@@ -1,8 +1,40 @@
 import copy
+import json
+from pathlib import Path
 
 import pytest
 
 from calliope.studio import transcription
+
+
+def test_real_outro_with_an_inserted_repeated_clause_requires_retry():
+    fixture = json.loads((Path(__file__).parent / "fixtures/outro_take_258_speech.json").read_text(
+        encoding="utf-8"
+    ))
+    verdict = transcription.assess_transcript(fixture["expected"], fixture["transcript"])
+    assert verdict["status"] == "extra"
+    assert "trim_end_limit_sec" not in verdict
+
+
+def test_intentionally_repeated_outro_is_not_rejected():
+    fixture = json.loads((Path(__file__).parent / "fixtures/outro_take_258_speech.json").read_text(
+        encoding="utf-8"
+    ))
+    assert transcription.assess_transcript(
+        fixture["transcript"]["text"], fixture["transcript"]
+    )["status"] == "ok"
+
+
+def test_uncertain_repeated_clause_does_not_establish_invented_speech():
+    fixture = json.loads((Path(__file__).parent / "fixtures/outro_take_258_speech.json").read_text(
+        encoding="utf-8"
+    ))
+    for segment in fixture["transcript"]["segments"]:
+        for word in segment["words"]:
+            word["probability"] = 0.2
+    assert transcription.assess_transcript(
+        fixture["expected"], fixture["transcript"]
+    )["status"] == "unknown"
 
 
 @pytest.mark.parametrize("observed,words", [

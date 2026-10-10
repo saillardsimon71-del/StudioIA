@@ -229,6 +229,7 @@ async def assemble(
         work = Path(temporary)
         elapsed = 0
         overlays = []
+        transitions = []
         for index, (clip, probe, window) in enumerate(zip(clips, probes, windows)):
             trim_start, _ = window
             duration = durations[index]
@@ -251,16 +252,39 @@ async def assemble(
                 overlays.append({"clip_id": clip.get("clip_id"), **overlay_data})
             if not native_audio:
                 command += ["-f", "lavfi", "-i", "anullsrc=cl=stereo:r=48000"]
-            command += [
-                "-map",
-                "0:v:0",
-                "-map",
-                "0:a:0" if native_audio else "1:a:0",
-                "-vf",
+            video_filter = (
                 f"scale={width}:{height}:force_original_aspect_ratio=decrease:"
                 f"force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
                 "setsar=1,fps=24,format=yuv420p,setpts=PTS-STARTPTS"
-                + ("," + overlay_filter if overlay_filter else ""),
+                + ("," + overlay_filter if overlay_filter else "")
+            )
+            fade = (
+                frozen.get("transitions") == "scene_fades" and index > 0
+                and clip.get("scene_id") is not None
+                and clips[index - 1].get("scene_id") != clip["scene_id"]
+                and duration >= 8 / 24
+            )
+            video_map, video_options = "0:v:0", ["-vf", video_filter]
+            if fade:
+                previous_input = 1 if native_audio else 2
+                command += ["-i", str(work / f"segment-{index - 1:06d}.mov")]
+                fade_sec = 4 / 24
+                previous_start = max(0, durations[index - 1] - 1 / 24)
+                video_options = ["-filter_complex_threads", "1", "-filter_complex", (
+                    f"[{previous_input}:v]trim=start={previous_start:.9f},"
+                    "setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=1,"
+                    f"trim=duration={fade_sec:.9f},settb=AVTB[previous];"
+                    f"[0:v]{video_filter},settb=AVTB[current];"
+                    f"[previous][current]xfade=transition=fade:duration={fade_sec:.9f}:offset=0[v]"
+                )]
+                video_map = "[v]"
+                transitions.append({"before_clip_id": clip["clip_id"], "duration_sec": fade_sec})
+            command += [
+                "-map",
+                video_map,
+                "-map",
+                "0:a:0" if native_audio else "1:a:0",
+                *video_options,
                 "-af",
                 "aresample=48000,apad,asetpts=PTS-STARTPTS",
                 "-t",
@@ -362,6 +386,7 @@ async def assemble(
             [round(start, 4), round(end, 4)] for start, end in windows
         ]
         metadata["grid_fps"] = 24
+        metadata["transitions"] = transitions
         if overlays:
             metadata["screen_text"] = overlays
         metadata["audio"] = frozen.get("audio", {"enabled": False})

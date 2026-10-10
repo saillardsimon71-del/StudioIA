@@ -1,0 +1,258 @@
+{
+  "expected": "Toi aussi, tu veux faire des vidéos ? Copie le lien de la vidéo, like, abonne-toi et commente GO !",
+  "transcript": {
+    "status": "ok",
+    "text": "Toi aussi, tu veux faire des vidéos ? Copie le lien de la vidéo, like, abonne-toi et vers les casstroffes. Copie le lien de la vidéo, like, abonne-toi et commente, go !",
+    "segments": [
+      {
+        "start": 0.0,
+        "end": 1.72,
+        "text": " Toi aussi, tu veux faire des vidéos ?",
+        "avg_logprob": -0.3224787394205729,
+        "no_speech_prob": 0.12193729728460312,
+        "compression_ratio": 1.5405405405405406,
+        "words": [
+          {
+            "word": " Toi",
+            "start": 0.0,
+            "end": 0.28,
+            "probability": 0.7477297782897949
+          },
+          {
+            "word": " aussi,",
+            "start": 0.28,
+            "end": 0.52,
+            "probability": 0.9972949624061584
+          },
+          {
+            "word": " tu",
+            "start": 0.58,
+            "end": 0.64,
+            "probability": 0.98816978931427
+          },
+          {
+            "word": " veux",
+            "start": 0.64,
+            "end": 0.74,
+            "probability": 0.990128219127655
+          },
+          {
+            "word": " faire",
+            "start": 0.74,
+            "end": 0.88,
+            "probability": 0.997902512550354
+          },
+          {
+            "word": " des",
+            "start": 0.88,
+            "end": 1.0,
+            "probability": 0.9980427026748657
+          },
+          {
+            "word": " vidéos",
+            "start": 1.0,
+            "end": 1.3,
+            "probability": 0.988997220993042
+          },
+          {
+            "word": " ?",
+            "start": 1.3,
+            "end": 1.72,
+            "probability": 0.6204186677932739
+          }
+        ]
+      },
+      {
+        "start": 1.72,
+        "end": 4.68,
+        "text": " Copie le lien de la vidéo, like, abonne-toi et vers les casstroffes.",
+        "avg_logprob": -0.3224787394205729,
+        "no_speech_prob": 0.12193729728460312,
+        "compression_ratio": 1.5405405405405406,
+        "words": [
+          {
+            "word": " Copie",
+            "start": 1.72,
+            "end": 1.86,
+            "probability": 0.409287691116333
+          },
+          {
+            "word": " le",
+            "start": 1.86,
+            "end": 2.0,
+            "probability": 0.9856910109519958
+          },
+          {
+            "word": " lien",
+            "start": 2.0,
+            "end": 2.14,
+            "probability": 0.994050920009613
+          },
+          {
+            "word": " de",
+            "start": 2.14,
+            "end": 2.26,
+            "probability": 0.9980717301368713
+          },
+          {
+            "word": " la",
+            "start": 2.26,
+            "end": 2.28,
+            "probability": 0.998637855052948
+          },
+          {
+            "word": " vidéo,",
+            "start": 2.28,
+            "end": 2.6,
+            "probability": 0.9931715726852417
+          },
+          {
+            "word": " like,",
+            "start": 2.86,
+            "end": 3.06,
+            "probability": 0.781152069568634
+          },
+          {
+            "word": " abonne",
+            "start": 3.36,
+            "end": 3.44,
+            "probability": 0.9830346703529358
+          },
+          {
+            "word": "-toi",
+            "start": 3.44,
+            "end": 3.62,
+            "probability": 0.8358242809772491
+          },
+          {
+            "word": " et",
+            "start": 3.62,
+            "end": 3.76,
+            "probability": 0.5891212224960327
+          },
+          {
+            "word": " vers",
+            "start": 3.76,
+            "end": 3.88,
+            "probability": 0.47714337706565857
+          },
+          {
+            "word": " les",
+            "start": 3.88,
+            "end": 4.0,
+            "probability": 0.961948037147522
+          },
+          {
+            "word": " casstroffes.",
+            "start": 4.0,
+            "end": 4.68,
+            "probability": 0.5039414286613464
+          }
+        ]
+      },
+      {
+        "start": 4.68,
+        "end": 7.88,
+        "text": " Copie le lien de la vidéo, like, abonne-toi et commente, go !",
+        "avg_logprob": -0.3224787394205729,
+        "no_speech_prob": 0.12193729728460312,
+        "compression_ratio": 1.5405405405405406,
+        "words": [
+          {
+            "word": " Copie",
+            "start": 4.68,
+            "end": 4.82,
+            "probability": 0.9502038657665253
+          },
+          {
+            "word": " le",
+            "start": 4.82,
+            "end": 4.92,
+            "probability": 0.9981961846351624
+          },
+          {
+            "word": " lien",
+            "start": 4.92,
+            "end": 5.1,
+            "probability": 0.9989128112792969
+          },
+          {
+            "word": " de",
+            "start": 5.1,
+            "end": 5.18,
+            "probability": 0.9992495179176331
+          },
+          {
+            "word": " la",
+            "start": 5.18,
+            "end": 5.22,
+            "probability": 0.9995265007019043
+          },
+          {
+            "word": " vidéo,",
+            "start": 5.22,
+            "end": 5.54,
+            "probability": 0.9907463788986206
+          },
+          {
+            "word": " like,",
+            "start": 5.74,
+            "end": 5.98,
+            "probability": 0.9664092063903809
+          },
+          {
+            "word": " abonne",
+            "start": 6.24,
+            "end": 6.38,
+            "probability": 0.997465044260025
+          },
+          {
+            "word": "-toi",
+            "start": 6.38,
+            "end": 6.6,
+            "probability": 0.9709339737892151
+          },
+          {
+            "word": " et",
+            "start": 6.6,
+            "end": 6.86,
+            "probability": 0.6345654129981995
+          },
+          {
+            "word": " commente,",
+            "start": 6.86,
+            "end": 7.5,
+            "probability": 0.5873449295759201
+          },
+          {
+            "word": " go",
+            "start": 7.58,
+            "end": 7.7,
+            "probability": 0.3361395001411438
+          },
+          {
+            "word": " !",
+            "start": 7.7,
+            "end": 7.88,
+            "probability": 0.8109281659126282
+          }
+        ]
+      }
+    ],
+    "speech_intervals": [
+      [
+        0.0,
+        1.72
+      ],
+      [
+        1.72,
+        4.68
+      ],
+      [
+        4.68,
+        7.88
+      ]
+    ],
+    "reason": ""
+  }
+}

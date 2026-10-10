@@ -86,6 +86,32 @@ def test_inspect_media_reports_real_video_and_audio(export_module, media):
     assert result["duration_sec"] == 0.75
 
 
+@pytest.mark.parametrize("same_scene", [False, True])
+async def test_scene_fade_preserves_duration_and_voice_start(
+    export_module, media, tmp_path, same_scene
+):
+    native, silent = media
+    snapshot = snapshot_for((silent, 0.75, "silent"), (native, 1.25, "native"))
+    snapshot["transitions"] = "scene_fades"
+    snapshot["clips"][0]["scene_id"] = 1
+    snapshot["clips"][1]["scene_id"] = 1 if same_scene else 2
+    destination = tmp_path / "transition.mp4"
+    result = await export_module.assemble(snapshot, destination)
+    assert result["duration_sec"] == pytest.approx(2.0, abs=0.05)
+    assert audio_rms(destination, 0.77, 0.08) > 1000
+    pixel = subprocess.run([
+        "ffmpeg", "-v", "error", "-ss", str(0.75 + 1 / 24), "-i", str(destination),
+        "-frames:v", "1", "-vf", "crop=2:2:iw/2:ih/2", "-pix_fmt", "rgb24",
+        "-f", "rawvideo", "pipe:1",
+    ], check=True, capture_output=True).stdout
+    if same_scene:
+        assert pixel[0] < 30 and pixel[2] > 200
+        assert result["transitions"] == []
+    else:
+        assert pixel[0] > 30 and pixel[2] > 30
+        assert result["transitions"] == [{"before_clip_id": 2, "duration_sec": 4 / 24}]
+
+
 def test_inspect_media_prefers_video_duration(export_module, media, tmp_path):
     native, _ = media
     destination = tmp_path / "long_audio.mp4"

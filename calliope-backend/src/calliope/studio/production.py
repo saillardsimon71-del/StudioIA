@@ -666,7 +666,7 @@ def load_shot(shot_id):
 
 
 async def render_shot(job, initial, should_stop):
-    from calliope.studio.h3_prompt import compile_h3_prompt
+    from calliope.studio.h3_prompt import compile_h3_prompt, directing_profile
 
     if should_stop():
         raise asyncio.CancelledError()
@@ -674,9 +674,14 @@ async def render_shot(job, initial, should_stop):
         raise ProductionPausedError()
     shot = load_shot(initial["id"])
     chosen = selected_video(shot)
-    if chosen and not shot["approved"] and chosen["engine"] != "import":
+    automatic = not chosen or chosen["engine"] != "import"
+    if automatic:
         with service.database() as conn:
             context = service.shot_context(conn, shot["id"])
+        automatic = (
+            directing_profile(context.get("directing_profile"))["production_mode"] == "automatic"
+        )
+    if chosen and not shot["approved"] and chosen["engine"] != "import":
         expected = compile_h3_prompt(
             shot | context.get("shot", {}),
             context,
@@ -703,11 +708,12 @@ async def render_shot(job, initial, should_stop):
                 conn.commit()
             raise ProductionPausedError() from None
     verdict = await assess_take(shot)
-    if verdict and verdict["status"] in ("missing", "extra", "inaudible"):
+    retry_statuses = {"missing", "extra", "inaudible"} | ({"unknown"} if automatic else set())
+    if verdict and verdict["status"] in retry_statuses:
         service.approve_shot(shot["id"], False)
         shot = await generate_take(job, shot, "video", should_stop, attempt=1)
         verdict = await assess_take(shot)
-        if verdict and verdict["status"] in ("missing", "extra", "inaudible"):
+        if verdict and verdict["status"] in retry_statuses:
             raise ValueError(f"Plan {shot['id']} bloqué après une relance : {verdict['reason']}")
     trim_take(shot, (verdict or {}).get("voice"), (verdict or {}).get("trim_end_limit_sec"))
     if should_stop():

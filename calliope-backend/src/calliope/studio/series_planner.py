@@ -316,6 +316,16 @@ def append_outro(plan, context):
     label = dialogue_language(context.get("language"))
     language = next(code for code, name in LANGUAGES.items() if name == label)
     dialogue = OUTRO_DIALOGUES[language]
+    locations = {
+        entity["key"] for entity in context.get("entities", []) + plan["entities"]
+        if entity.get("kind") == "location"
+    }
+    location = next((
+        shot["location_key"] for scene in reversed(plan.get("scenes", []))
+        for shot in reversed(scene.get("shots", []))
+        if shot.get("purpose") != "outro" and shot.get("location_key") in locations
+    ), "")
+    lines = re.split(r"(?<=[?؟？])\s*", dialogue, maxsplit=1)
     if not any(e["key"] == OUTRO_KEY for e in context.get("entities", []) + plan["entities"]):
         plan["entities"].append(
             {
@@ -334,26 +344,30 @@ def append_outro(plan, context):
     shot = {
         "description": "The fruit host invites the viewer to make videos.",
         "prompt": (
-            "A friendly red apple host addresses the viewer in a clean softly lit studio. "
-            "One visible speaker, expressive face, a welcoming hand gesture, "
-            "clear speech, no other character, no text on screen."
+            "The series host turns toward the viewer for a playful private aside in the "
+            "episode's final location. The host leans slightly toward the lens, makes one "
+            "inviting hand gesture and delivers the dialogue clearly. Keep the colorful "
+            "background secondary and the face easy to read. No other character speaks. "
+            "No text on screen."
         ),
         "image_prompt": (
-            "Vertical portrait of a friendly anthropomorphic red apple with green leaf, "
-            "expressive eyes, visible mouth, small arms and navy jacket in a clean studio. "
-            "Medium close-up, the host fills the frame, soft lighting, no text."
+            "Vertical medium close-up of the canonical series host in the episode's "
+            "final location, matching its lighting and visual style. The host faces the "
+            "viewer with a knowing smile, ready for a private aside. The host fills the "
+            "frame; an expressive, colorful background stays softly out of focus. No text."
         ),
         "dialogue": dialogue,
+        "dialogue_turns": [{"speaker": OUTRO_KEY, "text": line} for line in lines if line],
         "speaker": OUTRO_KEY,
         "character_keys": [OUTRO_KEY],
-        "location_key": "",
-        "reference_key": "studio-cta-host-studio",
+        "location_key": location,
+        "reference_key": f"studio-cta-host-{location or 'setting'}",
         "duration_sec": OUTRO_SECONDS,
         "audio_mode": "native",
         "language": language,
         "purpose": "outro",
         "framing": "Medium close-up, visible speaker dominates the vertical frame.",
-        "camera": "Static camera.",
+        "camera": "A gentle purposeful push-in, then steady framing on the host's face.",
         "action": "The host speaks directly to the viewer and gestures invitingly.",
         "reaction": "The host finishes with an enthusiastic smile.",
     }
@@ -617,7 +631,9 @@ def normalize_plan(result, context):
             if any(key not in characters for key in listeners):
                 raise ValueError("Un personnage qui écoute est inconnu dans cette série.")
             shot["listener_keys"] = listeners
-            missing_keys = [key for key in dict.fromkeys(speaking_keys + listeners) if key not in keys]
+            missing_keys = [
+                key for key in dict.fromkeys(speaking_keys + listeners) if key not in keys
+            ]
             if missing_keys:
                 keys.extend(missing_keys)
                 names = {e["key"]: e.get("name") or e["key"] for e in all_entities}

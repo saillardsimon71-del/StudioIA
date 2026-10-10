@@ -1192,7 +1192,8 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
         ).fetchone()
         clips, missing = [], []
         for row in conn.execute(
-            "SELECT c.id,s.heading,c.order_index FROM clips c JOIN scenes s ON s.id=c.scene_id "
+            "SELECT c.id,c.scene_id,s.heading,c.order_index FROM clips c "
+            "JOIN scenes s ON s.id=c.scene_id "
             "WHERE c.project_id=? ORDER BY s.order_index,s.id,c.order_index,c.id",
             (project_id,),
         ):
@@ -1218,6 +1219,7 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
             clips.append(
                 {
                     "clip_id": row["id"],
+                    "scene_id": row["scene_id"],
                     "take_id": take["id"],
                     "path": take["output_path"],
                     "duration_sec": effective.get("duration_sec") or shot["duration_sec"],
@@ -1247,7 +1249,12 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
             "SELECT context_json FROM studio_episodes WHERE project_id=?", (project_id,)
         ).fetchone()
         if episode:
-            snapshot["target_seconds"] = json.loads(episode[0]).get("target_seconds")
+            frozen = json.loads(episode[0])
+            snapshot["target_seconds"] = frozen.get("target_seconds")
+            from calliope.studio.h3_prompt import directing_profile
+            snapshot["transitions"] = directing_profile(
+                frozen.get("directing_profile")
+            )["transitions"]
         from calliope.studio.audio import snapshot_audio
         snapshot["audio"] = snapshot_audio(conn, project_id)
         cur = conn.execute(

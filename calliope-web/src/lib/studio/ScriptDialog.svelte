@@ -49,7 +49,7 @@
   <form onsubmit={save}>
     <div class="dialog-body stack">
       <p class="hint">
-        Un locuteur par plan. Gardez les répliques courtes. Les prises restent
+        Plusieurs personnages peuvent échanger dans un même plan. Les prises restent
         conservées ; les plans modifiés devront être régénérés ou approuvés
         avant le nouvel export.
       </p>

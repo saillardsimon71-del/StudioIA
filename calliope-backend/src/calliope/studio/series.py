@@ -393,6 +393,10 @@ def update_series(series_id, data):
                 )
         if "directing_profile" in data:
             patch = data.pop("directing_profile")
+            if "require_reference_approval" in patch and "production_mode" not in patch:
+                patch["production_mode"] = (
+                    "manual" if patch["require_reference_approval"] else "automatic"
+                )
             base = {} if "preset" in patch else current["directing_profile"]
             profile = directing_profile(base | patch)
             conn.execute(
@@ -591,6 +595,30 @@ def pause(project_id):
     return service.board(project_id)
 
 
+def set_production_mode(project_id, mode):
+    require_editable(project_id)
+    with service.database() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        episode = conn.execute(
+            "SELECT series_id,context_json FROM studio_episodes WHERE project_id=?", (project_id,)
+        ).fetchone()
+        if not episode:
+            raise HTTPException(404, "Épisode de série introuvable.")
+        require_active_project(conn, project_id)
+        current = require_series(conn, episode["series_id"])
+        frozen = json.loads(episode["context_json"])
+        frozen["directing_profile"] = directing_profile(
+            (frozen.get("directing_profile") or {}) | {"production_mode": mode}
+        )
+        profile = directing_profile(current["directing_profile"] | {"production_mode": mode})
+        conn.execute("UPDATE studio_episodes SET context_json=? WHERE project_id=?",
+                     (json.dumps(frozen), project_id))
+        conn.execute("UPDATE studio_series SET directing_profile_json=? WHERE id=?",
+                     (json.dumps(profile), episode["series_id"]))
+        conn.commit()
+    return service.board(project_id)
+
+
 def resume(project_id):
     require_services()
     with service.database() as conn:
@@ -733,8 +761,16 @@ def restart(project_id, request_id):
 
 def episode_meta(conn, project_id):
     row = conn.execute(
-        "SELECT e.series_id,e.number,e.summary,e.ongoing_plot,s.title AS series_title "
+        "SELECT e.series_id,e.number,e.summary,e.ongoing_plot,e.context_json,"
+        "s.title AS series_title "
         "FROM studio_episodes e JOIN studio_series s ON s.id=e.series_id WHERE e.project_id=?",
         (project_id,),
     ).fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    result = dict(row)
+    frozen = json.loads(result.pop("context_json"))
+    result["production_mode"] = directing_profile(
+        frozen.get("directing_profile")
+    )["production_mode"]
+    return result

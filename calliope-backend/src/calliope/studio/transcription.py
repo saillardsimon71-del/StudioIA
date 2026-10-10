@@ -242,7 +242,10 @@ def assess_transcript(expected, transcript):
     if not actual_words:
         return {"status": "missing", "reason": "Réplique attendue absente du transcript fiable."}
     occurrences = len(actual_words) // len(expected_words)
-    if len(expected_words) >= 3 and occurrences > 1 and actual_words == expected_words * occurrences:
+    if (
+        len(expected_words) >= 3 and occurrences > 1
+        and actual_words == expected_words * occurrences
+    ):
         timed = []
         for segment in transcript.get("segments") or []:
             for word in segment.get("words") or []:
@@ -281,6 +284,20 @@ def assess_transcript(expected, transcript):
     elif not word_tokens:
         probabilities = [1] * len(actual_words)
     probabilities = [min(probabilities[start:end]) for start, end in heard_spans]
+    if word_tokens and coverage >= 0.9 and precision < 0.8:
+        for tag, _, _, begin, end in matcher.get_opcodes():
+            if tag != "insert":
+                continue
+            repeated = SequenceMatcher(None, wanted, heard[begin:end], autojunk=False)
+            for block in repeated.get_matching_blocks():
+                if any(
+                    all(probabilities[begin + index] >= 0.8 for index in range(start, start + 4))
+                    for start in range(block.b, block.b + block.size - 3)
+                ):
+                    return {
+                        "status": "extra",
+                        "reason": "Fragment de réplique répété avec des paroles supplémentaires.",
+                    }
     uncertain_changes = 0
     uncertain_gap = False
     number_change = False

@@ -141,6 +141,8 @@
       number_format: "grouped_comma",
       attached_values: profile?.attached_values ?? false,
       require_reference_approval: profile?.require_reference_approval ?? false,
+      production_mode: profile?.production_mode ?? "automatic",
+      transitions: profile?.transitions ?? "scene_fades",
     };
   }
   async function reference(event: Event, entityId: number) {
@@ -370,7 +372,9 @@
             </div>
             <label><input type="checkbox" bind:checked={profile.active_listening} /> Personnages attentifs et réactifs pendant l'écoute</label>
             <label><input type="checkbox" bind:checked={profile.continuity} /> Préserver les directions des regards, les tenues et la lumière</label>
-            <label><input type="checkbox" bind:checked={profile.require_reference_approval} /> Vérifier les références visuelles avant de rendre les vidéos</label>
+            <label>Production<select bind:value={profile.production_mode} onchange={() => { if (profile) profile.require_reference_approval = profile.production_mode === 'manual'; }}><option value="automatic">Automatique jusqu'au MP4</option><option value="manual">Validation manuelle des références et des plans</option></select></label>
+            <p class="hint">En automatique, les plans indépendants peuvent avancer sans attendre votre approbation. Les échecs audio ont une seule relance ; un défaut persistant bloque l'export.</p>
+            <label>Transitions<select bind:value={profile.transitions}><option value="scene_fades">Fondu court aux changements de scène</option><option value="cuts">Coupes franches</option></select></label>
             <label><input type="checkbox" bind:checked={profile.attached_values} /> Afficher les valeurs exactes définies pour les personnages</label>
           </fieldset>
         {/if}

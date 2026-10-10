@@ -142,6 +142,7 @@ export interface Board {
     series_title: string;
     summary: string;
     ongoing_plot: string;
+    production_mode: "automatic" | "manual";
   } | null;
   production?: {
     status: string;
@@ -254,6 +255,8 @@ export interface DirectingProfile {
   number_format: "plain" | "grouped_comma" | "grouped_space";
   attached_values: boolean;
   require_reference_approval: boolean;
+  production_mode: "automatic" | "manual";
+  transitions: "cuts" | "scene_fades";
 }
 
 export interface StudioConfig {
@@ -369,6 +372,8 @@ export const studio = {
     request<Board>(`/projects/${id}/production/pause`, "POST"),
   resumeProduction: (id: number) =>
     request<Board>(`/projects/${id}/production/resume`, "POST"),
+  setProductionMode: (id: number, mode: "automatic" | "manual") =>
+    request<Board>(`/projects/${id}/production/mode`, "PATCH", { mode }),
   restartProduction: (id: number, requestId: string) =>
     request<Board>(`/projects/${id}/production/restart`, "POST", { request_id: requestId }),
   saveAudio: (id: number, payload: Partial<AudioSettings>) =>
