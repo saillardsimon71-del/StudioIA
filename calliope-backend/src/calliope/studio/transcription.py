@@ -89,11 +89,17 @@ _ENGLISH_UNITS = dict(zip(
 _ENGLISH_TENS = dict(zip(
     "twenty thirty forty fifty sixty seventy eighty ninety".split(), range(20, 100, 10),
 ))
+_FRENCH_UNITS = dict(zip(
+    "zero un deux trois quatre cinq six sept huit neuf dix onze douze treize quatorze quinze "
+    "seize".split(), range(17),
+)) | {"une": 1}
+_FRENCH_TENS = dict(zip("vingt trente quarante cinquante soixante".split(), range(20, 70, 10)))
 _NUMBER_WORDS = {
-    "un": "1", "une": "1", "deux": "2", "trois": "3", "quatre": "4", "cinq": "5",
-    "sept": "7", "huit": "8", "neuf": "9", "dix": "10", "onze": "11", "douze": "12",
-    "treize": "13", "quatorze": "14", "quinze": "15", "seize": "16",
-} | {word: str(value) for word, value in (_ENGLISH_UNITS | _ENGLISH_TENS).items()}
+    word: str(value) for word, value in (
+        _FRENCH_UNITS | _FRENCH_TENS | {"cent": 100, "cents": 100, "mille": 1000}
+        | _ENGLISH_UNITS | _ENGLISH_TENS
+    ).items()
+}
 
 
 def _english_number(words, start):
@@ -135,11 +141,89 @@ def _english_number(words, start):
     return value, end
 
 
+def _french_number(words, start):
+    def under_hundred(index):
+        if index >= len(words):
+            return None, index
+        word = words[index]
+        value = _FRENCH_UNITS.get(word, _FRENCH_TENS.get(word))
+        end = index + 1
+        if word == "quatre" and end < len(words) and words[end] in {"vingt", "vingts"}:
+            value = 80
+            end += 1
+        if value is None:
+            return None, index
+        if value not in {10, 20, 30, 40, 50, 60, 80}:
+            return value, end
+        remainder_start = end
+        conjunction = end < len(words) and words[end] == "et"
+        if conjunction:
+            remainder_start += 1
+        remainder = (
+            _FRENCH_UNITS.get(words[remainder_start]) if remainder_start < len(words) else None
+        )
+        if remainder == 10 and remainder_start + 1 < len(words):
+            unit = _FRENCH_UNITS.get(words[remainder_start + 1], 0)
+            if 7 <= unit <= 9:
+                remainder += unit
+                remainder_start += 1
+        if remainder is not None:
+            if conjunction:
+                valid = remainder == 1 or value == 60 and remainder == 11
+            elif value == 10:
+                valid = 7 <= remainder <= 9
+            else:
+                valid = 1 <= remainder <= (19 if value in {60, 80} else 9)
+            if valid:
+                return value + remainder, remainder_start + 1
+        return value, end
+
+    def under_thousand(index):
+        value, end = under_hundred(index)
+        if index < len(words) and words[index] in {"cent", "cents"}:
+            value, end = 100, index + 1
+        elif value is not None and 1 <= value <= 9 and end < len(words) and words[end] in {
+            "cent", "cents",
+        }:
+            value *= 100
+            end += 1
+        else:
+            return value, end
+        remainder, remainder_end = under_hundred(end)
+        if remainder is not None and 1 <= remainder <= 99:
+            value += remainder
+            end = remainder_end
+        return value, end
+
+    value, end = under_thousand(start)
+    if words[start] == "mille":
+        value, end = 1000, start + 1
+    elif value is not None and 1 <= value <= 999 and end < len(words) and words[end] == "mille":
+        value *= 1000
+        end += 1
+    else:
+        return value, end
+    remainder, remainder_end = under_thousand(end)
+    if remainder is not None and 1 <= remainder <= 999:
+        value += remainder
+        end = remainder_end
+    return value, end
+
+
 def _comparison_tokens(words):
     normalized, spans = [], []
     index = 0
     while index < len(words):
         value, end = _english_number(words, index)
+        if value is None:
+            value, end = _french_number(words, index)
+        if words[index].isdigit():
+            digits, end = words[index], index + 1
+            if 1 <= len(digits) <= 3 and not digits.startswith("0"):
+                while end < len(words) and words[end].isdigit() and len(words[end]) == 3:
+                    digits += words[end]
+                    end += 1
+            value = int(digits)
         normalized.append(
             str(value) if value is not None else _NUMBER_WORDS.get(words[index], words[index])
         )
@@ -320,7 +404,13 @@ def assess_transcript(expected, transcript):
             for word in changed_words
         ):
             number_change = True
-            number_ambiguous = number_ambiguous or bool(set(changed_words) & {"un", "une"})
+            number_ambiguous = number_ambiguous or any(
+                stop - start == 1 and words[start] in {"un", "une"}
+                for words, spans in (
+                    (expected_words, wanted_spans[wanted_begin:wanted_end]),
+                    (actual_words, heard_spans[begin:end]),
+                ) for start, stop in spans
+            )
     unknown = {"status": "unknown", "reason": "Mots divergents insuffisamment certains."}
     if number_ambiguous:
         return {"status": "unknown", "reason": "Un/une ambigu dans la comparaison numérique."}

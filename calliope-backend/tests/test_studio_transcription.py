@@ -181,3 +181,47 @@ def test_changed_compound_number_keeps_the_lowest_word_confidence():
     assert transcription.assess_transcript("He has 500 points.", transcript)["status"] == "unknown"
     transcript["segments"][0]["words"][2]["probability"] = 0.98
     assert transcription.assess_transcript("He has 500 points.", transcript)["status"] == "missing"
+
+
+def test_real_french_offer_takes_are_not_rejected_for_numeric_formatting():
+    fixture = json.loads((Path(__file__).parent / "fixtures/shot_147_speech.json").read_text(
+        encoding="utf-8"
+    ))
+    turns = [{"speaker": "citron", "text": fixture["expected"]}]
+    for take in fixture["takes"]:
+        assert transcription.assess_transcript(
+            fixture["expected"], take["transcript"]
+        )["status"] == "ok"
+        assert transcription.assess_turns(turns, take["transcript"])["turns"][0]["coverage"] == 1
+
+
+@pytest.mark.parametrize("expected,observed,status", [
+    ("Je te donne cent mille euros.", "Je te donne 100 000 euros.", "ok"),
+    ("Je te donne 100000 euros.", "Je te donne cent mille euros.", "ok"),
+    ("Je te donne cent mille euros.", "Je te donne cent euros.", "missing"),
+    ("Je te donne cent mille euros.", "Je te donne 100 001 euros.", "missing"),
+    ("Il a deux cents points.", "Il a 200 points.", "ok"),
+    ("Il a mille cinq cent vingt et un points.", "Il a 1521 points.", "ok"),
+    ("Il a soixante et onze points.", "Il a 71 points.", "ok"),
+    ("Il a quatre-vingt-dix-neuf points.", "Il a 99 points.", "ok"),
+    ("Il a quatre-vingts points.", "Il a 80 points.", "ok"),
+    ("Il a vingt et un points.", "Il a 22 points.", "missing"),
+    ("Il a un mille points.", "Il a deux mille points.", "missing"),
+    ("Un deux trois.", "1 2 3.", "ok"),
+])
+def test_french_numbers_compare_by_value_and_keep_real_mismatches(expected, observed, status):
+    transcript = {"status": "ok", "text": observed, "segments": [{"words": [
+        {"word": word, "probability": 0.98} for word in observed.split()
+    ]}]}
+    assert transcription.assess_transcript(expected, transcript)["status"] == status
+
+
+def test_grouped_number_preserves_the_lowest_asr_word_confidence():
+    transcript = {"status": "ok", "text": "Je te donne 100 001 euros.", "segments": [{"words": [
+        {"word": word, "probability": 0.3 if word == "001" else 0.98}
+        for word in "Je te donne 100 001 euros.".split()
+    ]}]}
+    expected = "Je te donne cent mille euros."
+    assert transcription.assess_transcript(expected, transcript)["status"] == "unknown"
+    transcript["segments"][0]["words"][4]["probability"] = 0.98
+    assert transcription.assess_transcript(expected, transcript)["status"] == "missing"

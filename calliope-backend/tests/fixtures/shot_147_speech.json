@@ -1,0 +1,251 @@
+{
+  "expected": "Je te donne cent mille euros. Si tu détruis la vie de ton meilleur ami.",
+  "takes": [
+    {
+      "id": 293,
+      "transcript": {
+        "status": "ok",
+        "text": "Je te donne 100 000 euros si tu détruis la vie de ton meilleur ami.",
+        "segments": [
+          {
+            "start": 0.0,
+            "end": 1.98,
+            "text": " Je te donne 100 000 euros",
+            "avg_logprob": -0.3208087838214377,
+            "no_speech_prob": 0.01729891635477543,
+            "compression_ratio": 0.9577464788732394,
+            "words": [
+              {
+                "word": " Je",
+                "start": 0.0,
+                "end": 0.48,
+                "probability": 0.8185113072395325
+              },
+              {
+                "word": " te",
+                "start": 0.48,
+                "end": 0.66,
+                "probability": 0.997212827205658
+              },
+              {
+                "word": " donne",
+                "start": 0.66,
+                "end": 0.86,
+                "probability": 0.9904574155807495
+              },
+              {
+                "word": " 100",
+                "start": 0.86,
+                "end": 1.14,
+                "probability": 0.8835772275924683
+              },
+              {
+                "word": " 000",
+                "start": 1.14,
+                "end": 1.38,
+                "probability": 0.7566816210746765
+              },
+              {
+                "word": " euros",
+                "start": 1.38,
+                "end": 1.98,
+                "probability": 0.6470183730125427
+              }
+            ]
+          },
+          {
+            "start": 1.98,
+            "end": 4.8,
+            "text": " si tu détruis la vie de ton meilleur ami.",
+            "avg_logprob": -0.3208087838214377,
+            "no_speech_prob": 0.01729891635477543,
+            "compression_ratio": 0.9577464788732394,
+            "words": [
+              {
+                "word": " si",
+                "start": 1.98,
+                "end": 3.02,
+                "probability": 0.7479089498519897
+              },
+              {
+                "word": " tu",
+                "start": 3.02,
+                "end": 3.2,
+                "probability": 0.9992514252662659
+              },
+              {
+                "word": " détruis",
+                "start": 3.2,
+                "end": 3.6,
+                "probability": 0.9451608657836914
+              },
+              {
+                "word": " la",
+                "start": 3.6,
+                "end": 3.7,
+                "probability": 0.9958429932594299
+              },
+              {
+                "word": " vie",
+                "start": 3.7,
+                "end": 3.98,
+                "probability": 0.9996784925460815
+              },
+              {
+                "word": " de",
+                "start": 3.98,
+                "end": 4.1,
+                "probability": 0.9990643858909607
+              },
+              {
+                "word": " ton",
+                "start": 4.1,
+                "end": 4.24,
+                "probability": 0.9977176189422607
+              },
+              {
+                "word": " meilleur",
+                "start": 4.24,
+                "end": 4.52,
+                "probability": 0.9962600469589233
+              },
+              {
+                "word": " ami.",
+                "start": 4.52,
+                "end": 4.8,
+                "probability": 0.9578479528427124
+              }
+            ]
+          }
+        ],
+        "speech_intervals": [
+          [
+            0.0,
+            1.98
+          ],
+          [
+            1.98,
+            4.8
+          ]
+        ],
+        "reason": ""
+      }
+    },
+    {
+      "id": 294,
+      "transcript": {
+        "status": "ok",
+        "text": "Je te donne 100 000 euros si tu détruis la vie de ton meilleur ami.",
+        "segments": [
+          {
+            "start": 0.0,
+            "end": 4.6,
+            "text": " Je te donne 100 000 euros si tu détruis la vie de ton meilleur ami.",
+            "avg_logprob": -0.2582213083902995,
+            "no_speech_prob": 0.014142815954983234,
+            "compression_ratio": 0.9577464788732394,
+            "words": [
+              {
+                "word": " Je",
+                "start": 0.0,
+                "end": 0.4,
+                "probability": 0.7770665884017944
+              },
+              {
+                "word": " te",
+                "start": 0.4,
+                "end": 0.58,
+                "probability": 0.997011661529541
+              },
+              {
+                "word": " donne",
+                "start": 0.58,
+                "end": 0.8,
+                "probability": 0.9909234642982483
+              },
+              {
+                "word": " 100",
+                "start": 0.8,
+                "end": 1.12,
+                "probability": 0.8756763339042664
+              },
+              {
+                "word": " 000",
+                "start": 1.12,
+                "end": 1.38,
+                "probability": 0.8145524263381958
+              },
+              {
+                "word": " euros",
+                "start": 1.38,
+                "end": 1.96,
+                "probability": 0.6155170798301697
+              },
+              {
+                "word": " si",
+                "start": 1.96,
+                "end": 2.88,
+                "probability": 0.7382189035415649
+              },
+              {
+                "word": " tu",
+                "start": 2.88,
+                "end": 3.08,
+                "probability": 0.99935382604599
+              },
+              {
+                "word": " détruis",
+                "start": 3.08,
+                "end": 3.38,
+                "probability": 0.9343294103940328
+              },
+              {
+                "word": " la",
+                "start": 3.38,
+                "end": 3.5,
+                "probability": 0.9957001209259033
+              },
+              {
+                "word": " vie",
+                "start": 3.5,
+                "end": 3.74,
+                "probability": 0.9997285008430481
+              },
+              {
+                "word": " de",
+                "start": 3.74,
+                "end": 3.86,
+                "probability": 0.9993768334388733
+              },
+              {
+                "word": " ton",
+                "start": 3.86,
+                "end": 4.0,
+                "probability": 0.998002827167511
+              },
+              {
+                "word": " meilleur",
+                "start": 4.0,
+                "end": 4.3,
+                "probability": 0.9945170283317566
+              },
+              {
+                "word": " ami.",
+                "start": 4.3,
+                "end": 4.6,
+                "probability": 0.9544740319252014
+              }
+            ]
+          }
+        ],
+        "speech_intervals": [
+          [
+            0.0,
+            4.6
+          ]
+        ],
+        "reason": ""
+      }
+    }
+  ]
+}
