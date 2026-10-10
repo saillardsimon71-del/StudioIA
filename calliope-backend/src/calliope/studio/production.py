@@ -179,11 +179,20 @@ def save_episode_plan(project_id, plan):
             ),
         )
         audio_config = plan.get("audio") or audio.AudioSettings().model_dump()
+        saved_audio = conn.execute(
+            "SELECT settings_json FROM studio_audio WHERE project_id=?", (project_id,)
+        ).fetchone()
+        if saved_audio:
+            audio_config = audio_config | {
+                key: value for key, value in json.loads(saved_audio[0]).items()
+                if key not in ("sfx", "holds")
+            }
         for cue in audio_config.get("sfx", []) + audio_config.get("holds", []):
             if cue["shot_index"] < len(shot_ids):
                 cue["shot_id"] = shot_ids[cue["shot_index"]]
         conn.execute(
-            "INSERT INTO studio_audio(project_id,settings_json) VALUES(?,?)",
+            "INSERT INTO studio_audio(project_id,settings_json) VALUES(?,?) "
+            "ON CONFLICT(project_id) DO UPDATE SET settings_json=excluded.settings_json",
             (project_id, json.dumps(audio_config)),
         )
         conn.commit()

@@ -76,6 +76,11 @@ class EpisodeCreate(BaseModel):
         return value.strip()
 
 
+class EpisodeRestart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+
+
 class ScriptShot(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: int = Field(ge=1)
@@ -222,6 +227,11 @@ async def pause(project_id: int):
 @router.post("/projects/{project_id}/production/resume")
 async def resume(project_id: int):
     return series.resume(project_id)
+
+
+@router.post("/projects/{project_id}/production/restart")
+async def restart(project_id: int, payload: EpisodeRestart):
+    return series.restart(project_id, payload.request_id)
 
 
 @router.get("/projects/{project_id}/audio")

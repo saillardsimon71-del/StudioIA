@@ -651,6 +651,86 @@ def resume(project_id):
     return service.board(project_id)
 
 
+def restart(project_id, request_id):
+    require_services()
+    with service.database() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        require_active_project(conn, project_id)
+        episode = conn.execute(
+            "SELECT * FROM studio_episodes WHERE project_id=?", (project_id,)
+        ).fetchone()
+        if not episode:
+            raise HTTPException(404, "Épisode introuvable.")
+        duplicate = conn.execute(
+            "SELECT 1 FROM studio_episode_archives WHERE project_id=? AND request_id=?",
+            (project_id, request_id),
+        ).fetchone()
+        if not duplicate:
+            row = conn.execute(
+                "SELECT status FROM studio_productions WHERE project_id=?", (project_id,)
+            ).fetchone()
+            if not row or row["status"] not in ("paused", "failed"):
+                raise HTTPException(409, "Seul un épisode interrompu peut être recommencé.")
+            latest = conn.execute(
+                "SELECT MAX(number) FROM studio_episodes WHERE series_id=?", (episode["series_id"],)
+            ).fetchone()[0]
+            if episode["canon_revision"] is not None or episode["number"] != latest:
+                raise HTTPException(409, "Cet épisode appartient déjà à la continuité de la série.")
+            require_lifecycle_editable(conn, episode["series_id"])
+            frozen = context(conn, episode["series_id"])
+            snapshot = {}
+            for table in ("studio_projects", "studio_episodes", "studio_productions", "scenes",
+                          "clips", "studio_takes", "studio_exports", "jobs", "studio_audio",
+                          "studio_audio_assets"):
+                snapshot[table] = [dict(item) for item in conn.execute(
+                    f"SELECT * FROM {table} WHERE project_id=?", (project_id,)
+                )]
+            snapshot["projects"] = [dict(conn.execute(
+                "SELECT * FROM projects WHERE id=?", (project_id,)
+            ).fetchone())]
+            for table in ("studio_shots", "studio_shot_context"):
+                snapshot[table] = [dict(item) for item in conn.execute(
+                    f"SELECT s.* FROM {table} s JOIN clips c ON c.id=s.clip_id "
+                    "WHERE c.project_id=?", (project_id,)
+                )]
+            conn.execute(
+                "INSERT INTO studio_episode_archives(project_id,request_id,snapshot_json) "
+                "VALUES(?,?,?)", (project_id, request_id, json.dumps(snapshot, ensure_ascii=False)),
+            )
+            conn.execute("DELETE FROM scenes WHERE project_id=?", (project_id,))
+            conn.execute("DELETE FROM studio_exports WHERE project_id=?", (project_id,))
+            conn.execute("DELETE FROM jobs WHERE project_id=?", (project_id,))
+            saved_audio = conn.execute(
+                "SELECT settings_json FROM studio_audio WHERE project_id=?", (project_id,)
+            ).fetchone()
+            if saved_audio:
+                audio_config = json.loads(saved_audio[0]) | {"sfx": [], "holds": []}
+                conn.execute("UPDATE studio_audio SET settings_json=? WHERE project_id=?",
+                             (json.dumps(audio_config), project_id))
+            conn.execute(
+                "UPDATE studio_episodes SET context_json=?,plan_json='{}',summary='',"
+                "events_json='[]',ongoing_plot='' WHERE project_id=?",
+                (json.dumps(frozen), project_id),
+            )
+            conn.execute(
+                "UPDATE studio_projects SET script_source='',aspect_ratio=? WHERE project_id=?",
+                (frozen["aspect_ratio"], project_id),
+            )
+            service.touch(conn, project_id)
+            job = conn.execute(
+                "INSERT INTO jobs(project_id,kind,payload_json) VALUES(?,?,?)",
+                (project_id, "production", json.dumps({"studio_production_id": project_id})),
+            )
+            conn.execute(
+                "UPDATE studio_productions SET job_id=?,status='pending',stage='writing',"
+                "progress=0,message='Nouvelle écriture en attente',error=NULL,pause_requested=0 "
+                "WHERE project_id=?",
+                (job.lastrowid, project_id),
+            )
+        conn.commit()
+    return service.board(project_id)
+
+
 def episode_meta(conn, project_id):
     row = conn.execute(
         "SELECT e.series_id,e.number,e.summary,e.ongoing_plot,s.title AS series_title "

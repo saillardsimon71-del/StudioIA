@@ -113,6 +113,14 @@ CREATE TABLE IF NOT EXISTS studio_productions (
     error TEXT,
     pause_requested INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS studio_episode_archives (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    request_id TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_id,request_id)
+);
 CREATE TABLE IF NOT EXISTS studio_audio (
     project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
     settings_json TEXT NOT NULL DEFAULT '{}'

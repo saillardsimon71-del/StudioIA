@@ -19,6 +19,7 @@
 	let connectionError = $state('');
 	let notice = $state('');
 	let busy = $state('');
+	let restartRequestId = '';
 	let selectedId = $state<number | null>(null);
 	let editorDirty = $state(false);
 	let plannerOpen = $state(false);
@@ -105,6 +106,16 @@
 		action('delete', async () => { await studio.deleteShot(projectId, shot.id); if (selectedId === shot.id) { selectedId = null; editorDirty = false; } });
 	}
 	function editScene(scene: Scene | null) { sceneToEdit = scene; sceneOpen = true; }
+	function restartEpisode() {
+		if (busy || productionActive || !board?.episode) return;
+		if (!confirm('Recommencer cet épisode depuis son idée initiale ? Les réglages et références de la série seront conservés. Les anciens plans et prises seront archivés pour diagnostic. Un nouveau scénario, de nouvelles images et vidéos seront générés.')) return;
+		if (!restartRequestId) restartRequestId = newRequestId();
+		action('restart', async () => {
+			await studio.restartProduction(projectId, restartRequestId);
+			selectedId = null; editorDirty = false; restartRequestId = '';
+			notice = 'Nouvelle production lancée avec les réglages et références de la série.';
+		});
+	}
 	function shotStatus(shot: Shot) {
 		if (shot.approved) return 'Approuvé';
 		if (shot.selected_video_id) return 'À approuver';
@@ -133,6 +144,7 @@
 		</nav>
 		<main class="board" inert={!!selected && compact}>
 			{#if board.production}<section class="production-panel stack" aria-label="Production automatique"><div class="between"><div><p class="hint">Épisode {board.episode?.number} - Production automatique</p><h2>{board.production.message}</h2></div><div class="row">{#if productionActive}<button disabled={!!board.production.pause_requested || !!busy} onclick={() => action('pause',async()=>{await studio.pauseProduction(projectId);})}>{board.production.pause_requested ? 'Pause demandée' : 'Mettre en pause'}</button>{:else if board.production.status === 'paused' || board.production.status === 'failed'}<button class="primary" disabled={productionActive || !!busy} onclick={() => action('resume',async()=>{await studio.resumeProduction(projectId);})}>Reprendre la production</button>{/if}{#if board.episode}<a href={'/studio/series/' + board.episode.series_id}>Retour à la série</a>{/if}</div></div><progress max="1" value={board.production.progress}></progress>{#if board.production.error}<p class="error">{board.production.error}</p>{/if}{#if productionActive}<p class="hint">Vous pouvez fermer cette page. La production et les prises sont conservées. La pause prend effet après l'opération en cours.</p>{:else}<p class="hint">Vous pouvez modifier le scénario, les plans, les prises et le son, puis réexporter.</p>{/if}</section>{/if}
+			{#if board.episode && board.production && ['paused', 'failed'].includes(board.production.status)}<div class="stack"><button disabled={!!busy || editorDirty} onclick={restartEpisode}>Recommencer cet épisode</button><p class="hint">Reconstruit le scénario et les plans depuis l'idée initiale. Conserve la série, ses réglages et ses références. Les anciens plans et prises sont archivés.</p></div>{/if}
 			<div class="row"><button disabled={productionActive || !shots.length} onclick={() => scriptOpen = true}>Modifier le scénario</button><button disabled={productionActive} onclick={() => audioOpen = true}>Musique et bruitages</button></div>
 			{#if board.episode && board.production && ['paused', 'failed'].includes(board.production.status)}<div class="stack"><button disabled={!!busy || editorDirty || !shots.length} onclick={() => action('visual-contract', async () => { await studio.refreshVisualContract(projectId); notice = 'Contrat visuel préparé sans génération. Vérifiez les références et les zones avant de reprendre.'; })}>Préparer le contrat visuel depuis la série</button><p class="hint">Applique les identités et options actuelles à cet épisode, conserve ses prises et demande leur vérification. Les valeurs manquantes doivent être renseignées dans les plans.</p></div>{/if}
 			<div class="between board-heading"><div class="stack title-stack"><h1>{board.project.title}</h1>{#if board.project.idea}<p class="muted project-idea">{board.project.idea}</p>{/if}</div><div class="row"><button class="small" disabled={productionActive || !!board.scenes.length || !!busy} onclick={() => plannerOpen = true}>Préparer les scènes</button><button class="small subtle" onclick={() => refresh()}>Actualiser</button></div></div>

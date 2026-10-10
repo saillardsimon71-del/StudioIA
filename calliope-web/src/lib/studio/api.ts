@@ -369,6 +369,8 @@ export const studio = {
     request<Board>(`/projects/${id}/production/pause`, "POST"),
   resumeProduction: (id: number) =>
     request<Board>(`/projects/${id}/production/resume`, "POST"),
+  restartProduction: (id: number, requestId: string) =>
+    request<Board>(`/projects/${id}/production/restart`, "POST", { request_id: requestId }),
   saveAudio: (id: number, payload: Partial<AudioSettings>) =>
     request<AudioSettings>(`/projects/${id}/audio`, "PATCH", payload),
   saveScript: (
