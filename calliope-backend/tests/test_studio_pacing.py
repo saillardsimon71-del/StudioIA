@@ -713,7 +713,15 @@ def produce(client, monkeypatch, tmp_path, plan, clip_bytes, expected_error=None
     async def image(request):
         return service.normalized_image(png_bytes())
 
-    monkeypatch.setattr(production, "plan_episode", plan)
+    async def with_payoff(*args):
+        planned = await plan(*args)
+        payoff = dict(planned["scenes"][0]["shots"][0])
+        payoff.update(description="The radio switches off, leaving a new question.",
+                      dialogue="", dialogue_turns=[], speaker="", audio_mode="silent", duration_sec=1)
+        planned["scenes"][0]["shots"].append(payoff)
+        return planned
+
+    monkeypatch.setattr(production, "plan_episode", with_payoff)
     monkeypatch.setattr(service, "_generate_image", image)
     monkeypatch.setattr(
         ModalH3Engine,
@@ -725,14 +733,15 @@ def produce(client, monkeypatch, tmp_path, plan, clip_bytes, expected_error=None
         "poll",
         lambda self, call_id: {
             "video_base64": base64.b64encode(
-                outro_bytes if "Want to make videos too?" in spawns[int(call_id.split('-')[1]) - 1][
+                midroll_bytes if "Subscribe, copy the link" in spawns[int(call_id.split('-')[1]) - 1][
                     "prompt"
-                ] else clip_bytes
+                ] else payoff_bytes if "switches off" in spawns[int(call_id.split('-')[1]) - 1]["prompt"] else clip_bytes
             ).decode(),
             "metadata": {},
         },
     )
-    outro_bytes = make_clip(tmp_path / "outro.mp4", 8, tone_windows=[(0.1, 7.8)]).read_bytes()
+    midroll_bytes = make_clip(tmp_path / "midroll.mp4", 4, tone_windows=[(0.1, 3.8)]).read_bytes()
+    payoff_bytes = make_clip(tmp_path / "payoff.mp4", 1).read_bytes()
     created = episode(client, series(client)["id"]).json()
     with service.database() as conn:
         context = json.loads(
@@ -741,7 +750,7 @@ def produce(client, monkeypatch, tmp_path, plan, clip_bytes, expected_error=None
                 (created["project_id"],),
             ).fetchone()[0]
         )
-        context["target_seconds"] = 9.6
+        context["target_seconds"] = 6.6
         conn.execute(
             "UPDATE studio_episodes SET context_json=? WHERE project_id=?",
             (json.dumps(context), created["project_id"]),
@@ -763,11 +772,11 @@ def test_a_good_take_is_approved_without_rerender_and_trimmed_usefully(
     client, monkeypatch, tmp_path
 ):
     from calliope.studio import service
-    from calliope.studio.series_planner import OUTRO_DIALOGUES
+    from calliope.studio.series_planner import MIDROLL_DIALOGUES
 
     transcripts = iter([
         ('Un deux trois.', [[0.1, 1.5]]),
-        (OUTRO_DIALOGUES['en'], [[0.1, 7.8]]),
+        (MIDROLL_DIALOGUES['en'], [[0.1, 3.8]]),
     ])
 
     def transcribe(*args):
@@ -787,7 +796,7 @@ def test_a_good_take_is_approved_without_rerender_and_trimmed_usefully(
         return episode_plan
 
     project_id, spawns = produce(client, monkeypatch, tmp_path, plan_result, clip.read_bytes())
-    assert len(spawns) == 2  # une prise par plan: histoire et fin, aucun rerender
+    assert len(spawns) == 3  # récit, incitation et conséquence, aucun rerender
     board = service.board(project_id)
     shot = board["scenes"][0]["shots"][0]
     assert shot["approved"] is True
@@ -797,7 +806,7 @@ def test_a_good_take_is_approved_without_rerender_and_trimmed_usefully(
     exports = board["exports"]
     assert exports and exports[0]["url"]
     assert exports[0]["metadata"]["duration_sec"] == pytest.approx(
-        pacing.quantize(1.6) + 8, abs=0.05
+        pacing.quantize(1.6) + 4 + 1, abs=0.05
     )
 
 

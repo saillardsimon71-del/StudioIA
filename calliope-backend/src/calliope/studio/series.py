@@ -429,7 +429,7 @@ def update_series(series_id, data):
     return get_series(series_id)
 
 
-def require_services():
+def require_services(preparation_only=False):
     if settings.dry_run:
         raise HTTPException(
             422, "Désactivez la simulation dans Services pour produire un épisode réel."
@@ -439,6 +439,8 @@ def require_services():
         ("texte", settings.llm_base_url, settings.llm_api_key),
         ("images", settings.studio_image_base_url, settings.studio_image_api_key),
     ):
+        if preparation_only and label == "images":
+            continue
         if urlsplit(url).hostname not in ("localhost", "127.0.0.1", "::1") and not key:
             missing.append(label)
     if missing:
@@ -448,7 +450,7 @@ def require_services():
             + " et ".join(missing)
             + " dans Services avant de créer l'épisode.",
         )
-    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+    if not preparation_only and (not shutil.which("ffmpeg") or not shutil.which("ffprobe")):
         raise HTTPException(422, "L'assemblage est indisponible : FFmpeg est requis.")
 
 
@@ -481,7 +483,9 @@ def context(conn, series_id):
                 (
                     "SELECT ss.prompt,ss.dialogue,c.description FROM clips c JOIN studio_sh"
                     "ots ss ON ss.clip_id=c.id JOIN scenes s ON s.id=c.scene_id WHERE c.pro"
-                    "ject_id=? ORDER BY s.order_index,s.id,c.order_index,c.id"
+                    "ject_id=? AND COALESCE((SELECT json_extract(context_json,'$.purpose') "
+                    "FROM studio_shot_context WHERE clip_id=c.id),'') NOT IN ('midroll','outro') "
+                    "ORDER BY s.order_index,s.id,c.order_index,c.id"
                 ),
                 (row["project_id"],),
             )
@@ -500,7 +504,10 @@ def context(conn, series_id):
 
 
 def create_episode(series_id, data):
-    require_services()
+    if data.get("prepare_only"):
+        require_services(preparation_only=True)
+    else:
+        require_services()
     with service.database() as conn:
         conn.execute("BEGIN IMMEDIATE")
         current = require_series(conn, series_id)
@@ -514,8 +521,13 @@ def create_episode(series_id, data):
             if (
                 old["idea"] != data["idea"].strip()
                 or old["objective"] != data.get("objective", "").strip()
+                or bool(json.loads(old["context_json"]).get("prepare_only"))
+                != bool(data.get("prepare_only"))
             ):
-                raise HTTPException(409, "Cette demande correspond déjà à une autre idée.")
+                raise HTTPException(
+                    409, "Cette demande correspond déjà à une autre idée "
+                    "ou un autre mode de préparation.",
+                )
             production = conn.execute(
                 "SELECT job_id FROM studio_productions WHERE project_id=?", (old["project_id"],)
             ).fetchone()
@@ -534,6 +546,7 @@ def create_episode(series_id, data):
             "SELECT COALESCE(MAX(number),0)+1 FROM studio_episodes WHERE series_id=?", (series_id,)
         ).fetchone()[0]
         frozen = context(conn, series_id)
+        frozen["prepare_only"] = bool(data.get("prepare_only"))
         cur = conn.execute(
             "INSERT INTO projects(title,idea) VALUES(?,?)",
             (f"{current['title']} - Épisode {number}", data["idea"].strip()),
@@ -560,7 +573,9 @@ def create_episode(series_id, data):
         )
         cur = conn.execute(
             "INSERT INTO jobs(project_id,kind,payload_json) VALUES(?,?,?)",
-            (project_id, "production", json.dumps({"studio_production_id": project_id})),
+            (project_id, "production", json.dumps({
+                "studio_production_id": project_id, "prepare_only": frozen["prepare_only"],
+            })),
         )
         job_id = cur.lastrowid
         conn.execute(
@@ -632,9 +647,14 @@ def resume(project_id):
             return service.board(project_id)
         if row["status"] == "done":
             raise HTTPException(409, "Cette production est déjà terminée.")
-        job = conn.execute("SELECT status,error FROM jobs WHERE id=?", (row["job_id"],)).fetchone()
+        job = conn.execute("SELECT status,error,payload_json FROM jobs WHERE id=?",
+                           (row["job_id"],)).fetchone()
         if job["error"] == "cancelled":
             raise HTTPException(409, "Cette production a été annulée.")
+        payload = json.loads(job["payload_json"])
+        payload.pop("prepare_only", None)
+        conn.execute("UPDATE jobs SET payload_json=? WHERE id=?",
+                     (json.dumps(payload), row["job_id"]))
         children = conn.execute(
             "SELECT t.* FROM studio_takes t JOIN jobs j ON j.id=t.job_id "
             "WHERE t.project_id=? AND j.status!='done' AND j.error IS NOT 'cancelled'",
@@ -680,7 +700,6 @@ def resume(project_id):
 
 
 def restart(project_id, request_id):
-    require_services()
     with service.database() as conn:
         conn.execute("BEGIN IMMEDIATE")
         require_active_project(conn, project_id)
@@ -689,6 +708,11 @@ def restart(project_id, request_id):
         ).fetchone()
         if not episode:
             raise HTTPException(404, "Épisode introuvable.")
+        preparation_only = bool(json.loads(episode["context_json"]).get("prepare_only"))
+        if preparation_only:
+            require_services(preparation_only=True)
+        else:
+            require_services()
         duplicate = conn.execute(
             "SELECT 1 FROM studio_episode_archives WHERE project_id=? AND request_id=?",
             (project_id, request_id),
@@ -706,6 +730,7 @@ def restart(project_id, request_id):
                 raise HTTPException(409, "Cet épisode appartient déjà à la continuité de la série.")
             require_lifecycle_editable(conn, episode["series_id"])
             frozen = context(conn, episode["series_id"])
+            frozen["prepare_only"] = preparation_only
             snapshot = {}
             for table in ("studio_projects", "studio_episodes", "studio_productions", "scenes",
                           "clips", "studio_takes", "studio_exports", "jobs", "studio_audio",
@@ -747,7 +772,10 @@ def restart(project_id, request_id):
             service.touch(conn, project_id)
             job = conn.execute(
                 "INSERT INTO jobs(project_id,kind,payload_json) VALUES(?,?,?)",
-                (project_id, "production", json.dumps({"studio_production_id": project_id})),
+                (project_id, "production", json.dumps({
+                    "studio_production_id": project_id,
+                    "prepare_only": bool(frozen.get("prepare_only")),
+                })),
             )
             conn.execute(
                 "UPDATE studio_productions SET job_id=?,status='pending',stage='writing',"
@@ -761,7 +789,7 @@ def restart(project_id, request_id):
 
 def episode_meta(conn, project_id):
     row = conn.execute(
-        "SELECT e.series_id,e.number,e.summary,e.ongoing_plot,e.context_json,"
+        "SELECT e.series_id,e.number,e.summary,e.ongoing_plot,e.context_json,e.plan_json,"
         "s.title AS series_title "
         "FROM studio_episodes e JOIN studio_series s ON s.id=e.series_id WHERE e.project_id=?",
         (project_id,),
@@ -770,6 +798,22 @@ def episode_meta(conn, project_id):
         return None
     result = dict(row)
     frozen = json.loads(result.pop("context_json"))
+    plan = json.loads(result.pop("plan_json") or "{}")
+    review = plan.get("editorial_review") or {}
+    result["editorial_review"] = {
+        key: str(review.get(key) or "")[:4000] for key in
+        ("hook", "stakes", "progression", "payoff", "next_episode", "risks")
+    } if isinstance(review, dict) and review else {}
+    actual = [dict(row) for row in conn.execute(
+        "SELECT c.description,ss.dialogue,ss.prompt,ss.image_prompt,c.duration_sec "
+        "FROM clips c JOIN studio_shots ss ON ss.clip_id=c.id JOIN scenes s ON s.id=c.scene_id "
+        "WHERE c.project_id=? AND COALESCE((SELECT json_extract(context_json,'$.purpose') "
+        "FROM studio_shot_context WHERE clip_id=c.id),'') NOT IN ('midroll','outro') "
+        "ORDER BY s.order_index,s.id,c.order_index,c.id", (project_id,),
+    )]
+    result["editorial_stale"] = (
+        bool(result["editorial_review"]) and actual != plan.get("editorial_script")
+    )
     result["production_mode"] = directing_profile(
         frozen.get("directing_profile")
     )["production_mode"]

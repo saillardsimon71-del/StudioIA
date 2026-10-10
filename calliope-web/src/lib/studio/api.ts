@@ -51,6 +51,7 @@ export interface Shot {
   prompt: string;
   image_prompt: string;
   dialogue: string;
+  purpose?: string;
   character_keys?: string[];
   continuation_source?: Take | null;
   continuation_frame_index?: number;
@@ -143,6 +144,8 @@ export interface Board {
     summary: string;
     ongoing_plot: string;
     production_mode: "automatic" | "manual";
+    editorial_review?: Partial<Record<"hook" | "stakes" | "progression" | "payoff" | "next_episode" | "risks", string>>;
+    editorial_stale?: boolean;
   } | null;
   production?: {
     status: string;
@@ -361,7 +364,7 @@ export const studio = {
     request<Board>(`/projects/${projectId}/visual-contract`, "POST"),
   createEpisode: (
     id: number,
-    payload: { idea: string; objective: string; request_id: string },
+    payload: { idea: string; objective: string; request_id: string; prepare_only?: boolean },
   ) =>
     request<{ project_id: number; job_id: number }>(
       `/series/${id}/episodes`,
@@ -372,6 +375,8 @@ export const studio = {
     request<Board>(`/projects/${id}/production/pause`, "POST"),
   resumeProduction: (id: number) =>
     request<Board>(`/projects/${id}/production/resume`, "POST"),
+  prepareMidroll: (id: number) =>
+    request<Board>(`/projects/${id}/midroll`, "POST"),
   setProductionMode: (id: number, mode: "automatic" | "manual") =>
     request<Board>(`/projects/${id}/production/mode`, "PATCH", { mode }),
   restartProduction: (id: number, requestId: string) =>

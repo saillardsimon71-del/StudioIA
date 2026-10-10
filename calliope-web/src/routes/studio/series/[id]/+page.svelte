@@ -18,6 +18,7 @@
   let profile = $state<DirectingProfile | null>(null);
   let idea = $state("");
   let objective = $state("");
+  let prepareOnly = $state(true);
   let error = $state("");
   let notice = $state("");
   let busy = $state("");
@@ -80,7 +81,7 @@
     if (busy) return;
     busy = "episode";
     error = "";
-    const content = JSON.stringify([idea.trim(), objective.trim()]);
+    const content = JSON.stringify([idea.trim(), objective.trim(), prepareOnly]);
     if (content !== requestContent) {
       requestContent = content;
       requestId = newRequestId();
@@ -90,6 +91,7 @@
         idea: idea.trim(),
         objective: objective.trim(),
         request_id: requestId,
+        prepare_only: prepareOnly,
       });
       await goto("/studio/" + result.project_id);
     } catch (err) {
@@ -221,16 +223,17 @@
             placeholder="Une révélation, une tension, une émotion..."
           /></label
         >
-        <p class="hint">
-          Le studio écrit le scénario, prépare les images, génère les clips,
-          choisit une prise par plan et exporte le MP4 avec son mix audio. Vous
-          pourrez mettre la production en pause pour intervenir.
+        <label class="row"><input type="checkbox" bind:checked={prepareOnly} />Préparer et relire le scénario avant les rendus</label>
+        <p class="hint">{prepareOnly
+          ? "Le scénario et sa revue apparaissent sans générer de médias. Vous pourrez les corriger, puis lancer les rendus."
+          : "Le studio prépare le scénario et les médias, puis exporte le MP4. Vous pourrez mettre la production en pause."}
+          Chaque épisode inclut une incitation de 4 secondes au milieu. La fin reste consacrée à l'histoire et à la suite.
         </p>
         <div class="row">
           <button class="primary" disabled={!!busy || !idea.trim()}
             >{busy === "episode"
               ? "Lancement..."
-              : "Produire l'épisode"}</button
+              : prepareOnly ? "Préparer le scénario" : "Produire l'épisode"}</button
           ><button
             type="button"
             onclick={() => (episodeOpen = false)}

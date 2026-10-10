@@ -124,18 +124,20 @@ def test_strict_reference_profile_requires_a_location_canon_too():
         )
 
 
-def test_mandatory_outro_has_an_explicit_visual_identity_without_inventing_a_value():
+def test_mandatory_midroll_preserves_the_canonical_character_value():
     plan = valued_plan()
     shot = plan["scenes"][0]["shots"][0]
     shot["screen_text"] = [label("mango", 1, 0.25), label("blueberry", 500, 0.75)]
-    plan = series_planner.append_outro(series_planner.normalize_plan(plan, config()), config())
-    host = next(entity for entity in plan["entities"] if entity["key"] == series_planner.OUTRO_KEY)
-    assert host["identity"]["visual_description"] == host["description"]
-    assert host["identity"].get("attached_value") is None
+    plan["scenes"][0]["shots"].append(copy.deepcopy(shot))
+    plan = series_planner.insert_midroll(series_planner.normalize_plan(plan, config()), config())
+    midroll = plan["scenes"][0]["shots"][1]
+    numeric = next(label for label in midroll["screen_text"] if label.get("entity_key") == "mango")
+    assert numeric["value"] == 1
+    assert midroll["character_keys"] == ["mango"]
     from calliope.studio.visual_identity import validate_value_manifest
 
     validate_value_manifest(
-        plan["scenes"][-1]["shots"][0], config() | {"entities": plan["entities"]}
+        midroll, config() | {"entities": plan["entities"]}
     )
 
 

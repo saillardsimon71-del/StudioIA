@@ -4,33 +4,36 @@ import json
 import pytest
 
 from calliope.studio.h3_prompt import compile_h3_prompt, directing_profile
-from calliope.studio.series_planner import OUTRO_DIALOGUES, append_outro
+from calliope.studio.series_planner import MIDROLL_DIALOGUES, insert_midroll
+from tests.test_studio_midroll import story
 
 
-def test_outro_uses_the_story_location_and_keeps_the_exact_series_language():
-    plan = {"entities": [], "scenes": [{"shots": [{"location_key": "street"}]}]}
+def test_midroll_uses_the_story_location_and_keeps_the_exact_series_language():
+    plan = story()
+    for shot in plan["scenes"][0]["shots"]:
+        shot["location_key"] = "street"
     context = {"language": "fr", "entities": [{
         "key": "street", "name": "Neon street", "kind": "location",
         "description": "A colorful neon street.",
     }]}
-    shot = append_outro(plan, context)["scenes"][-1]["shots"][0]
+    shot = insert_midroll(plan, context)["scenes"][0]["shots"][3]
     assert shot["location_key"] == "street"
     assert "clean softly lit studio" not in shot["prompt"]
-    assert "push-in" in shot["camera"]
-    assert shot["dialogue"] == OUTRO_DIALOGUES["fr"]
+    assert "zoom" in shot["camera"]
+    assert shot["dialogue"] == MIDROLL_DIALOGUES["fr"]
     assert " ".join(turn["text"] for turn in shot["dialogue_turns"]) == shot["dialogue"]
     assert all(turn["speaker"] == shot["speaker"] for turn in shot["dialogue_turns"])
 
 
-def test_outro_delivery_is_clear_and_each_line_is_spoken_once():
-    plan = append_outro({"entities": [], "scenes": []}, {"language": "fr"})
-    shot = plan["scenes"][-1]["shots"][0]
+def test_midroll_delivery_is_clear_and_each_line_is_spoken_once():
+    plan = insert_midroll(story(), {"language": "fr"})
+    shot = plan["scenes"][0]["shots"][3]
     result = compile_h3_prompt(shot, {
         "language": "fr", "entities": plan["entities"],
         "directing_profile": {"preset": "fast_dialogue_social_fiction"},
     })
     assert "brisk conversational" not in result
-    assert result.count("<d>") == 2
+    assert result.count("<d>") == 1
     assert "Each tagged line is spoken exactly once" in result
     assert "commente GO !</d>" in result
 

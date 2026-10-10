@@ -17,41 +17,32 @@ from calliope.studio.h3_prompt import (
 from calliope.studio.series import BIBLE_FIELDS
 
 logger = logging.getLogger(__name__)
-OUTRO_SECONDS = 8.0
-OUTRO_KEY = "studio_cta_host"
-OUTRO_DIALOGUES = {
-    "en": "Want to make videos too? Copy this video's link, like, subscribe, and comment GO!",
-    "fr": (
-        "Toi aussi, tu veux faire des vidéos ? "
-        "Copie le lien de la vidéo, like, abonne-toi et commente GO !"
-    ),
-    "ar": "هل تريد صنع فيديوهات أيضا؟ انسخ رابط الفيديو، وأعجب به، واشترك، واكتب GO في التعليقات!",
-    "zh": "你也想制作视频吗？复制这个视频的链接，点赞、订阅，并评论GO！",
-    "de": (
-        "Willst du auch Videos machen? "
-        "Kopiere den Link dieses Videos, like, abonniere und kommentiere GO!"
-    ),
-    "it": (
-        "Vuoi fare video anche tu? "
-        "Copia il link del video, metti mi piace, iscriviti e commenta GO!"
-    ),
-    "ja": (
-        "あなたも動画を作りたい？この動画のリンクをコピーして、"
-        "いいねと登録をして、GOとコメントしてね！"
-    ),
-    "ko": (
-        "너도 영상을 만들고 싶어? 이 영상 링크를 복사하고, "
-        "좋아요와 구독을 누르고, GO라고 댓글을 남겨!"
-    ),
-    "pt": "Você também quer fazer vídeos? Copie o link do vídeo, curta, inscreva-se e comente GO!",
-    "ru": (
-        "Тоже хочешь создавать видео? "
-        "Скопируй ссылку на видео, поставь лайк, подпишись и напиши GO в комментариях!"
-    ),
-    "es": (
-        "¿Tú también quieres hacer videos? "
-        "Copia el enlace del video, dale me gusta, suscríbete y comenta GO!"
-    ),
+MIDROLL_SECONDS = 4.0
+MIDROLL_DIALOGUES = {
+    "en": "Subscribe, copy the link and comment GO!",
+    "fr": "Abonne-toi, copie le lien et commente GO !",
+    "ar": "اشترك، انسخ الرابط واكتب GO في التعليقات!",
+    "zh": "关注、复制链接并评论GO！",
+    "de": "Abonniere, kopiere den Link und kommentiere GO!",
+    "it": "Iscriviti, copia il link e commenta GO!",
+    "ja": "登録して、リンクをコピーして、GOとコメントしてね！",
+    "ko": "구독하고, 링크를 복사하고, GO라고 댓글을 남겨!",
+    "pt": "Inscreva-se, copie o link e comente GO!",
+    "ru": "Подпишись, скопируй ссылку и напиши GO в комментариях!",
+    "es": "Suscríbete, copia el enlace y comenta GO!",
+}
+MIDROLL_LABELS = {
+    "en": ("Subscribe", "Copy the link", "Comment GO"),
+    "fr": ("Abonne-toi", "Copie le lien", "Commente GO"),
+    "ar": ("اشترك", "انسخ الرابط", "اكتب GO"),
+    "zh": ("关注", "复制链接", "评论GO"),
+    "de": ("Abonnieren", "Link kopieren", "GO kommentieren"),
+    "it": ("Iscriviti", "Copia il link", "Commenta GO"),
+    "ja": ("登録してね", "リンクをコピー", "GOとコメント"),
+    "ko": ("구독", "링크 복사", "GO 댓글"),
+    "pt": ("Inscreva-se", "Copie o link", "Comente GO"),
+    "ru": ("Подпишись", "Скопируй ссылку", "Напиши GO"),
+    "es": ("Suscríbete", "Copia el enlace", "Comenta GO"),
 }
 
 
@@ -64,8 +55,13 @@ language. New entities must have stable lowercase ASCII keys.
 Every character or location key used by a shot must exist in the supplied canon
 or in entities. Declare ALL new locations, including rooms and corridors.
 Develop missing bible fields from the concept; do not contradict filled fields.
-Open with an immediate visual hook, develop one coherent event, end with a
-revelation or compelling next question. No padding, no unexplained location jumps.
+Open with an immediate, understandable visual conflict without requiring earlier
+episodes. Develop one coherent event through desire, obstacle, choice and consequence.
+Deliver a local payoff to the opening promise, then end with a new consequence or
+revelation that makes the next episode desirable. Never end with a promotional CTA.
+Use at least two useful story shots, before and after the software's brief midroll.
+No padding, no unexplained location jumps. Each beat changes knowledge or stakes;
+surprises must be prepared, and withholding every answer is not a payoff.
 The target duration is a real format constraint: the story must carry about
 target_seconds of USEFUL screen time, no more, no less. Write the story FIRST,
 then cut it into shots. The number of shots is FREE; there is no shot-count
@@ -126,7 +122,13 @@ Reuse a reference_key for the SAME character, location and camera composition;
 change it when the scene really needs a new composition. Existing characters
 and locations have canonical image references used by the image service.
 Return ONLY JSON with these fields:
+Write editorial_review in French for the operator. It is a qualitative critique,
+not a prediction of performance. Name concrete beats and unresolved weaknesses.
 {"title":"episode title", "summary":"brief factual recap", "events":["actual new event"],
+"editorial_review":{"hook":"specific opening and why it is understandable",
+"stakes":"what the character wants and risks", "progression":"changes in the beats",
+"payoff":"answer or reward actually delivered", "next_episode":"new consequence",
+"risks":"possible confusion or unmet promise; do not predict views or virality"},
 "ongoing_plot":"unresolved plot", "bible":{"universe":"", "tone":"", "visual_style":"",
 "characters":"identity and voices", "relationships":"", "locations":"", "world_rules":"",
 "past_events":"", "ongoing_plot":"", "continuity":"screen direction, visual rules"},
@@ -201,10 +203,10 @@ the immutable design of every character and location. References are reviewed be
     public_context["entities"] = [
         {k: e[k] for k in ("key", "kind", "name", "description", "identity") if k in e}
         for e in context["entities"]
-        if e["key"] != OUTRO_KEY
+        if e["key"] != "studio_cta_host"
     ]
     episode_target = float(context.get("target_seconds", 65))
-    target = max(5.0, episode_target - OUTRO_SECONDS)
+    target = max(5.0, episode_target - MIDROLL_SECONDS)
     public_context["target_seconds"] = target
     estimated_shots = max(8, round(episode_target / 3))
     messages = [
@@ -218,9 +220,9 @@ the immutable design of every character and location. References are reviewed be
                     "objective": objective,
                     "target_seconds": target,
                     "ending": (
-                        "The software adds a promotional outro in the episode language "
-                        "after your story. "
-                        "Do not write the promotion or include its host in the story."
+                        "The software inserts a four-second aside near the middle, using "
+                        "a story character. Do not write that promotion. Keep the ending "
+                        "for the local payoff and the next episode's consequence."
                     ),
                     "pacing": (
                         "free shot count, one decimal duration_sec per shot, "
@@ -241,7 +243,7 @@ the immutable design of every character and location. References are reviewed be
         validation_error = None
         try:
             plan = normalize_plan(copy.deepcopy(result), context | {"target_seconds": target})
-            return append_outro(plan, context)
+            return insert_midroll(plan, context)
         except ValueError as exc:
             validation_error = str(exc)
             logger.warning("Planner validation failed attempt=%s: %s", attempt + 1, exc)
@@ -256,7 +258,7 @@ the immutable design of every character and location. References are reviewed be
                             f"Validation failed: {exc}. Repair the complete JSON episode. "
                             f"Keep free per-shot durations; adjust the cutting or the "
                             f"dialogue so the useful total stays near {target} seconds "
-                            f"of story plus an automatic {OUTRO_SECONDS:g}-second outro "
+                            f"of story plus an automatic {MIDROLL_SECONDS:g}-second midroll "
                             f"for an episode near {episode_target:g} seconds, "
                             "without stretching any shot. "
                             "Preserve the story and series canon. Shorten dialogue if needed. "
@@ -317,78 +319,112 @@ def canonical_key(value, entities, kind):
     return next(iter(keys)) if len(keys) == 1 else value
 
 
-def append_outro(plan, context):
-    plan.setdefault("entities", [])
+def insert_midroll(plan, context):
     label = dialogue_language(context.get("language"))
     language = next(code for code, name in LANGUAGES.items() if name == label)
-    dialogue = OUTRO_DIALOGUES[language]
-    locations = {
-        entity["key"] for entity in context.get("entities", []) + plan["entities"]
-        if entity.get("kind") == "location"
-    }
-    location = next((
-        shot["location_key"] for scene in reversed(plan.get("scenes", []))
-        for shot in reversed(scene.get("shots", []))
-        if shot.get("purpose") != "outro" and shot.get("location_key") in locations
-    ), "")
-    lines = re.split(r"(?<=[?؟？])\s*", dialogue, maxsplit=1)
-    if not any(e["key"] == OUTRO_KEY for e in context.get("entities", []) + plan["entities"]):
-        plan["entities"].append(
-            {
-                "key": OUTRO_KEY,
-                "kind": "character",
-                "name": "Studio host",
-                "description": (
-                    "Friendly anthropomorphic red apple with a small green leaf, "
-                    "expressive eyes, clearly visible mouth, small arms, navy jacket, "
-                    "consistent proportions. Clear warm voice."
-                ),
-            }
+    positions, scenes, story = {}, [], []
+    old_index = 0
+    for scene in plan.get("scenes", []):
+        shots = []
+        for shot in scene.get("shots", []):
+            if shot.get("purpose") not in ("outro", "midroll"):
+                positions[old_index] = len(story)
+                story.append(shot)
+                shots.append(shot)
+            old_index += 1
+        if shots:
+            scenes.append(scene | {"shots": shots})
+    if len(story) < 2:
+        raise ValueError(
+            "Prévoir au moins deux plans narratifs pour intégrer l'incitation au milieu."
         )
-        host = plan["entities"][-1]
-        host["identity"] = {"visual_description": host["description"]}
+    elapsed, boundaries = 0.0, []
+    for index, shot in enumerate(story[:-1], 1):
+        elapsed += float(shot["duration_sec"])
+        boundaries.append((index, elapsed))
+    middle = sum(float(shot["duration_sec"]) for shot in story) / 2
+    insertion = min(boundaries, key=lambda item: abs(item[1] - middle))[0]
+    preceding = story[insertion - 1]
+    entities = {e["key"]: e for e in context.get("entities", []) + plan.get("entities", [])}
+    characters = [e for e in entities.values()
+                  if e.get("kind") == "character" and e["key"] != "studio_cta_host"]
+    speaker = next((key for key in preceding.get("character_keys", [])
+                    if key in entities and entities[key].get("kind") == "character"
+                    and key != "studio_cta_host"), None)
+    if not speaker and characters:
+        speaker = characters[0]["key"]
+    if not speaker:
+        raise ValueError("Un personnage de la série est nécessaire pour l'incitation.")
+    location = preceding.get("location_key", "")
+    dialogue = MIDROLL_DIALOGUES[language]
     shot = {
-        "description": "The fruit host invites the viewer to make videos.",
+        "description": (
+            "Une courte parenthèse : le personnage pointe le téléphone et invite à agir."
+        ),
         "prompt": (
-            "The series host turns toward the viewer for a playful private aside in the "
-            "episode's final location. The host leans slightly toward the lens, makes one "
-            "inviting hand gesture and delivers the dialogue clearly. Keep the colorful "
-            "background secondary and the face easy to read. No other character speaks. "
-            "No text on screen."
+            "A brief fourth-wall aside in the current story location. The canonical character "
+            "turns toward the viewer and points with one finger toward a smartphone graphic "
+            "in the lower-right foreground, added in postproduction. Leave that region clear. "
+            "Keep the established costume, identity and voice. Only this character speaks."
         ),
         "image_prompt": (
-            "Vertical medium close-up of the canonical series host in the episode's "
-            "final location, matching its lighting and visual style. The host faces the "
-            "viewer with a knowing smile, ready for a private aside. The host fills the "
-            "frame; an expressive, colorful background stays softly out of focus. No text."
+            "Medium close-up of the canonical speaking character in the current location, "
+            "matching the series style and lighting. Face and pointing hand visible on the "
+            "left; lower-right foreground empty for the smartphone added in postproduction. "
+            "No generated text or typography."
         ),
         "dialogue": dialogue,
-        "dialogue_turns": [{"speaker": OUTRO_KEY, "text": line} for line in lines if line],
-        "speaker": OUTRO_KEY,
-        "character_keys": [OUTRO_KEY],
+        "dialogue_turns": [{"speaker": speaker, "text": dialogue}],
+        "speaker": speaker,
+        "character_keys": [speaker],
         "location_key": location,
-        "reference_key": f"studio-cta-host-{location or 'setting'}",
-        "duration_sec": OUTRO_SECONDS,
+        "reference_key": f"studio-midroll-{speaker}-{location or 'setting'}",
+        "duration_sec": MIDROLL_SECONDS,
         "audio_mode": "native",
         "language": language,
-        "purpose": "outro",
-        "framing": "Medium close-up, visible speaker dominates the vertical frame.",
-        "camera": "A gentle purposeful push-in, then steady framing on the host's face.",
-        "action": "The host speaks directly to the viewer and gestures invitingly.",
-        "reaction": "The host finishes with an enthusiastic smile.",
+        "purpose": "midroll",
+        "framing": "Face and pointing hand on the left; smartphone region clear on the right.",
+        "camera": "A quick motivated zoom toward the character, then steady framing.",
+        "action": "The character points toward the smartphone and speaks to the viewer.",
+        "reaction": "A knowing smile, then the story resumes immediately.",
+        "soundscape": (
+            "Only the tagged dialogue, without ambience, music or physical sound effects."
+        ),
+        "screen_text": [
+            {"key": f"studio-midroll-{index}", "text": text, "anchor": "screen",
+             "x": 0.68, "y": 0.60 + index * 0.07, "size": 0.025, "color": "FFFFFF"}
+            for index, text in enumerate(MIDROLL_LABELS[language])
+        ],
     }
-    ending = {
-        "heading": "Studio - Make your own videos",
-        "action": shot["action"],
-        "dialog": dialogue,
-        "shots": [shot],
-    }
-    if plan.get("scenes") and any(
-        s.get("purpose") == "outro" for s in plan["scenes"][-1].get("shots", [])
-    ):
-        plan["scenes"][-1] = ending
-    else:
-        plan.setdefault("scenes", []).append(ending)
+    identity = entities[speaker].get("identity") or {}
+    if identity.get("attached_value") is not None:
+        value = identity["attached_value"]
+        for previous in story[:insertion]:
+            for numeric in previous.get("screen_text", []):
+                if numeric.get("entity_key") == speaker and numeric.get("value") is not None:
+                    value = (numeric.get("changes") or [{"value": numeric["value"]}])[-1]["value"]
+        shot["screen_text"].append({
+            "key": identity.get("label_key") or speaker, "entity_key": speaker,
+            "value": value, "text": str(value), "anchor": "character", "x": 0.22, "y": 0.15,
+            "anchor_box": [0.06, 0.12, 0.35, 0.65],
+        })
+    count = 0
+    for scene in scenes:
+        if count < insertion <= count + len(scene["shots"]):
+            scene["shots"].insert(insertion - count, shot)
+            break
+        count += len(scene["shots"])
+    plan["scenes"] = scenes
+    config = plan.setdefault("audio", {})
+    for kind in ("sfx", "holds"):
+        config[kind] = [
+            cue | {"shot_index": positions[cue.get("shot_index", 0)]
+                   + (positions[cue.get("shot_index", 0)] >= insertion)}
+            for cue in config.get(kind, []) if cue.get("shot_index", 0) in positions
+        ]
+    config["holds"].append({
+        "shot_index": insertion, "at_sec": 0, "duration_sec": MIDROLL_SECONDS, "drop_db": -90,
+    })
     return plan
 
 

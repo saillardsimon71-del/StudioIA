@@ -104,6 +104,7 @@ def test_assessment_preserves_first_occurrence_and_trim_caps_before_repeat(
 
 def test_listener_only_closeup_preserves_ordered_two_speaker_exchange():
     plan = planned_episode({})
+    plan['scenes'][0]['shots'] = plan['scenes'][0]['shots'][:1]
     plan['entities'].append({'key': 'visitor', 'kind': 'character', 'name': 'Visitor',
                              'description': 'A blue coat.'})
     shot = plan['scenes'][0]['shots'][0]

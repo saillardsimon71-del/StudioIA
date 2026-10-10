@@ -217,9 +217,10 @@ def compile_h3_prompt(shot, context=None, first_frame=False) -> str:
         for item in entities:
             if item.get("kind", "character") == "character" and item["key"] not in ids:
                 ids[item["key"]] = f"S{len(ids) + 1}"
-        outro = shot.get("purpose") == "outro"
+        midroll = (shot.get("purpose") or info.get("purpose")) == "midroll"
         delivery = (
-            "natural" if outro or profile["dialogue_density"] != "brisk" else "brisk conversational"
+            "natural" if midroll or profile["dialogue_density"] != "brisk"
+            else "brisk conversational"
         )
         for index, turn in enumerate(turns, start=1):
             who, identity, _ = _speaker_identity(
@@ -246,10 +247,10 @@ def compile_h3_prompt(shot, context=None, first_frame=False) -> str:
                         f"After spoken turn {index}, show this visible reaction: {reaction}."
                     )
         parts.append("Only the tagged words below are spoken, in the listed order.")
-        if outro:
+        if midroll:
             parts.append(
-                "Each tagged line is spoken exactly once, with clear unhurried articulation. "
-                "After the last line, the host stays silent and holds a welcoming smile."
+                "Each tagged line is spoken exactly once, clearly within about four seconds. "
+                "After the line, the character stays silent and holds the pointing gesture."
             )
         if len(turns) > 1:
             parts.append("The speakers take turns in this order, without overlapping speech.")
@@ -276,7 +277,7 @@ def compile_h3_prompt(shot, context=None, first_frame=False) -> str:
         parts.append(
             "The character reacts immediately through expression or gesture after the beat."
         )
-    if dialogue and profile["active_listening"] and shot.get("purpose") != "outro":
+    if dialogue and profile["active_listening"] and not midroll:
         parts.append(
             "Any listener follows the speaker with attentive posture and responsive gestures."
         )

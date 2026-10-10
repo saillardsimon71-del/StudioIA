@@ -15,6 +15,7 @@
           id: shot.id,
           description: shot.description,
           dialogue: shot.dialogue,
+          exchange: (shot.dialogue_turns?.length ?? 0) > 1,
           prompt: shot.prompt,
           image_prompt: shot.image_prompt,
         })),
@@ -30,7 +31,7 @@
     saving = true;
     error = "";
     try {
-      await studio.saveScript(board.project.id, drafts);
+      await studio.saveScript(board.project.id, drafts.map(({ exchange, ...shot }) => shot));
       await onrefresh();
       onclose();
     } catch (err) {
@@ -61,8 +62,10 @@
             ></textarea></label
           ><label
             >Dialogue à entendre<textarea rows="2" bind:value={shot.dialogue}
+              readonly={shot.exchange}
             ></textarea></label
           >
+          {#if shot.exchange}<p class="hint">Modifiez les répliques et leurs locuteurs dans l'éditeur de ce plan.</p>{/if}
           <details>
             <summary>Action filmée et référence visuelle</summary>
             <div class="stack advanced">

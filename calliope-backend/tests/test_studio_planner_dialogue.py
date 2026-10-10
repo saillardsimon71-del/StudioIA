@@ -95,7 +95,13 @@ def test_planner_accepts_benign_formatting_without_regenerating_the_episode(monk
 
     async def generate(messages, **options):
         requests.append(copy.deepcopy(messages))
-        return manifest('Mango: "<d>[English] You\'re\nkidding.</d>"')
+        plan = manifest('Mango: "<d>[English] You\'re\nkidding.</d>"')
+        first = plan["scenes"][0]["shots"][0]
+        first["duration_sec"] = 2.5
+        reply = copy.deepcopy(first)
+        reply.update(speaker="blueberry", dialogue="No.", duration_sec=2.5)
+        plan["scenes"][0]["shots"].append(reply)
+        return plan
 
     monkeypatch.setattr(series_planner, "generate_structured", generate)
     result = asyncio.run(
@@ -125,6 +131,7 @@ def test_planner_repairs_real_two_voice_shot_with_a_localized_instruction(monkey
     )
     assert [
         (s["speaker"], s["dialogue"], s["duration_sec"]) for s in result["scenes"][0]["shots"]
+        if s.get("purpose") != "midroll"
     ] == [
         ("mango", "You're kidding.", 3.4),
         ("blueberry", "No.", 2.6),
@@ -178,15 +185,12 @@ def test_duration_near_target_is_accepted_without_padding():
 
 @pytest.mark.parametrize("language,label,dialogue", [
     ("en", "English",
-     "Want to make videos too? Copy this video's link, like, subscribe, and comment GO!"),
-    ("fr", "French", "Toi aussi, tu veux faire des vidéos ? "
-     "Copie le lien de la vidéo, like, abonne-toi et commente GO !"),
-    ("fr-FR", "French", "Toi aussi, tu veux faire des vidéos ? "
-     "Copie le lien de la vidéo, like, abonne-toi et commente GO !"),
-    ("ja", "Japanese", "あなたも動画を作りたい？この動画のリンクをコピーして、"
-     "いいねと登録をして、GOとコメントしてね！"),
+     "Subscribe, copy the link and comment GO!"),
+    ("fr", "French", "Abonne-toi, copie le lien et commente GO !"),
+    ("fr-FR", "French", "Abonne-toi, copie le lien et commente GO !"),
+    ("ja", "Japanese", "登録して、リンクをコピーして、GOとコメントしてね！"),
 ])
-def test_each_episode_gets_a_fruit_outro_in_its_language(monkeypatch, language, label, dialogue):
+def test_each_episode_gets_a_canonical_midroll_in_its_language(monkeypatch, language, label, dialogue):
     from calliope.studio.h3_prompt import compile_h3_prompt
 
     requests = []
@@ -203,20 +207,19 @@ def test_each_episode_gets_a_fruit_outro_in_its_language(monkeypatch, language, 
     context = {"entities": [], "target_seconds": 65, "language": language}
     result = asyncio.run(series_planner.plan_episode(context, "An unexpected discovery.", ""))
     assert len(requests) == 1
-    assert len(result["scenes"]) == 2
-    assert sum(s["duration_sec"] for s in result["scenes"][0]["shots"]) == pytest.approx(59.8)
-    ending = result["scenes"][-1]["shots"]
-    assert len(ending) == 1
-    shot = ending[0]
+    assert len(result["scenes"]) == 1
+    shots = result["scenes"][0]["shots"]
+    assert len(shots) == 11
+    assert sum(s["duration_sec"] for s in shots if s.get("purpose") != "midroll") == pytest.approx(59.8)
+    shot = shots[5]
     assert shot["dialogue"] == dialogue
-    assert shot["speaker"] == "studio_cta_host"
-    assert shot["character_keys"] == ["studio_cta_host"]
+    assert shot["speaker"] == "mango"
+    assert shot["character_keys"] == ["mango"]
     assert shot["language"] == language.split("-")[0]
-    host = next(e for e in result["entities"] if e["key"] == "studio_cta_host")
-    assert "apple" in host["description"].lower()
+    assert not any(e["key"] == "studio_cta_host" for e in result["entities"])
     compiled = compile_h3_prompt(shot, context | {"entities": result["entities"]})
     spoken = re.findall(r"<d>\[([^\]]+)\]\s*(.*?)</d>", compiled)
-    assert len(spoken) == 2
+    assert len(spoken) == 1
     assert all(turn_language == label for turn_language, _ in spoken)
     assert "".join("".join(text for _, text in spoken).split()) == "".join(dialogue.split())
     assert "<d>" not in shot["dialogue"]

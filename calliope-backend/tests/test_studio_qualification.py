@@ -133,10 +133,12 @@ async def test_planner_recovers_visibility_on_last_attempt_and_preserves_raw_out
     missing_visual_reference.pop("dialogue_turns")
     missing_visual_reference.update(speaker="mango", dialogue="Look at me.",
                                     character_keys=["blueberry"], duration_sec=5)
+    consequence = exchange()
+    consequence.update(description="Mango sees the proof and loses his smile.", duration_sec=4)
     responses = [
         {"scenes": [{"shots": []}]},
         {"scenes": [{"shots": [missing_voice]}]},
-        {"scenes": [{"shots": [missing_visual_reference]}]},
+        {"scenes": [{"shots": [missing_visual_reference, consequence]}]},
     ]
     requests = []
 
@@ -364,8 +366,11 @@ def test_turn_edits_and_exact_labels_reach_the_export_snapshot(client, monkeypat
     shot = exchange()
     shot["screen_text"] = [{"key": "score", "text": "12,349", "x": 0.5, "y": 0.2,
                             "entity_key": "Mango"}]
-    plan = series_planner.normalize_plan({"scenes": [{"shots": [shot]}]}, context())
+    payoff = exchange()
+    payoff.update(description="Mango sees the proof.", dialogue_turns=[], duration_sec=1)
+    plan = series_planner.normalize_plan({"scenes": [{"shots": [shot, payoff]}]}, context())
     plan["entities"] = context()["entities"]
+    plan = series_planner.insert_midroll(plan, context())
     production.save_episode_plan(project, plan)
     first = service.board(project)["scenes"][0]["shots"][0]
     with service.database() as conn:
@@ -383,9 +388,15 @@ def test_turn_edits_and_exact_labels_reach_the_export_snapshot(client, monkeypat
         "dialogue": "", "dialogue_turns": []
     })
     assert cleared.status_code == 200
-    take = service.store_upload(first["id"], media[0].read_bytes(), "video")
-    service.select_take(take["id"])
-    client.post(f"/api/studio/shots/{first['id']}/approve", json={"approved": True})
+    async def assess(*args):
+        return {"status": "ok", "reason": ""}
+
+    monkeypatch.setattr(production, "assess_take", assess)
+    for current in service.board(project)["scenes"][0]["shots"]:
+        take = service.store_upload(current["id"], media[0].read_bytes(), "video")
+        service.select_take(take["id"])
+        approved = client.post(f"/api/studio/shots/{current['id']}/approve", json={"approved": True})
+        assert approved.status_code == 200, approved.text
     response = client.post(f"/api/studio/projects/{project}/export", json={"request_id": "label"})
     assert response.status_code == 200, response.text
     snapshot = json.loads(queue_manager.get_job(response.json()["job_id"])["payload_json"])

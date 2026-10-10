@@ -67,6 +67,7 @@ class EpisodeCreate(BaseModel):
     idea: str = Field(min_length=1, max_length=20000)
     objective: str = Field(default="", max_length=10000)
     request_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+    prepare_only: bool = False
 
     @field_validator("idea")
     @classmethod
@@ -157,6 +158,29 @@ async def save_script(project_id: int, payload: ScriptEdit):
                 for key, value in data.items()
             )
             if different:
+                context = service.shot_context(conn, patch.id)
+                shot_context = context["shot"]
+                turns = shot_context.get("dialogue_turns") or []
+                if "dialogue" in data and data["dialogue"] != extra["dialogue"] and turns:
+                    if len(turns) > 1:
+                        raise HTTPException(
+                            422, "Modifiez les répliques de cet échange dans l'éditeur du plan "
+                            "pour conserver leurs locuteurs.",
+                        )
+                    from calliope.studio.series_planner import normalize_dialogue
+
+                    try:
+                        text, _ = normalize_dialogue(
+                            data["dialogue"], turns[0]["speaker"], context["entities"]
+                        )
+                    except ValueError as exc:
+                        raise HTTPException(422, str(exc)) from exc
+                    data["dialogue"] = text
+                    shot_context["dialogue_turns"] = [turns[0] | {"text": text}] if text else []
+                    conn.execute(
+                        "UPDATE studio_shot_context SET context_json=? WHERE clip_id=?",
+                        (json.dumps(shot_context), patch.id),
+                    )
                 for key, value in data.items():
                     table, identifier = (
                         ("clips", "id") if key == "description" else ("studio_shots", "clip_id")
@@ -184,6 +208,18 @@ async def save_script(project_id: int, payload: ScriptEdit):
                 ("\n\n".join(lines), project_id),
             )
         conn.commit()
+    return service.board(project_id)
+
+
+@router.post("/projects/{project_id}/midroll")
+async def prepare_midroll(project_id: int):
+    series.require_editable(project_id)
+    from calliope.studio.production import ensure_midroll
+
+    try:
+        ensure_midroll(project_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     return service.board(project_id)
 
 

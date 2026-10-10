@@ -248,6 +248,7 @@ async def assemble(
                     (probe["width"], probe["height"]), (width, height),
                     work / f"text-{index}.ass",
                     take_id=clip.get("take_id"),
+                    phone=clip.get("purpose") == "midroll",
                 )
                 overlays.append({"clip_id": clip.get("clip_id"), **overlay_data})
             if not native_audio:
@@ -362,8 +363,19 @@ async def assemble(
             from calliope.studio.audio import mix_command
 
             mixed = work / "ready.mp4"
+            config = dict(frozen["audio"])
+            config["holds"] = [
+                hold for hold in config.get("holds", [])
+                if hold["shot_index"] >= len(clips)
+                or clips[hold["shot_index"]].get("purpose") != "midroll"
+            ] + [
+                {"shot_index": i, "at_sec": 0, "duration_sec": duration, "drop_db": -90}
+                for i, (clip, duration) in enumerate(zip(clips, durations))
+                if clip.get("purpose") == "midroll"
+            ]
+            frozen["audio"] = config
             command = await asyncio.to_thread(
-                mix_command, base, ready, frozen["audio"], durations, work, mixed,
+                mix_command, base, ready, config, durations, work, mixed,
             )
             await _run_ffmpeg(
                 command, total_duration, 0.95, 0.99, "Mix voix, musique et bruitages",

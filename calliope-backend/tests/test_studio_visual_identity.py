@@ -257,7 +257,9 @@ def test_strict_canonical_review_pauses_before_variant_and_any_video(client, mon
 def test_visual_contract_refresh_requires_manifest_and_never_dispatches(client, monkeypatch):
     created = series(client)
     project = episode(client, created["id"]).json()["project_id"]
-    production.save_episode_plan(project, planned_episode({}))
+    plan = planned_episode({})
+    plan["scenes"][0]["shots"] = plan["scenes"][0]["shots"][:1]
+    production.save_episode_plan(project, plan)
     with service.database() as conn:
         conn.execute("UPDATE studio_productions SET status='failed' WHERE project_id=?", (project,))
         original_jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]

@@ -8,7 +8,7 @@ from calliope.config import settings
 from calliope.events.bus import event_bus
 from calliope.queue.manager import queue_manager
 from calliope.studio import audio, series, service
-from calliope.studio.series_planner import append_outro, plan_episode
+from calliope.studio.series_planner import insert_midroll, plan_episode
 from calliope.studio.visual_identity import (
     compile_image_request,
     file_hash,
@@ -157,6 +157,13 @@ def save_episode_plan(project_id, plan):
                     ),
                 )
                 script.extend([shot.get("description", ""), shot.get("dialogue", "")])
+        plan["editorial_script"] = [dict(row) for row in conn.execute(
+            "SELECT c.description,ss.dialogue,ss.prompt,ss.image_prompt,c.duration_sec "
+            "FROM clips c JOIN studio_shots ss ON ss.clip_id=c.id JOIN scenes s ON s.id=c.scene_id "
+            "WHERE c.project_id=? AND COALESCE((SELECT json_extract(context_json,'$.purpose') "
+            "FROM studio_shot_context WHERE clip_id=c.id),'') NOT IN ('midroll','outro') "
+            "ORDER BY s.order_index,s.id,c.order_index,c.id", (project_id,),
+        )]
         conn.execute(
             "UPDATE projects SET title=? WHERE id=?",
             (str(plan.get("title") or current["title"])[:200], project_id),
@@ -198,7 +205,7 @@ def save_episode_plan(project_id, plan):
         conn.commit()
 
 
-def ensure_outro(project_id):
+def ensure_midroll(project_id):
     with service.database() as conn:
         conn.execute("BEGIN IMMEDIATE")
         episode = conn.execute(
@@ -207,61 +214,97 @@ def ensure_outro(project_id):
         ).fetchone()
         if not episode:
             return
-        last = conn.execute(
-            "SELECT c.id,c.scene_id,sc.context_json,ss.dialogue FROM clips c "
-            "JOIN scenes s ON s.id=c.scene_id JOIN studio_shots ss ON ss.clip_id=c.id "
-            "LEFT JOIN studio_shot_context sc ON sc.clip_id=c.id WHERE c.project_id=? "
-            "ORDER BY s.order_index DESC,s.id DESC,c.order_index DESC,c.id DESC LIMIT 1",
-            (project_id,),
-        ).fetchone()
         context = json.loads(episode["context_json"])
-        plan = append_outro(json.loads(episode["plan_json"] or "{}"), context)
-        ending = plan["scenes"][-1]
-        shot = ending["shots"][0]
-        last_context = json.loads(last["context_json"] or "{}") if last else {}
-        has_outro = last_context.get("purpose") == "outro"
-        if (
-            has_outro and last_context.get("language") == shot["language"]
-            and last["dialogue"] == shot["dialogue"]
-        ):
-            return
-        host = next(
-            e for e in context.get("entities", []) + plan["entities"]
-            if e["key"] == ending["shots"][0]["speaker"]
-        )
-        conn.execute(
-            "INSERT OR IGNORE INTO studio_entities(series_id,entity_key,kind,name,description) "
-            "VALUES(?,?,?,?,?)",
-            (episode["series_id"], host["key"], host["kind"], host["name"], host["description"]),
-        )
-        if has_outro:
-            clip_id = last["id"]
-            conn.execute(
-                "UPDATE studio_shots SET dialogue=?,selected_video_id=NULL,approved=0,"
-                "trim_start_sec=NULL,trim_end_sec=NULL WHERE clip_id=?",
-                (shot["dialogue"], clip_id),
-            )
-            conn.execute("UPDATE clips SET clip_path=NULL WHERE id=?", (clip_id,))
-            conn.execute(
-                "UPDATE scenes SET dialog=? WHERE id=?", (shot["dialogue"], last["scene_id"])
-            )
-            service.touch(conn, project_id)
-        else:
-            scene_id = service.add_scene(conn, project_id, ending)
-            clip_id = conn.execute(
-                "SELECT id FROM clips WHERE scene_id=?", (scene_id,)
-            ).fetchone()[0]
+        by_key = {e["key"]: e for e in series.entities(conn, episode["series_id"])}
+        by_key.update({e["key"]: e for e in context.get("entities", [])})
+        context["entities"] = list(by_key.values())
+        plan = json.loads(episode["plan_json"] or "{}")
+        if "editorial_script" not in plan:
+            plan["editorial_script"] = [
+                shot for scene in plan.get("scenes", []) for shot in scene["shots"]
+                if shot.get("purpose") not in ("midroll", "outro")
+            ]
+        rows = conn.execute(
+            "SELECT c.id,c.scene_id,c.order_index FROM clips c JOIN scenes s ON s.id=c.scene_id "
+            "WHERE c.project_id=? ORDER BY s.order_index,s.id,c.order_index,c.id", (project_id,),
+        ).fetchall()
         fields = ("action", "reaction", "framing", "camera", "language", "purpose",
-                  "speaker", "character_keys", "location_key", "reference_key")
+                  "speaker", "character_keys", "location_key", "reference_key", "dialogue_turns",
+                  "soundscape", "screen_text")
+        live_scenes = []
+        for scene in conn.execute(
+            "SELECT * FROM scenes WHERE project_id=? ORDER BY order_index,id", (project_id,)
+        ).fetchall():
+            shots = []
+            for row in rows:
+                if row["scene_id"] != scene["id"]:
+                    continue
+                public = service.public_shot(conn, row["id"])
+                info = service.shot_context(conn, row["id"])["shot"]
+                shots.append({key: public[key] for key in (
+                    "id", "description", "prompt", "image_prompt", "dialogue", "duration_sec",
+                    "audio_mode", "continue_from_previous",
+                )} | info)
+            live_scenes.append({"heading": scene["heading"], "action": scene["action"],
+                                "dialog": scene["dialog"], "shots": shots})
+        plan["scenes"] = live_scenes
+        plan["audio"] = audio.get_audio(conn, project_id)
+        plan["audio"].pop("assets")
+        old_shots = [shot for scene in live_scenes for shot in scene["shots"]]
+        promotions = [shot for shot in old_shots if shot.get("purpose") in ("outro", "midroll")]
+        if len(promotions) > 1:
+            raise ValueError(
+                "Plusieurs incitations existent : conservez un seul plan d'incitation."
+            )
+        insert_midroll(plan, context)
+        shots = [shot for scene in plan["scenes"] for shot in scene["shots"]]
+        index = next(i for i, shot in enumerate(shots) if shot.get("purpose") == "midroll")
+        shot = shots[index]
+        previous = next(row for row in rows if row["id"] == shots[index - 1]["id"])
+        old = promotions[0] if promotions else None
+        if old and old.get("purpose") == "midroll" and all(
+            old.get(key) == shot.get(key) for key in fields + ("dialogue", "duration_sec")
+        ) and old_shots.index(old) == index:
+            return
+        conn.execute(
+            "UPDATE clips SET order_index=order_index+1 WHERE scene_id=? AND order_index>?",
+            (previous["scene_id"], previous["order_index"]),
+        )
+        if old:
+            clip_id = old["id"]
+            conn.execute(
+                "UPDATE clips SET scene_id=?,order_index=?,description=?,duration_sec=?,"
+                "clip_path=NULL WHERE id=?",
+                (previous["scene_id"], previous["order_index"] + 1, shot["description"],
+                 shot["duration_sec"], clip_id),
+            )
+            conn.execute(
+                "UPDATE studio_shots SET dialogue=?,prompt=?,image_prompt=?,audio_mode='native',"
+                "selected_video_id=NULL,selected_image_id=NULL,approved=0,"
+                "trim_start_sec=NULL,trim_end_sec=NULL,continue_from_previous=0 WHERE clip_id=?",
+                (shot["dialogue"], shot["prompt"], shot["image_prompt"], clip_id),
+            )
+            conn.execute("DELETE FROM scenes WHERE project_id=? AND NOT EXISTS "
+                         "(SELECT 1 FROM clips WHERE scene_id=scenes.id)", (project_id,))
+        else:
+            clip_id = service.add_shot(conn, project_id, previous["scene_id"], shot)
+            conn.execute("UPDATE clips SET order_index=? WHERE id=?",
+                         (previous["order_index"] + 1, clip_id))
         conn.execute(
             "INSERT INTO studio_shot_context(clip_id,context_json) VALUES(?,?) "
             "ON CONFLICT(clip_id) DO UPDATE SET context_json=excluded.context_json",
-            (clip_id, json.dumps({key: shot[key] for key in fields})),
+            (clip_id, json.dumps({key: shot[key] for key in fields if key in shot})),
         )
+        shot["id"] = clip_id
+        for cue in plan["audio"]["sfx"] + plan["audio"]["holds"]:
+            cue["shot_id"] = shots[cue["shot_index"]]["id"]
+        conn.execute("UPDATE studio_audio SET settings_json=? WHERE project_id=?",
+                     (json.dumps(plan["audio"]), project_id))
         conn.execute(
             "UPDATE studio_episodes SET plan_json=? WHERE project_id=?",
             (json.dumps(plan), project_id),
         )
+        service.touch(conn, project_id)
         conn.commit()
 
 
@@ -580,7 +623,8 @@ async def ensure_entities(job, should_stop):
         )
         canon = {e["key"]: e for e in planned.get("entities", [])}
         canon.update({e["key"]: e for e in frozen.get("entities", [])})
-        items = [entity for entity in items if entity["key"] in canon]
+        items = [entity for entity in items if entity["key"] in canon
+                 and entity["key"] != "studio_cta_host"]
         context = frozen | {
             "entities": items,
             "bible": {
@@ -750,7 +794,10 @@ async def render_videos(job, shots, should_stop):
 
     async def render(index, shot):
         if shot["continue_from_previous"] and index:
-            await tasks[index - 1]
+            previous = next((i for i in range(index - 1, -1, -1)
+                             if shots[i].get("purpose") not in ("midroll", "outro")), None)
+            if previous is not None:
+                await tasks[previous]
         async with semaphore:
             if aborted.is_set():
                 return
@@ -799,7 +846,16 @@ async def run_production(job, payload, should_stop):
             )
             await checkpoint(job, "writing", 0.1, "Scénario préparé", should_stop)
             save_episode_plan(project_id, plan)
-        ensure_outro(project_id)
+        ensure_midroll(project_id)
+        if payload.get("prepare_only"):
+            with service.database() as conn:
+                conn.execute(
+                    "UPDATE studio_productions SET stage='review',message=? WHERE project_id=?",
+                    ("Scénario préparé. Vérifiez l'entrée, la récompense et la suite "
+                     "avant les rendus.", project_id),
+                )
+                conn.commit()
+            raise ProductionPausedError()
         with service.database() as conn:
             snapshot = json.loads(episode["context_json"])
             expected_values = {
@@ -919,15 +975,19 @@ async def commit_episode(project_id, revision):
                 (
                     "SELECT c.description,ss.dialogue,ss.prompt FROM clips c JOIN studio_sh"
                     "ots ss ON ss.clip_id=c.id JOIN scenes s ON s.id=c.scene_id WHERE c.pro"
-                    "ject_id=? ORDER BY s.order_index,s.id,c.order_index,c.id"
+                    "ject_id=? AND COALESCE((SELECT json_extract(context_json,'$.purpose') "
+                    "FROM studio_shot_context WHERE clip_id=c.id),'') NOT IN ('midroll','outro') "
+                    "ORDER BY s.order_index,s.id,c.order_index,c.id"
                 ),
                 (project_id,),
             )
         ]
     original = [
         {k: str(shot.get(k) or "") for k in ("description", "dialogue", "prompt")}
-        for scene in plan.get("scenes", [])
-        for shot in scene["shots"]
+        for shot in plan.get("editorial_script", [
+            shot for scene in plan.get("scenes", []) for shot in scene["shots"]
+        ])
+        if shot.get("purpose") not in ("midroll", "outro")
     ]
     if actual != original:
         from calliope.agent.llm import generate_structured

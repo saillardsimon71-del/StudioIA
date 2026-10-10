@@ -255,6 +255,7 @@ def public_shot(conn, shot_id):
     clip["soundscape"] = context.get("soundscape", "")
     clip["screen_text"] = context.get("screen_text", [])
     clip["character_keys"] = context.get("character_keys", [])
+    clip["purpose"] = context.get("purpose", "")
     if clip["continue_from_previous"]:
         try:
             previous = _previous_video(conn, shot_id)
@@ -898,7 +899,8 @@ def approve_shot(shot_id, approved):
 def _previous_video(conn, shot_id):
     clip = require_shot(conn, shot_id)
     rows = conn.execute(
-        "SELECT c.id FROM clips c JOIN scenes s ON s.id=c.scene_id WHERE c.project_id=? "
+        "SELECT c.id,sc.context_json FROM clips c JOIN scenes s ON s.id=c.scene_id "
+        "LEFT JOIN studio_shot_context sc ON sc.clip_id=c.id WHERE c.project_id=? "
         "ORDER BY s.order_index,s.id,c.order_index,c.id",
         (clip["project_id"],),
     ).fetchall()
@@ -906,7 +908,8 @@ def _previous_video(conn, shot_id):
     for row in rows:
         if row["id"] == shot_id:
             break
-        previous = row["id"]
+        if json.loads(row["context_json"] or "{}").get("purpose") not in ("midroll", "outro"):
+            previous = row["id"]
     if previous is None:
         raise HTTPException(422, "Le premier plan ne possède pas de plan précédent.")
     result = conn.execute(
@@ -1169,8 +1172,20 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
         if existing:
             return {'job_id': existing['job_id']}
         shots = [public_shot(conn, row['id']) for row in conn.execute(
-            'SELECT id FROM clips WHERE project_id=?', (project_id,),
+            'SELECT c.id FROM clips c JOIN scenes s ON s.id=c.scene_id WHERE c.project_id=? '
+            'ORDER BY s.order_index,s.id,c.order_index,c.id', (project_id,),
         ).fetchall()]
+        if conn.execute(
+            "SELECT 1 FROM studio_episodes WHERE project_id=?", (project_id,)
+        ).fetchone():
+            promotions = [i for i, shot in enumerate(shots) if shot.get("purpose") == "midroll"]
+            if len(promotions) != 1 or promotions[0] in (0, len(shots) - 1) or any(
+                shot.get("purpose") == "outro" for shot in shots
+            ):
+                raise HTTPException(
+                    409, "L'épisode doit contenir une seule incitation au milieu du récit. "
+                    "Préparez l'incitation intégrée avant d'exporter.",
+                )
     evaluated = {}
     for shot in shots:
         take = selected_video(shot)
@@ -1229,6 +1244,7 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
                     "trim_end_sec": shot.get("trim_end_sec"),
                     "audio_mode": shot["audio_mode"],
                     "screen_text": shot.get("screen_text", []),
+                    "purpose": shot.get("purpose", ""),
                     "transcript": (effective.get('transcription_cache') or {}).get('transcript'),
                 }
             )

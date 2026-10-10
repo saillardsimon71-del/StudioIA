@@ -425,7 +425,7 @@ def preview(project_id):
 
 
 def mix_command(base, source, config, durations, directory, ready):
-    music_path, fx_path = render_stems(config, durations, directory)
+    music_path, fx_path = render_stems({**config, "holds": []}, durations, directory)
     command = base + [
         "-i",
         str(source),
@@ -438,29 +438,28 @@ def mix_command(base, source, config, durations, directory, ready):
     ]
     total = sum(durations)
     offsets = [sum(durations[:i]) for i in range(len(durations))]
-    imported_holds = ""
-    if config.get("music_path"):
-        for hold in config.get("holds", []):
-            if hold["shot_index"] >= len(durations):
-                continue
-            start = quantize(
-                offsets[hold["shot_index"]]
-                + min(hold["at_sec"], durations[hold["shot_index"]])
-            )
-            end = min(total, start + hold["duration_sec"])
-            if start >= end:
-                continue
-            ramp = min(0.03, (end - start) / 4)
-            floor = 10 ** (hold["drop_db"] / 20)
-            imported_holds += (
-                f",volume='1-{1 - floor:.9f}*max(0,min(1,min("
-                f"(t-{start:.9f})/{ramp:.9f},({end:.9f}-t)/{ramp:.9f})))':eval=frame"
-            )
+    holds = ""
+    for hold in config.get("holds", []):
+        if hold["shot_index"] >= len(durations):
+            continue
+        start = quantize(
+            offsets[hold["shot_index"]]
+            + min(hold["at_sec"], durations[hold["shot_index"]])
+        )
+        end = min(total, start + hold["duration_sec"])
+        if start >= end:
+            continue
+        ramp = min(0.03, (end - start) / 4)
+        floor = 10 ** (hold["drop_db"] / 20)
+        holds += (
+            f",volume='1-{1 - floor:.9f}*max(0,min(1,min("
+            f"(t-{start:.9f})/{ramp:.9f},({end:.9f}-t)/{ramp:.9f})))':eval=frame"
+        )
     filters = [
         f"[0:a]volume={config.get('voice_gain_db', -5)}dB,asplit=2[voice][key]",
         f"[1:a]aresample=48000,atrim=duration={total:.9f},asetpts=PTS-STARTPTS,"
         f"volume={config.get('music_gain_db', -12)}dB,afade=t=in:d=1,"
-        f"afade=t=out:st={max(0, total - 1.5):.9f}:d=1.5{imported_holds}[bed]",
+        f"afade=t=out:st={max(0, total - 1.5):.9f}:d=1.5[bed]",
     ]
     if config.get("ducking", True):
         filters.append(
@@ -468,11 +467,11 @@ def mix_command(base, source, config, durations, directory, ready):
         )
     else:
         filters.extend(["[key]anullsink", "[bed]anull[ducked]"])
-    inputs = ["[voice]", "[ducked]", "[2:a]"]
+    inputs = ["[ducked]", "[2:a]"]
     for cue in config.get("sfx", []):
         if not cue.get("path") or cue["shot_index"] >= len(durations):
             continue
-        index = len(inputs)
+        index = len(inputs) + 1
         command += ["-i", cue["path"]]
         delay = round(
             quantize(
@@ -487,8 +486,11 @@ def mix_command(base, source, config, durations, directory, ready):
         inputs.append(f"[{label}]")
     filters.append(
         "".join(inputs)
-        + f"amix=inputs={len(inputs)}:duration=first:normalize=0,"
-        + "alimiter=limit=0.94:level=0:latency=1[mixed]"
+        + f"amix=inputs={len(inputs)}:duration=first:normalize=0{holds}[background]"
+    )
+    filters.append(
+        "[voice][background]amix=inputs=2:duration=first:normalize=0,"
+        "alimiter=limit=0.94:level=0:latency=1[mixed]"
     )
     return command + [
         "-filter_complex",

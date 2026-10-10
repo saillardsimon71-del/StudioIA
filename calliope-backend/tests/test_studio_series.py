@@ -125,6 +125,13 @@ def planned_episode(context):
                         "reference_key": "keeper-at-radio",
                         "duration_sec": 5,
                         "audio_mode": "native",
+                    },
+                    {
+                        "description": "The keeper discovers tomorrow's date on the radio.",
+                        "prompt": "The keeper sees an impossible date and reacts.",
+                        "image_prompt": "Keeper at the same radio, blue light.",
+                        "dialogue": "", "speaker": "", "character_keys": ["keeper"],
+                        "duration_sec": 1.6, "audio_mode": "native",
                     }
                 ],
             }
@@ -315,7 +322,7 @@ def test_planner_requires_requested_episode_duration():
     with pytest.raises(ValueError, match="trop courte"):
         normalize_plan(plan, {"entities": [], "target_seconds": 70})
     plan = planned_episode({})
-    plan["scenes"][0]["shots"] *= 14
+    plan["scenes"][0]["shots"] = plan["scenes"][0]["shots"][:1] * 14
     result = normalize_plan(copy.deepcopy(plan), {"entities": [], "target_seconds": 70})
     assert sum(s["duration_sec"] for s in result["scenes"][0]["shots"]) == 70
 
@@ -338,7 +345,7 @@ def test_production_resumes_original_modal_call_without_another_take(client, mon
 
     def spawn(self, request):
         calls.append(
-            "outro-call" if "Want to make videos too?" in request["prompt"] else "original-call"
+            "midroll-call" if "Subscribe, copy the link" in request["prompt"] else "original-call"
         )
         return calls[-1]
 
@@ -370,7 +377,7 @@ def test_production_resumes_original_modal_call_without_another_take(client, mon
     board = service.board(first["project_id"])
     takes = board["scenes"][0]["shots"][0]["takes"]
     assert len([t for t in takes if t["kind"] == "video"]) == 1
-    assert calls == ["original-call", "outro-call"]
+    assert calls == ["original-call", "midroll-call", "original-call"]
     assert board["production"]["status"] == "done"
 
 
@@ -449,7 +456,7 @@ def test_70_second_script_keeps_large_output_budget_on_json_retry(monkeypatch):
     budgets = []
     plan = planned_episode({})
     plan["scenes"][0]["shots"][0]["duration_sec"] = 4.4
-    plan["scenes"][0]["shots"] *= 14
+    plan["scenes"][0]["shots"] = plan["scenes"][0]["shots"][:1] * 14
 
     class Client:
         async def chat(self, messages, **options):
@@ -461,7 +468,7 @@ def test_70_second_script_keeps_large_output_budget_on_json_retry(monkeypatch):
 
     monkeypatch.setattr(llm, "LLMClient", Client)
     result = asyncio.run(plan_episode({"target_seconds": 70, "entities": []}, "A warning", ""))
-    assert len(result["scenes"][0]["shots"]) == 14
+    assert len(result["scenes"][0]["shots"]) == 15
     # Le nombre de plans est libre ; le budget suit la cible, ~23 plans estimés.
     assert budgets == [16000, 16000]
 
@@ -476,7 +483,7 @@ def test_planner_repairs_short_episode_before_any_gpu_render(monkeypatch):
         plan = planned_episode({})
         if len(requests) > 1:
             plan["scenes"][0]["shots"][0]["duration_sec"] = 4.4
-            plan["scenes"][0]["shots"] *= 14
+            plan["scenes"][0]["shots"] = plan["scenes"][0]["shots"][:1] * 14
         return plan
 
     monkeypatch.setattr(series_planner, "generate_structured", generate)
@@ -487,8 +494,8 @@ def test_planner_repairs_short_episode_before_any_gpu_render(monkeypatch):
     )
     assert len(requests) == 2
     assert "70" in requests[1][-1]["content"]
-    assert "5" in requests[1][-1]["content"]
-    assert len(result["scenes"][0]["shots"]) == 14
+    assert "6.6" in requests[1][-1]["content"]
+    assert len(result["scenes"][0]["shots"]) == 15
 
 
 def test_dialogue_free_shots_keep_native_ambient_sound():
@@ -502,39 +509,40 @@ def test_dialogue_free_shots_keep_native_ambient_sound():
     assert result["scenes"][0]["shots"][0]["audio_mode"] == "native"
 
 
-def test_outro_language_and_speaker_survive_episode_persistence(client):
+def test_midroll_language_and_speaker_survive_episode_persistence(client):
     from calliope.studio import production, series_planner, service
     from calliope.studio.h3_prompt import compile_h3_prompt
 
     created = series(client)
     client.patch(f"/api/studio/series/{created['id']}", json={"language": "fr"})
     project = episode(client, created["id"]).json()["project_id"]
-    plan = series_planner.append_outro(planned_episode({}), {"entities": [], "language": "fr"})
+    plan = series_planner.insert_midroll(planned_episode({}), {"entities": [], "language": "fr"})
     production.save_episode_plan(project, plan)
     board = service.board(project)
-    ending = board["scenes"][-1]["shots"][0]
+    ending = board["scenes"][0]["shots"][1]
     with service.database() as conn:
         context = service.shot_context(conn, ending["id"])
-    assert context["shot"]["speaker"] == "studio_cta_host"
+    assert context["shot"]["speaker"] == "keeper"
     assert context["shot"]["language"] == "fr"
-    assert context["shot"]["purpose"] == "outro"
+    assert context["shot"]["purpose"] == "midroll"
     compiled = compile_h3_prompt(ending | context["shot"], context, first_frame=True)
-    assert "<d>[French] Toi aussi, tu veux faire des vidéos ?" in compiled
+    assert "<d>[French] Abonne-toi, copie le lien et commente GO !</d>" in compiled
 
 
-def test_resume_adds_missing_outro_once_to_an_existing_episode(client):
+def test_resume_adds_missing_midroll_once_to_an_existing_episode(client):
     from calliope.studio import production, service
 
     created = series(client)
     project = episode(client, created["id"]).json()["project_id"]
     production.save_episode_plan(project, planned_episode({}))
-    production.ensure_outro(project)
-    production.ensure_outro(project)
+    production.ensure_midroll(project)
+    production.ensure_midroll(project)
     board = service.board(project)
-    assert len(board["scenes"]) == 2
+    assert len(board["scenes"]) == 1
+    assert len(board["scenes"][0]["shots"]) == 3
     assert board["scenes"][0]["shots"][0]["dialogue"] == "That's my name. Who is calling?"
-    assert board["scenes"][-1]["shots"][0]["dialogue"] == (
-        "Want to make videos too? Copy this video's link, like, subscribe, and comment GO!"
+    assert board["scenes"][0]["shots"][1]["dialogue"] == (
+        "Subscribe, copy the link and comment GO!"
     )
 
 
@@ -548,27 +556,26 @@ def test_shot_language_controls_speech_validation_in_a_french_series(
     created = series(client)
     client.patch(f"/api/studio/series/{created['id']}", json={"language": "fr"})
     project = episode(client, created["id"]).json()["project_id"]
-    plan = series_planner.append_outro(planned_episode({}), {"entities": [], "language": language})
+    plan = series_planner.insert_midroll(planned_episode({}), {"entities": [], "language": language})
     production.save_episode_plan(project, plan)
-    ending = service.board(project)["scenes"][-1]["shots"][0]
-    clip = make_clip(tmp_path / "english-outro.mp4", 8, tone_windows=[(0.1, 7.8)])
+    ending = service.board(project)["scenes"][0]["shots"][1]
+    clip = make_clip(tmp_path / "midroll.mp4", 4, tone_windows=[(0.1, 3.8)])
     take = service.store_upload(ending["id"], clip.read_bytes(), "video")
     service.select_take(take["id"])
 
     def recognize(path, checkpoint, language):
         text = {
             "en": (
-                "Want to make videos too? Copy this video's link, like, subscribe, and comment GO!"
+                "Subscribe, copy the link and comment GO!"
             ),
             "fr": (
-                "Toi aussi, tu veux faire des vidéos ? "
-                "Copie le lien de la vidéo, like, abonne-toi et commente GO !"
+                "Abonne-toi, copie le lien et commente GO !"
             ),
         }[language]
         return {
             "status": "ok", "text": text,
             "segments": [{"words": [{"word": w, "probability": 0.99} for w in text.split()]}],
-            "speech_intervals": [[0.1, 7.8]], "reason": "",
+            "speech_intervals": [[0.1, 3.8]], "reason": "",
         }
 
     monkeypatch.setattr(transcription, "transcribe_dialogue", recognize)
@@ -578,25 +585,24 @@ def test_shot_language_controls_speech_validation_in_a_french_series(
     assert metadata["transcription_cache"]["signature"][-1] == language
 
 
-def test_resume_replaces_an_english_outro_in_a_french_episode_once(client):
+def test_resume_replaces_an_english_midroll_in_a_french_episode_once(client):
     from calliope.studio import production, series_planner, service
 
     created = series(client)
     client.patch(f"/api/studio/series/{created['id']}", json={"language": "fr"})
     project = episode(client, created["id"]).json()["project_id"]
-    old = series_planner.append_outro(planned_episode({}), {"entities": [], "language": "en"})
+    old = series_planner.insert_midroll(planned_episode({}), {"entities": [], "language": "en"})
     production.save_episode_plan(project, old)
-    ending_id = service.board(project)["scenes"][-1]["shots"][0]["id"]
-    production.ensure_outro(project)
-    production.ensure_outro(project)
+    ending_id = service.board(project)["scenes"][0]["shots"][1]["id"]
+    production.ensure_midroll(project)
+    production.ensure_midroll(project)
     board = service.board(project)
-    assert len(board["scenes"]) == 2
+    assert len(board["scenes"]) == 1
     assert board["scenes"][0]["shots"][0]["dialogue"] == "That's my name. Who is calling?"
-    ending = board["scenes"][-1]["shots"][0]
+    ending = board["scenes"][0]["shots"][1]
     assert ending["id"] == ending_id
     assert ending["dialogue"] == (
-        "Toi aussi, tu veux faire des vidéos ? "
-        "Copie le lien de la vidéo, like, abonne-toi et commente GO !"
+        "Abonne-toi, copie le lien et commente GO !"
     )
     with service.database() as conn:
         assert service.shot_context(conn, ending_id)["shot"]["language"] == "fr"

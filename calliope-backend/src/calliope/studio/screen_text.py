@@ -287,7 +287,8 @@ def _tracked_box(label, point, source_size):
 
 
 def write_overlay(
-    path, labels, start, duration, source_size, target_size, destination, take_id=None
+    path, labels, start, duration, source_size, target_size, destination, take_id=None,
+    phone=False,
 ):
     sw, sh = source_size
     width, height = target_size
@@ -312,6 +313,36 @@ def write_overlay(
     def timestamp(seconds):
         value = round(max(0, seconds) * 100)
         return f"{value // 360000}:{value // 6000 % 60:02}:{value // 100 % 60:02}.{value % 100:02}"
+
+    if phone:
+        cx, cy = padding[0] + sw * scale * 0.68, padding[1] + sh * scale * 0.67
+        pw = min(sw * 0.42, sh * 0.25) * scale
+        ph = pw * 1.8
+        x, y = cx - pw / 2, cy - ph / 2
+        radius = pw * 0.08
+        drawing = (
+            f"m {x + radius:.2f} {y:.2f} l {x + pw - radius:.2f} {y:.2f} "
+            f"b {x + pw:.2f} {y:.2f} {x + pw:.2f} {y:.2f} {x + pw:.2f} {y + radius:.2f} "
+            f"l {x + pw:.2f} {y + ph - radius:.2f} "
+            f"b {x + pw:.2f} {y + ph:.2f} {x + pw:.2f} {y + ph:.2f} "
+            f"{x + pw - radius:.2f} {y + ph:.2f} "
+            f"l {x + radius:.2f} {y + ph:.2f} "
+            f"b {x:.2f} {y + ph:.2f} {x:.2f} {y + ph:.2f} {x:.2f} {y + ph - radius:.2f} "
+            f"l {x:.2f} {y + radius:.2f} b {x:.2f} {y:.2f} {x:.2f} {y:.2f} {x + radius:.2f} {y:.2f}"
+        )
+        lines.append(
+            f"Dialogue: 0,0:00:00.00,{timestamp(duration)},Label,,0,0,0,,"
+            + "{\\an7\\pos(0,0)\\p1\\shad0\\blur0\\bord3\\3c&HFFFFFF&\\c&H201710&}"
+            + drawing
+        )
+        lines.append(
+            f"Dialogue: 0,0:00:00.00,{timestamp(duration)},Label,,0,0,0,,"
+            + "{\\an7\\pos(0,0)\\p1\\shad0\\blur0\\bord0\\c&HFFFFFF&}"
+            + f"m {cx - pw * 0.12:.2f} {y + ph * 0.06:.2f} "
+            + f"l {cx + pw * 0.12:.2f} {y + ph * 0.06:.2f} "
+            + f"{cx + pw * 0.12:.2f} {y + ph * 0.075:.2f} "
+            + f"{cx - pw * 0.12:.2f} {y + ph * 0.075:.2f}"
+        )
 
     for raw in labels:
         label = ScreenText.model_validate(raw).model_dump()
@@ -350,8 +381,11 @@ def write_overlay(
             x, y = padding[0] + x * sw * scale, padding[1] + y * sh * scale
             color = label["color"]
             bgr = color[4:6] + color[2:4] + color[:2]
+            font_size = height * label["size"] * zoom
+            if phone and label["key"].startswith("studio-midroll-"):
+                font_size = min(font_size, pw * 0.82 * 1.5 / len(label["text"]))
             tags = (
-                f"\\pos({x:.2f},{y:.2f})\\fs{height * label['size'] * zoom:.2f}"
+                f"\\pos({x:.2f},{y:.2f})\\fs{font_size:.2f}"
                 f"\\frz{-angle:.2f}\\c&H{bgr}&\\blur0.6"
             )
             begin, end = max(start, at) - start, min(start + duration, until) - start
@@ -370,14 +404,14 @@ def write_overlay(
                     if change["at_sec"] <= begin + 1e-9:
                         text = _number(change["value"], label["number_format"])
                 lines.append(
-                    f"Dialogue: 0,{timestamp(begin)},{timestamp(end)},Label,,0,0,0,,"
+                    f"Dialogue: {int(phone)},{timestamp(begin)},{timestamp(end)},Label,,0,0,0,,"
                     + "{"
                     + tags
                     + "\\bord3\\blur3\\alpha&H80&}"
                     + text
                 )
                 lines.append(
-                    f"Dialogue: 1,{timestamp(begin)},{timestamp(end)},Label,,0,0,0,,"
+                    f"Dialogue: {1 + int(phone)},{timestamp(begin)},{timestamp(end)},Label,,0,0,0,,"
                     + "{"
                     + tags
                     + "}"
@@ -388,6 +422,7 @@ def write_overlay(
     escaped = re.sub(r"([\\:'\[\],])", r"\\\1", Path(destination).as_posix())
     return f"ass=filename='{escaped}'", {
         "labels": details,
+        "phone": phone,
         "tracking": "character"
         if any(label["anchor"] == "character" for label in details)
         else "screen",
