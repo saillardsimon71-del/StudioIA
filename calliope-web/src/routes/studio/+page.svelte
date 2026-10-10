@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import ConfigDialog from "$lib/studio/ConfigDialog.svelte";
+  import SeriesActions from "$lib/studio/SeriesActions.svelte";
   import {
     studio,
     errorMessage,
@@ -19,10 +20,13 @@
   let busy = $state(false);
   let configOpen = $state(false);
   let servicesReady = $state(false);
+  let archived = $state(false);
   onMount(load);
   async function load() {
     try {
-      series = (await studio.series()).series;
+      const view = archived;
+      const result = await studio.series(view);
+      if (view === archived) series = result.series;
       const config = await studio.config();
       servicesReady =
         config.llm_configured && config.image_configured && !config.dry_run;
@@ -51,6 +55,12 @@
     } finally {
       busy = false;
     }
+  }
+  async function showArchives(value: boolean) {
+    archived = value;
+    loading = true;
+    error = "";
+    await load();
   }
 </script>
 
@@ -85,21 +95,26 @@
   <div class="series-grid">
     <section class="stack" aria-labelledby="series-list-title">
       <div class="between">
-        <h2 id="series-list-title">Vos séries</h2>
+        <h2 id="series-list-title">{archived ? "Séries archivées" : "Vos séries"}</h2>
         <button class="small subtle" onclick={load}>Actualiser</button>
+      </div>
+      <div class="row">
+        <button disabled={!archived || loading} onclick={() => showArchives(false)}>Actives</button>
+        <button disabled={archived || loading} onclick={() => showArchives(true)}>Archives</button>
       </div>
       {#if loading}<p>Chargement...</p>{:else if !series.length}<div
           class="empty"
         >
-          <h3>Créez votre première série.</h3>
-          <p class="muted">
+          <h3>{archived ? "Aucune série archivée." : "Créez votre première série."}</h3>
+          <p class="muted">{#if archived}Les séries archivées conservent leurs épisodes et peuvent être restaurées.{:else}
             Fiction, humour, horreur, réalisme, publicité narrative ou animation
             : votre concept donne la direction.
+            {/if}
           </p>
         </div>{:else}
         <div class="series-list">
           {#each series as item (item.id)}
-            <a class="series-card" href={"/studio/series/" + item.id}
+            <article class="series-card"><a class="series-link" href={"/studio/series/" + item.id}
               ><div class="between">
                 <h3>{item.title}</h3>
                 <span class="badge">{item.aspect_ratio}</span>
@@ -112,8 +127,9 @@
                     : ""} - {item.entities.filter((e) => e.kind === "character")
                     .length} personnages</span
                 ><span>Ouvrir la série</span>
-              </div></a
-            >
+              </div></a>
+              <SeriesActions {item} disabled={busy} onchanged={() => load()} />
+            </article>
           {/each}
         </div>
       {/if}
@@ -239,6 +255,12 @@
   }
   .series-card p {
     white-space: pre-line;
+  }
+  .series-link {
+    color: inherit;
+    text-decoration: none;
+    display: grid;
+    gap: 16px;
   }
   @media (max-width: 900px) {
     .series-grid {

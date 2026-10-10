@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import ConfigDialog from "$lib/studio/ConfigDialog.svelte";
   import EntityIdentityEditor from "$lib/studio/EntityIdentityEditor.svelte";
+  import SeriesActions from "$lib/studio/SeriesActions.svelte";
   import {
     studio,
     newRequestId,
@@ -158,6 +159,10 @@
       input.value = "";
     }
   }
+  async function seriesChanged(deleted: boolean) {
+    if (deleted) await goto("/studio");
+    else await load(false);
+  }
 </script>
 
 <svelte:head><title>{item?.title ?? "Série"} - Studio IA</title></svelte:head>
@@ -183,17 +188,21 @@
         <h1>{item.title}</h1>
         <p class="muted">{item.concept}</p>
       </div>
+      <div class="stack">
+      <SeriesActions {item} disabled={!!busy} onchanged={seriesChanged} />
       <button
         class="primary"
-        disabled={!!busy || !previousReady || active}
+        disabled={!!busy || !previousReady || active || item.archived}
         onclick={() => (episodeOpen = true)}>Créer un nouvel épisode</button
       >
+      </div>
     </div>
+    {#if item.archived}<p class="notice">Cette série est archivée. Restaurez-la pour produire de nouveaux épisodes.</p>{/if}
     {#if !previousReady}<p class="notice">
         Terminez ou réexportez le dernier épisode pour poursuivre à partir de
         son histoire définitive.
       </p>{/if}
-    {#if episodeOpen}<form class="episode-form stack" onsubmit={create}>
+    {#if episodeOpen && !item.archived}<form class="episode-form stack" onsubmit={create}>
         <h2>Épisode {item.episodes.length + 1}</h2>
         <label
           >Idée directrice<textarea
@@ -236,7 +245,7 @@
       </div>
       {#if !item.episodes.length}<div class="empty">
           <p>Votre série est prête à recevoir sa première idée.</p>
-          <button onclick={() => (episodeOpen = true)}
+          <button disabled={item.archived} onclick={() => (episodeOpen = true)}
             >Créer un nouvel épisode</button
           >
         </div>{:else}

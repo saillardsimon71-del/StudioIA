@@ -29,6 +29,7 @@ def require_series(conn, series_id):
     if not row:
         raise HTTPException(404, "Série introuvable.")
     result = dict(row)
+    result["archived"] = bool(result["archived"])
     result["bible"] = {key: "" for key in BIBLE_FIELDS} | json.loads(result.pop("bible_json"))
     result["directing_profile"] = directing_profile(
         json.loads(result.pop("directing_profile_json"))
@@ -272,13 +273,88 @@ def get_series(series_id):
         return result
 
 
-def list_series():
+def list_series(archived=False):
     with service.database() as conn:
         ids = [
             r[0]
-            for r in conn.execute("SELECT id FROM studio_series ORDER BY updated_at DESC,id DESC")
+            for r in conn.execute(
+                "SELECT id FROM studio_series WHERE archived=? ORDER BY updated_at DESC,id DESC",
+                (int(archived),),
+            )
         ]
     return [get_series(identifier) for identifier in ids]
+
+
+def require_active_project(conn, project_id):
+    row = conn.execute(
+        "SELECT s.archived FROM studio_series s JOIN studio_episodes e ON e.series_id=s.id "
+        "WHERE e.project_id=?",
+        (project_id,),
+    ).fetchone()
+    if row and row[0]:
+        raise HTTPException(409, "Restaurez la série archivée avant de lancer une production.")
+
+
+def require_lifecycle_editable(conn, series_id):
+    from calliope.agent.harness.runner import runner
+
+    require_references_editable(conn, series_id)
+    jobs = conn.execute(
+        "SELECT j.status,p.status AS parent_status FROM jobs j "
+        "JOIN studio_episodes e ON e.project_id=j.project_id "
+        "LEFT JOIN jobs p ON p.id=json_extract(j.payload_json,'$.parent_job_id') "
+        "WHERE e.series_id=? AND j.status IN ('pending','running')",
+        (series_id,),
+    ).fetchall()
+    if any(
+        job["status"] == "running" or job["parent_status"] not in ("done", "failed") for job in jobs
+    ):
+        raise HTTPException(
+            409,
+            "Mettez les productions en pause et annulez les tâches en attente "
+            "avant de gérer cette série.",
+        )
+    takes = conn.execute(
+        "SELECT t.* FROM studio_takes t JOIN studio_episodes e ON e.project_id=t.project_id "
+        "WHERE e.series_id=?",
+        (series_id,),
+    ).fetchall()
+    if any(
+        service.modal_call_unfinished(take)
+        or (take["submission_state"] == "submitting" and not take["modal_call_id"])
+        for take in takes
+    ):
+        raise HTTPException(
+            409,
+            "Un appel vidéo reste actif ou sa soumission est ambiguë. "
+            "Vérifiez-le avant de gérer cette série.",
+        )
+    sessions = conn.execute(
+        "SELECT a.id FROM agent_sessions a JOIN studio_episodes e ON e.project_id=a.project_id "
+        "WHERE e.series_id=?",
+        (series_id,),
+    ).fetchall()
+    if any(runner.is_running(session[0]) for session in sessions):
+        raise HTTPException(409, "Arrêtez la tâche d'écriture en cours avant de gérer cette série.")
+    return [
+        row[0]
+        for row in conn.execute(
+            "SELECT project_id FROM studio_episodes WHERE series_id=?", (series_id,)
+        )
+    ]
+
+
+def delete_series(series_id):
+    with service.database() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        require_series(conn, series_id)
+        project_ids = require_lifecycle_editable(conn, series_id)
+        conn.executemany(
+            "DELETE FROM projects WHERE id=?", [(identifier,) for identifier in project_ids]
+        )
+        conn.execute("DELETE FROM studio_series WHERE id=?", (series_id,))
+        conn.commit()
+    return {"ok": True}
 
 
 def create_series(data):
@@ -305,7 +381,16 @@ def create_series(data):
 
 def update_series(series_id, data):
     with service.database() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         current = require_series(conn, series_id)
+        if "archived" in data:
+            archived = data.pop("archived")
+            if archived != current["archived"]:
+                if archived:
+                    require_lifecycle_editable(conn, series_id)
+                conn.execute(
+                    "UPDATE studio_series SET archived=? WHERE id=?", (int(archived), series_id)
+                )
         if "directing_profile" in data:
             patch = data.pop("directing_profile")
             base = {} if "preset" in patch else current["directing_profile"]
@@ -415,6 +500,8 @@ def create_episode(series_id, data):
     with service.database() as conn:
         conn.execute("BEGIN IMMEDIATE")
         current = require_series(conn, series_id)
+        if current["archived"]:
+            raise HTTPException(409, "Restaurez la série archivée avant de créer un épisode.")
         old = conn.execute(
             "SELECT * FROM studio_episodes WHERE series_id=? AND request_id=?",
             (series_id, data["request_id"]),
@@ -507,6 +594,7 @@ def pause(project_id):
 def resume(project_id):
     require_services()
     with service.database() as conn:
+        require_active_project(conn, project_id)
         row = conn.execute(
             "SELECT * FROM studio_productions WHERE project_id=?", (project_id,)
         ).fetchone()
@@ -514,8 +602,8 @@ def resume(project_id):
             raise HTTPException(404, "Production introuvable.")
         if row["status"] in ("pending", "running"):
             return service.board(project_id)
-        if row['status'] == 'done':
-            raise HTTPException(409, 'Cette production est déjà terminée.')
+        if row["status"] == "done":
+            raise HTTPException(409, "Cette production est déjà terminée.")
         job = conn.execute("SELECT status,error FROM jobs WHERE id=?", (row["job_id"],)).fetchone()
         if job["error"] == "cancelled":
             raise HTTPException(409, "Cette production a été annulée.")
@@ -555,7 +643,9 @@ def resume(project_id):
     for take in children:
         if take["modal_call_id"]:
             service.render_event(
-                take['id'], 'RESUMING', 'Reprise explicite de la production',
+                take["id"],
+                "RESUMING",
+                "Reprise explicite de la production",
                 resume_started_at=service.utc_now(),
             )
     return service.board(project_id)

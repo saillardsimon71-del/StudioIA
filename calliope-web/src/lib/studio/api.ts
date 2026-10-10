@@ -228,6 +228,7 @@ export interface Series {
   id: number;
   title: string;
   concept: string;
+  archived: boolean;
   bible: Record<string, string>;
   aspect_ratio: AspectRatio;
   language: string;
@@ -333,7 +334,7 @@ export const studio = {
     },
   ) => request<StudioConfig>("/config", "PATCH", payload),
   preflight: () => request<Preflight>("/preflight"),
-  series: () => request<{ series: Series[] }>("/series"),
+  series: (archived = false) => request<{ series: Series[] }>(`/series?archived=${archived}`),
   getSeries: (id: number) => request<Series>(`/series/${id}`),
   createSeries: (payload: {
     title: string;
@@ -345,6 +346,7 @@ export const studio = {
   }) => request<Series>("/series", "POST", payload),
   saveSeries: (id: number, payload: Partial<Series>) =>
     request<Series>(`/series/${id}`, "PATCH", payload),
+  deleteSeries: (id: number) => request<{ ok: boolean }>(`/series/${id}`, "DELETE"),
   saveEntity: (id: number, entityId: number, payload: {
     identity?: Partial<Pick<SeriesEntity['identity'], 'visual_description' | 'variant_of' | 'attached_value' | 'label_key'>>;
     reference_approved?: boolean; reset_reference?: boolean;

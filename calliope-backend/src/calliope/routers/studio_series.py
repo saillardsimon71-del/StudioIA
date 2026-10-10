@@ -52,6 +52,7 @@ class SeriesUpdate(BaseModel):
     target_seconds: int | None = Field(default=None, ge=10, le=120)
     bible: BiblePatch | None = None
     directing_profile: DirectingProfile | None = None
+    archived: bool | None = None
 
     @field_validator("title", "concept", "language")
     @classmethod
@@ -182,8 +183,8 @@ async def save_script(project_id: int, payload: ScriptEdit):
 
 
 @router.get("/series")
-async def list_series():
-    return {"series": series.list_series()}
+async def list_series(archived: bool = False):
+    return {"series": series.list_series(archived)}
 
 
 @router.post("/series")
@@ -201,6 +202,11 @@ async def update_series(series_id: int, payload: SeriesUpdate):
     return series.update_series(
         series_id, payload.model_dump(exclude_unset=True, exclude_none=True)
     )
+
+
+@router.delete("/series/{series_id}")
+async def delete_series(series_id: int):
+    return series.delete_series(series_id)
 
 
 @router.post("/series/{series_id}/episodes")

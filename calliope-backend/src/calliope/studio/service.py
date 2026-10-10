@@ -367,7 +367,9 @@ def list_projects():
     with database() as conn:
         result = []
         for row in conn.execute(
-            "SELECT * FROM projects WHERE status!='system' ORDER BY updated_at DESC,id DESC"
+            "SELECT p.* FROM projects p LEFT JOIN studio_episodes e ON e.project_id=p.id "
+            "LEFT JOIN studio_series s ON s.id=e.series_id WHERE p.status!='system' "
+            "AND COALESCE(s.archived,0)=0 ORDER BY p.updated_at DESC,p.id DESC"
         ):
             project = require_project(conn, row["id"])
             project["aspect_ratio"] = conn.execute(
@@ -922,6 +924,9 @@ def enqueue_takes(shot_id, data):
         conn.execute("BEGIN IMMEDIATE")
         shot = public_shot(conn, shot_id)
         project = require_project(conn, shot["project_id"])
+        from calliope.studio.series import require_active_project
+
+        require_active_project(conn, project["id"])
         aspect = conn.execute(
             "SELECT aspect_ratio FROM studio_projects WHERE project_id=?", (project["id"],)
         ).fetchone()[0]
@@ -1152,9 +1157,11 @@ def enqueue_takes(shot_id, data):
 
 async def enqueue_export(project_id, request_id, parent_job_id=None):
     from calliope.studio.production import assess_take, selected_video
+    from calliope.studio.series import require_active_project
 
     with database() as conn:
         require_project(conn, project_id)
+        require_active_project(conn, project_id)
         existing = conn.execute(
             'SELECT job_id FROM studio_exports WHERE project_id=? AND request_id=?',
             (project_id, request_id),
@@ -1173,6 +1180,7 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
     with database() as conn:
         conn.execute("BEGIN IMMEDIATE")
         require_project(conn, project_id)
+        require_active_project(conn, project_id)
         existing = conn.execute(
             "SELECT * FROM studio_exports WHERE project_id=? AND request_id=?",
             (project_id, request_id),
