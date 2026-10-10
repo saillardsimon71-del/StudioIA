@@ -75,9 +75,12 @@ def transcribe_dialogue(path, checkpoint_path, language):
     return result
 
 
-def _tokens(text):
-    text = str(text or "")
-    text = "".join(c for c in unicodedata.normalize("NFKD", text.casefold())
+def _tokens(text, language=None):
+    text = unicodedata.normalize("NFC", str(text or "").casefold())
+    if str(language or "").lower().replace("_", "-").split("-")[0] == "fr":
+        # These French agreement endings are inaudible; ASR cannot establish their spelling.
+        text = re.sub(r"é(?:e(?:s)?|s)\b", "é", text)
+    text = "".join(c for c in unicodedata.normalize("NFKD", text)
                    if not unicodedata.combining(c))
     return re.findall(r"\w+", text)
 
@@ -234,12 +237,12 @@ def _comparison_tokens(words):
     return normalized, spans
 
 
-def assess_prompt_recitation(expected, transcript, compiled_prompt):
+def assess_prompt_recitation(expected, transcript, compiled_prompt, language=None):
     if not transcript or transcript.get("status") != "ok":
         return {}
-    wanted = _tokens(expected)
+    wanted = _tokens(expected, language)
     observed = str(transcript.get("text") or "")
-    heard = _tokens(observed)
+    heard = _tokens(observed, language)
     if not wanted or wanted == heard:
         return {}
     speech = SequenceMatcher(None, wanted, heard, autojunk=False)
@@ -248,7 +251,7 @@ def assess_prompt_recitation(expected, transcript, compiled_prompt):
     word_tokens, probabilities = [], []
     for segment in transcript.get("segments") or []:
         for word in segment.get("words") or []:
-            tokens = _tokens(word["word"])
+            tokens = _tokens(word["word"], language)
             word_tokens.extend(tokens)
             probabilities.extend([float(word.get("probability", 0))] * len(tokens))
     if word_tokens != heard:
@@ -261,7 +264,7 @@ def assess_prompt_recitation(expected, transcript, compiled_prompt):
             continue
         extra = heard[begin:end]
         for instruction in instructions:
-            source = _tokens(instruction)
+            source = _tokens(instruction, language)
             blocks = SequenceMatcher(None, source, extra, autojunk=False).get_matching_blocks()
             matches = sum(block.size for block in blocks)
             anchor = any(
@@ -283,11 +286,11 @@ def assess_prompt_recitation(expected, transcript, compiled_prompt):
     return {}
 
 
-def assess_turns(turns, transcript):
+def assess_turns(turns, transcript, language=None):
     if not transcript or transcript.get("status") != "ok":
         return {"status": "unknown", "reason": "Transcription indisponible."}
-    wanted = [_comparison_tokens(_tokens(turn["text"]))[0] for turn in turns]
-    heard = _comparison_tokens(_tokens(transcript.get("text")))[0]
+    wanted = [_comparison_tokens(_tokens(turn["text"], language))[0] for turn in turns]
+    heard = _comparison_tokens(_tokens(transcript.get("text"), language))[0]
     flat = [word for turn in wanted for word in turn]
     matching = set()
     for block in SequenceMatcher(None, flat, heard, autojunk=False).get_matching_blocks():
@@ -315,14 +318,14 @@ def assess_turns(turns, transcript):
     }
 
 
-def assess_transcript(expected, transcript):
-    expected_words = _tokens(expected)
+def assess_transcript(expected, transcript, language=None):
+    expected_words = _tokens(expected, language)
     if not expected_words:
         return {"status": "ok", "reason": ""}
     if not transcript or transcript.get("status") != "ok":
         return {"status": "unknown", "reason": (transcript or {}).get("reason")
                 or "Transcription indisponible."}
-    actual_words = _tokens(transcript.get("text"))
+    actual_words = _tokens(transcript.get("text"), language)
     if not actual_words:
         return {"status": "missing", "reason": "Réplique attendue absente du transcript fiable."}
     occurrences = len(actual_words) // len(expected_words)
@@ -333,7 +336,7 @@ def assess_transcript(expected, transcript):
         timed = []
         for segment in transcript.get("segments") or []:
             for word in segment.get("words") or []:
-                timed.extend((token, word) for token in _tokens(word["word"]))
+                timed.extend((token, word) for token in _tokens(word["word"], language))
         if [token for token, _ in timed] == actual_words:
             first = [word for _, word in timed[:len(expected_words)]]
             following = timed[len(expected_words)][1]
@@ -360,7 +363,7 @@ def assess_transcript(expected, transcript):
     word_tokens, probabilities = [], []
     for segment in transcript.get("segments") or []:
         for word in segment.get("words") or []:
-            tokens = _tokens(word["word"])
+            tokens = _tokens(word["word"], language)
             word_tokens.extend(tokens)
             probabilities.extend([float(word.get("probability", 0))] * len(tokens))
     if word_tokens and word_tokens != actual_words:

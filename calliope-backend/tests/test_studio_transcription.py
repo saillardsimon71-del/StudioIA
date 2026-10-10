@@ -225,3 +225,155 @@ def test_grouped_number_preserves_the_lowest_asr_word_confidence():
     assert transcription.assess_transcript(expected, transcript)["status"] == "unknown"
     transcript["segments"][0]["words"][4]["probability"] = 0.98
     assert transcription.assess_transcript(expected, transcript)["status"] == "missing"
+
+
+def test_real_short_french_exchange_accepts_inaudible_agreement_spelling():
+    fixture = json.loads((Path(__file__).parent / "fixtures/shot_160_speech.json").read_text(
+        encoding="utf-8"
+    ))
+    for take in fixture["takes"]:
+        original = copy.deepcopy(take["transcript"])
+        verdict = transcription.assess_transcript(
+            fixture["expected"], take["transcript"], language="fr"
+        )
+        assert verdict["status"] == "ok"
+        turns = transcription.assess_turns(fixture["turns"], take["transcript"], language="fr")
+        assert [turn["coverage"] for turn in turns["turns"]] == [1, 1]
+        assert take["transcript"] == original
+
+
+@pytest.mark.parametrize("expected,observed", [
+    ("Volée. Empruntée.", "Volé. Emprunté."),
+    ("Volé. Emprunté.", "Volée. Empruntée."),
+    ("Volés. Empruntées.", "Volé. Emprunté."),
+    ("VOLÉES. EMPRUNTÉS.", "volées. empruntée."),
+    ("Vole\u0301e. Emprunte\u0301es.", "Volé. Emprunté."),
+])
+@pytest.mark.parametrize("language", ["fr", "fr-FR", "fr_CA"])
+def test_french_silent_e_acute_agreements_compare_by_sound(expected, observed, language):
+    transcript = {"status": "ok", "text": observed, "segments": [{"words": [
+        {"word": word, "probability": 0.98} for word in observed.split()
+    ]}]}
+    verdict = transcription.assess_transcript(expected, transcript, language=language)
+    assert verdict["status"] == "ok"
+
+
+@pytest.mark.parametrize("language", [None, "en", "de"])
+def test_french_sound_equivalence_requires_french_language(language):
+    transcript = {"status": "ok", "text": "Volé. Emprunté."}
+    assert transcription.assess_transcript(
+        "Volée. Empruntée.", transcript, language=language
+    )["status"] != "ok"
+
+
+@pytest.mark.parametrize("expected,observed,status", [
+    ("La mallette n'est pas volée.", "La mallette est volé.", "missing"),
+    ("La mallette volée contient cent mille euros.",
+     "La mallette volé contient 100 001 euros.", "missing"),
+    ("Juste empruntée.", "Juste achetée.", "unknown"),
+    ("Elle est prise.", "Elle est pris.", "unknown"),
+    ("Tu l'as volée ? Juste empruntée.", "Tu l'as volé ?", "unknown"),
+    ("Tu l'as volée ? Juste empruntée.",
+     "Tu l'as volé ? Juste emprunté. Et maintenant tout le monde doit me payer.", "extra"),
+])
+def test_french_sound_equivalence_keeps_audible_errors_and_added_speech(expected, observed, status):
+    transcript = {"status": "ok", "text": observed, "segments": [{"words": [
+        {"word": word, "probability": 0.98} for word in observed.split()
+    ]}]}
+    assert transcription.assess_transcript(expected, transcript, language="fr")["status"] == status
+
+
+def test_french_sound_equivalence_preserves_unknown_asr_and_missing_turns():
+    fixture = json.loads((Path(__file__).parent / "fixtures/shot_160_speech.json").read_text(
+        encoding="utf-8"
+    ))
+    transcript = copy.deepcopy(fixture["takes"][0]["transcript"])
+    transcript.update(status="unknown", reason="ASR incertain")
+    assert transcription.assess_transcript(
+        fixture["expected"], transcript, language="fr"
+    )["status"] == "unknown"
+    transcript.update(status="ok", text="Tu l'as volé ?")
+    turns = fixture["turns"][:1] + [{"speaker": "riko", "text": "Je l'ai juste empruntée."}]
+    assert transcription.assess_turns(turns, transcript, language="fr")["status"] == "missing"
+
+
+def test_cached_native_take_uses_french_equivalence_without_retranscription(
+    client, tmp_path, monkeypatch
+):
+    import asyncio
+
+    from calliope.config import settings
+    from calliope.studio import production, service
+    from tests.test_studio_pacing import make_clip
+
+    fixture = json.loads((Path(__file__).parent / "fixtures/shot_160_speech.json").read_text(
+        encoding="utf-8"
+    ))
+    project = service.create_project({"title": "Accord oral", "aspect_ratio": "9:16"})["id"]
+    with service.database() as conn:
+        service.add_scene(conn, project, {"shots": [{"prompt": "Two characters talk.",
+            "dialogue": fixture["expected"], "duration_sec": 5.8, "audio_mode": "native"}]})
+        conn.commit()
+    shot = service.board(project)["scenes"][0]["shots"][0]
+    clip = make_clip(tmp_path / "cached.mp4", 5.875, tone_windows=[(0, 5.8)])
+    take = service.store_upload(shot["id"], clip.read_bytes(), "video")
+    service.select_take(take["id"])
+    stat = Path(take["output_path"]).stat()
+    original = fixture["takes"][0]
+    metadata = take["metadata"] | {"transcription_cache": {
+        "signature": [stat.st_size, stat.st_mtime_ns, settings.studio_asr_checkpoint, "fr"],
+        "transcript": original["transcript"], "activity": original["activity"],
+    }}
+    with service.database() as conn:
+        conn.execute("INSERT INTO studio_shot_context(clip_id,context_json) VALUES(?,?)", (
+            shot["id"], json.dumps({"language": "fr", "dialogue_turns": fixture["turns"]}),
+        ))
+        conn.execute("UPDATE studio_takes SET metadata_json=? WHERE id=?",
+                     (json.dumps(metadata), take["id"]))
+        conn.commit()
+
+    def forbidden(*args):
+        pytest.fail("Le transcript existant doit être réutilisé.")
+
+    monkeypatch.setattr(transcription, "transcribe_dialogue", forbidden)
+    verdict = asyncio.run(production.assess_take(production.load_shot(shot["id"])))
+    assert verdict["status"] == "ok"
+    assert [turn["coverage"] for turn in verdict["turns"]] == [1, 1]
+    assert verdict["voice"] == original["transcript"]["speech_intervals"]
+    stored = production.selected_video(production.load_shot(shot["id"]))["metadata"]
+    assert stored["dialogue_qc"]["status"] == "ok"
+    assert stored["transcription_cache"]["transcript"] == original["transcript"]
+
+
+def test_french_homophone_repeat_retains_original_word_times():
+    fixture = json.loads((Path(__file__).parent / "fixtures/shot_160_speech.json").read_text(
+        encoding="utf-8"
+    ))
+    transcript = copy.deepcopy(fixture["takes"][0]["transcript"])
+    following = copy.deepcopy(transcript["segments"])
+    for segment in following:
+        for word in segment["words"]:
+            word["start"] += 6
+            word["end"] += 6
+    transcript["text"] += " " + transcript["text"]
+    transcript["segments"].extend(following)
+    verdict = transcription.assess_transcript(fixture["expected"], transcript, language="fr")
+    assert verdict["status"] == "ok"
+    assert verdict["repeated_occurrences"] == 2
+    assert verdict["voice"][0] == pytest.approx([1.28, 4.34])
+    assert verdict["trim_end_limit_sec"] == pytest.approx(7.28)
+
+
+def test_french_homophones_do_not_hide_recited_visual_instructions():
+    expected = "Tu l'as volée ? Juste empruntée."
+    observed = "Tu l'as volé ? Juste emprunté. Nora reste figé derrière le grand comptoir."
+    transcript = {"status": "ok", "text": observed, "segments": [{"words": [
+        {"word": word, "probability": 0.98} for word in observed.split()
+    ]}]}
+    prompt = "<d>Tu l'as volée ? Juste empruntée.</d> Nora reste figée derrière le grand comptoir."
+    assert transcription.assess_transcript(expected, transcript, language="fr")["status"] == "extra"
+    diagnostic = transcription.assess_prompt_recitation(
+        expected, transcript, prompt, language="fr"
+    )
+    assert diagnostic["kind"] == "instruction_recitation"
+    assert diagnostic["observed_extra"] == "Nora reste figé derrière le grand comptoir"

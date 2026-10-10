@@ -504,13 +504,15 @@ async def assess_take(shot):
         }
     verdict = pacing.assess_dialogue(dialogue, shot["duration_sec"], probe, voice)
     if verdict["status"] not in ("missing", "inaudible"):
-        verdict = transcription.assess_transcript(dialogue, transcript)
+        verdict = transcription.assess_transcript(dialogue, transcript, language=language)
     if context.get("shot", {}).get("dialogue_turns") and verdict["status"] not in (
         "missing",
         "extra",
         "inaudible",
     ):
-        turns = transcription.assess_turns(context["shot"]["dialogue_turns"], transcript)
+        turns = transcription.assess_turns(
+            context["shot"]["dialogue_turns"], transcript, language=language
+        )
         verdict["turns"] = turns.get("turns", [])
         if turns["status"] == "missing":
             verdict.update(status="missing", reason=turns["reason"])
@@ -524,7 +526,9 @@ async def assess_take(shot):
                 "SELECT request_json FROM studio_takes WHERE id=?", (take["id"],)
             ).fetchone()
         compiled = json.loads(request_row[0] or "{}").get("prompt") or take.get("prompt", "")
-        diagnosis = transcription.assess_prompt_recitation(dialogue, transcript, compiled)
+        diagnosis = transcription.assess_prompt_recitation(
+            dialogue, transcript, compiled, language=language
+        )
         if diagnosis:
             metadata["dialogue_qc"]["diagnostic"] = diagnosis
     service.render_event(

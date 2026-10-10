@@ -1,0 +1,221 @@
+{
+  "project_id": 19,
+  "shot_id": 160,
+  "expected": "Tu l'as volée ? Juste empruntée.",
+  "turns": [
+    {
+      "speaker": "nora",
+      "text": "Tu l'as volée ?",
+      "action": "Nora's paw tightens on the briefcase edge; she looks up at Riko with sharp amber eyes.",
+      "reaction": "Riko meets her gaze, unbothered."
+    },
+    {
+      "speaker": "riko",
+      "text": "Juste empruntée.",
+      "action": "Riko taps the briefcase lid with one claw.",
+      "reaction": "Nora's ears flick; she keeps her paw on the case."
+    }
+  ],
+  "takes": [
+    {
+      "id": 314,
+      "transcript": {
+        "status": "ok",
+        "text": "Tu l'as volé ? Juste emprunté.",
+        "segments": [
+          {
+            "start": 1.2800000000000002,
+            "end": 3.44,
+            "text": " Tu l'as volé ?",
+            "avg_logprob": -0.46964093258506373,
+            "no_speech_prob": 0.043811552226543427,
+            "compression_ratio": 0.8,
+            "words": [
+              {
+                "word": " Tu",
+                "start": 1.2800000000000002,
+                "end": 2.18,
+                "probability": 0.6203718781471252
+              },
+              {
+                "word": " l",
+                "start": 2.18,
+                "end": 2.3,
+                "probability": 0.9878431558609009
+              },
+              {
+                "word": "'as",
+                "start": 2.3,
+                "end": 2.38,
+                "probability": 0.9678142368793488
+              },
+              {
+                "word": " volé",
+                "start": 2.38,
+                "end": 2.9,
+                "probability": 0.8688599169254303
+              },
+              {
+                "word": " ?",
+                "start": 2.9,
+                "end": 3.44,
+                "probability": 0.8060770630836487
+              }
+            ]
+          },
+          {
+            "start": 3.44,
+            "end": 4.34,
+            "text": " Juste emprunté.",
+            "avg_logprob": -0.46964093258506373,
+            "no_speech_prob": 0.043811552226543427,
+            "compression_ratio": 0.8,
+            "words": [
+              {
+                "word": " Juste",
+                "start": 3.44,
+                "end": 3.88,
+                "probability": 0.9280209839344025
+              },
+              {
+                "word": " emprunté.",
+                "start": 3.88,
+                "end": 4.34,
+                "probability": 0.7402481883764267
+              }
+            ]
+          }
+        ],
+        "speech_intervals": [
+          [
+            1.2800000000000002,
+            3.44
+          ],
+          [
+            3.44,
+            4.34
+          ]
+        ],
+        "reason": ""
+      },
+      "activity": {
+        "intervals": [
+          [
+            0.0,
+            1.551906
+          ],
+          [
+            2.077469,
+            2.609344
+          ],
+          [
+            3.475375,
+            4.681375
+          ]
+        ],
+        "max_db": -0.1
+      },
+      "duration_sec": 5.875
+    },
+    {
+      "id": 313,
+      "transcript": {
+        "status": "ok",
+        "text": "Tu l'as volé ? Juste emprunté.",
+        "segments": [
+          {
+            "start": 2.7199999999999993,
+            "end": 4.36,
+            "text": " Tu l'as volé ?",
+            "avg_logprob": -0.4617384860390111,
+            "no_speech_prob": 0.02765066549181938,
+            "compression_ratio": 0.8,
+            "words": [
+              {
+                "word": " Tu",
+                "start": 2.7199999999999993,
+                "end": 3.48,
+                "probability": 0.6278563737869263
+              },
+              {
+                "word": " l",
+                "start": 3.48,
+                "end": 3.6,
+                "probability": 0.9886190891265869
+              },
+              {
+                "word": "'as",
+                "start": 3.6,
+                "end": 3.68,
+                "probability": 0.9809345304965973
+              },
+              {
+                "word": " volé",
+                "start": 3.68,
+                "end": 4.02,
+                "probability": 0.8833656907081604
+              },
+              {
+                "word": " ?",
+                "start": 4.02,
+                "end": 4.36,
+                "probability": 0.8476678729057312
+              }
+            ]
+          },
+          {
+            "start": 4.36,
+            "end": 5.4,
+            "text": " Juste emprunté.",
+            "avg_logprob": -0.4617384860390111,
+            "no_speech_prob": 0.02765066549181938,
+            "compression_ratio": 0.8,
+            "words": [
+              {
+                "word": " Juste",
+                "start": 4.36,
+                "end": 4.96,
+                "probability": 0.9567820727825165
+              },
+              {
+                "word": " emprunté.",
+                "start": 4.96,
+                "end": 5.4,
+                "probability": 0.8056103736162186
+              }
+            ]
+          }
+        ],
+        "speech_intervals": [
+          [
+            2.7199999999999993,
+            4.36
+          ],
+          [
+            4.36,
+            5.4
+          ]
+        ],
+        "reason": ""
+      },
+      "activity": {
+        "intervals": [
+          [
+            0.0,
+            1.894969
+          ],
+          [
+            3.375938,
+            3.911188
+          ],
+          [
+            4.443188,
+            5.380125
+          ]
+        ],
+        "max_db": -0.6
+      },
+      "duration_sec": 5.875
+    }
+  ]
+}
