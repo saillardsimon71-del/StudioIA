@@ -241,6 +241,10 @@ def compile_h3_prompt(shot, context=None, first_frame=False) -> str:
         parts.append(
             "The characters remain silent, expressing the beat through gestures and posture."
         )
+        parts.append(
+            "Their facial expressions convey the action without talking, singing, "
+            "mouthing words or lip-sync."
+        )
         soundscape = "Quiet location ambience and natural physical action sounds, without voices."
     if shot.get("audio_mode") == "silent":
         soundscape = "N/A"
@@ -255,7 +259,7 @@ def compile_h3_prompt(shot, context=None, first_frame=False) -> str:
         parts.append(
             "The character reacts immediately through expression or gesture after the beat."
         )
-    if profile["active_listening"]:
+    if dialogue and profile["active_listening"]:
         parts.append(
             "Any listener follows the speaker with attentive posture and responsive gestures."
         )

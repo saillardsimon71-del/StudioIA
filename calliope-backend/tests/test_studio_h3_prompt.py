@@ -46,6 +46,38 @@ def test_dialogue_free_text_generation_has_ambience_without_speech():
     assert "overall_soundscape: Quiet location ambience" in result
 
 
+@pytest.mark.parametrize("mode", ["native", "silent"])
+def test_dialogue_free_dance_has_no_speaker_or_vocal_animation_directions(mode):
+    shot = {
+        "prompt": "Three characters perform a synchronized disco dance. Static group shot.",
+        "dialogue": "",
+        "audio_mode": mode,
+    }
+    context = {
+        "directing_profile": {"preset": "fast_dialogue_social_fiction"},
+        "bible": {"visual_style": "Stylized 3D characters with expressive faces."},
+    }
+    result = compiler()(shot, context, first_frame=True)
+    assert "synchronized disco dance" in result and "Static group shot" in result
+    assert "Continue the first frame's identity" in result
+    assert "<d>" not in result and "(S1)" not in result
+    assert "follows the speaker" not in result
+    assert "without talking, singing, mouthing words or lip-sync" in result
+    assert "overall_soundscape: " + (
+        "N/A" if mode == "silent" else "Quiet location ambience"
+    ) in result
+
+
+def test_muted_dialogue_does_not_add_listening_or_spoken_animation():
+    result = compiler()({
+        "prompt": "She smiles and dances.", "audio_mode": "silent",
+        "dialogue_turns": [{"speaker": "lila", "text": "Bonjour."}],
+    }, {"language": "fr"})
+    assert "Bonjour" not in result and "<d>" not in result
+    assert "follows the speaker" not in result
+    assert "without talking, singing, mouthing words or lip-sync" in result
+
+
 def test_legacy_name_prefix_is_outside_spoken_text_without_mutating_shot():
     shot = {"prompt": "Lila stands in the room.", "dialogue": "Lila: Bonjour, toi !"}
     result = compiler()(shot, {"language": "French"})
