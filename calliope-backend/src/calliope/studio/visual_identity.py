@@ -244,6 +244,9 @@ def validate_value_manifest(shot, context, expected_values=None):
 
 def compile_image_request(shot, context, *, canonical_entity=None):
     info = context.get("shot") or {}
+    native = context.get("prompt_contract_version") == 2
+    if native:
+        info = info | shot
     labels = (
         (info.get("screen_text") or shot.get("screen_text") or [])
         if canonical_entity
@@ -289,6 +292,12 @@ def compile_image_request(shot, context, *, canonical_entity=None):
         if item["variant_of"]:
             item["base_visual_description"] = visual_description(by_key[item["variant_of"]])
         canon.append(item)
+    if native:
+        projection = context["render_canon"]
+        for item in canon:
+            entry = projection["characters" if item["kind"] == "character" else "locations"][item["key"]]
+            item["visual_description"] = entry["appearance"] if isinstance(entry, dict) else entry
+            item.pop("base_visual_description", None)
     parts = []
     if canonical_entity:
         parts.append(
@@ -309,10 +318,21 @@ def compile_image_request(shot, context, *, canonical_entity=None):
                 + strip_generated_text(entity["base_visual_description"], labels)
                 + "."
             )
-    style = strip_generated_text(context.get("bible", {}).get("visual_style", ""), labels)
+    style = strip_generated_text(
+        context["render_canon"]["style"] if native else context.get("bible", {}).get("visual_style", ""), labels
+    )
     if style:
         parts.append(f"Visual style: {style}.")
-    if canonical_entity:
+    if native:
+        if not canonical_entity:
+            for key in info.get("prop_keys", []):
+                parts.append(strip_generated_text(context["render_canon"]["props"][key], labels))
+            for key, state in info.get("start_state", {}).items():
+                parts.append(f"At the start, {key}: {strip_generated_text(state, labels)}")
+            for key in ("blocking", "framing"):
+                if info.get(key):
+                    parts.append(strip_generated_text(info[key], labels))
+    elif canonical_entity:
         if context.get("bible", {}).get("world_rules"):
             parts.append(f"World rules: {context['bible']['world_rules']}")
     else:

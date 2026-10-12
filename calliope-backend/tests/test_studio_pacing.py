@@ -710,7 +710,7 @@ def produce(client, monkeypatch, tmp_path, plan, clip_bytes, expected_error=None
 
     spawns = []
 
-    async def image(request):
+    async def image(request, *, check_cancel=None):
         return service.normalized_image(png_bytes())
 
     async def with_payoff(*args):
@@ -811,7 +811,7 @@ def test_a_good_take_is_approved_without_rerender_and_trimmed_usefully(
 
 
 @requires_ffmpeg
-def test_one_retry_on_manifest_dialogue_failure_then_approval_blocks(
+def test_quiet_audio_is_a_review_diagnostic_without_a_new_take(
     client, monkeypatch, tmp_path
 ):
     from calliope.studio import service
@@ -835,24 +835,19 @@ def test_one_retry_on_manifest_dialogue_failure_then_approval_blocks(
 
     project_id, spawns = produce(
         client, monkeypatch, tmp_path, plan_result, silent.read_bytes(),
-        expected_error='bloqué après une relance',
     )
-    # Échec manifeste deux fois de suite : une relance, pas une boucle GPU.
-    assert len(spawns) == 2
+    assert len(spawns) == 3
     board = service.board(project_id)
-    assert board["production"]["status"] == "failed"
-    assert board["scenes"][0]["shots"][0]["approved"] is False
-    assert not board["exports"]
-    from calliope.studio import production
-    job = queue_manager.get_job(board['production']['job_id'])
-    with pytest.raises(RuntimeError, match='bloqué après une relance'):
-        asyncio.run(production.run_production(job, json.loads(job['payload_json']), lambda: False))
-    assert len(spawns) == 2
+    assert board["production"]["status"] == "done"
+    shot = board["scenes"][0]["shots"][0]
+    assert shot["approved"] is True
+    assert shot["takes"][0]["metadata"]["dialogue_qc"]["status"] == "inaudible"
+    assert board["exports"]
     response = client.post(
         f"/api/studio/shots/{board['scenes'][0]['shots'][0]['id']}/approve",
         json={'approved': True},
     )
-    assert response.status_code == 409
+    assert response.status_code == 200
 
 
 # ------------------------------------------------------------------- routes

@@ -158,7 +158,7 @@ def test_automatic_production_exports_and_next_episode_uses_only_own_history(
         contexts.append(context)
         return planned_episode(context)
 
-    async def image(request):
+    async def image(request, *, check_cancel=None):
         return service.normalized_image(png_bytes())
 
     async def assess(shot):
@@ -334,7 +334,7 @@ def test_production_resumes_original_modal_call_without_another_take(client, mon
     async def plan(context, idea, objective):
         return planned_episode(context)
 
-    async def image(request):
+    async def image(request, *, check_cancel=None):
         return service.normalized_image(png_bytes())
 
     async def assess(shot):
@@ -585,7 +585,7 @@ def test_shot_language_controls_speech_validation_in_a_french_series(
     assert metadata["transcription_cache"]["signature"][-1] == language
 
 
-def test_resume_replaces_an_english_midroll_in_a_french_episode_once(client):
+def test_resume_preserves_a_legacy_english_midroll_after_language_change(client):
     from calliope.studio import production, series_planner, service
 
     created = series(client)
@@ -602,7 +602,7 @@ def test_resume_replaces_an_english_midroll_in_a_french_episode_once(client):
     ending = board["scenes"][0]["shots"][1]
     assert ending["id"] == ending_id
     assert ending["dialogue"] == (
-        "Abonne-toi, copie le lien et commente GO !"
+        "Subscribe, copy the link and comment GO!"
     )
     with service.database() as conn:
-        assert service.shot_context(conn, ending_id)["shot"]["language"] == "fr"
+        assert service.shot_context(conn, ending_id)["shot"]["language"] == "en"

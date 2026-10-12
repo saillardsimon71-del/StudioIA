@@ -4,6 +4,7 @@ import asyncio
 import base64
 import importlib
 import io
+import math
 import subprocess
 import tempfile
 import threading
@@ -64,7 +65,7 @@ def _last_frame_png(video_path: Path, end_sec=None) -> bytes:
                     "error",
                     "-y",
                     *(
-                        ["-ss", str(max(0, float(end_sec) - 1 / H3_FPS))]
+                        ["-ss", str(max(0, math.floor(float(end_sec) * H3_FPS) - 1) / H3_FPS)]
                         if end_sec is not None else ["-sseof", "-2"]
                     ),
                     "-i",

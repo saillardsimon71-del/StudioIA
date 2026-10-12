@@ -1,0 +1,9 @@
+{
+  "image_base_url": "https://apihub.agnes-ai.com/v1",
+  "image_model": "agnes-image-2.5-flash",
+  "aspect_ratio": "9:16",
+  "reference_paths": [
+    "AUDIT_WORKSPACE\\work\\mort-de-honte-revision2-opening-manual-2.png"
+  ],
+  "prompt": "One new vertical 9:16 cinematic frame of CLARA, the strawberry woman standing on the LEFT in the supplied scene. Keep her EXACT face, strawberry head shape with green leaves and golden seeds, gold earrings, cream jacket and black dress. Keep the same detailed stylized 3D rendering, warm light and salon architecture. In this new medium close-up, Clara alone faces the viewer and energetically points her raised index finger directly toward the lens while beginning to speak. Her face and pointing hand fill the composition, from head to waist. Her expression is lively and engaged, with eyes on the viewer. The warm mirrors, shelves and plants are softly visible behind her. Only Clara is in this new frame, no other people or duplicate heads. No smartphone, graphic overlay, caption or text."
+}

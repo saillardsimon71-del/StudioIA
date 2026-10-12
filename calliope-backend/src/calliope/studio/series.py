@@ -635,7 +635,6 @@ def set_production_mode(project_id, mode):
 
 
 def resume(project_id):
-    require_services()
     with service.database() as conn:
         require_active_project(conn, project_id)
         row = conn.execute(
@@ -652,7 +651,11 @@ def resume(project_id):
         if job["error"] == "cancelled":
             raise HTTPException(409, "Cette production a été annulée.")
         payload = json.loads(job["payload_json"])
-        payload.pop("prepare_only", None)
+        if payload.get("prepare_only") and row["stage"] != "review":
+            require_services(preparation_only=True)
+        else:
+            require_services()
+            payload.pop("prepare_only", None)
         conn.execute("UPDATE jobs SET payload_json=? WHERE id=?",
                      (json.dumps(payload), row["job_id"]))
         children = conn.execute(
@@ -787,6 +790,30 @@ def restart(project_id, request_id):
     return service.board(project_id)
 
 
+def editorial_script(conn, project_id, native=False):
+    rows = conn.execute(
+        "SELECT c.id,c.description,ss.dialogue,ss.prompt,ss.image_prompt,c.duration_sec,ss.continue_from_previous "
+        "FROM clips c JOIN studio_shots ss ON ss.clip_id=c.id JOIN scenes s ON s.id=c.scene_id "
+        "WHERE c.project_id=? AND COALESCE((SELECT json_extract(context_json,'$.purpose') "
+        "FROM studio_shot_context WHERE clip_id=c.id),'') NOT IN ('midroll','outro') "
+        "ORDER BY s.order_index,s.id,c.order_index,c.id", (project_id,)
+    ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        shot_id = item.pop("id")
+        continuation = item.pop("continue_from_previous")
+        if native:
+            info = service.shot_context(conn, shot_id)["shot"]
+            item["direction"] = {key: info.get(key) for key in (
+                "action", "reaction", "dialogue_turns", "blocking", "framing", "camera",
+                "prop_keys", "start_state", "end_state", "cut_reason", "soundscape", "screen_text"
+            )}
+            item["continue_from_previous"] = bool(continuation)
+        result.append(item)
+    return result
+
+
 def episode_meta(conn, project_id):
     row = conn.execute(
         "SELECT e.series_id,e.number,e.summary,e.ongoing_plot,e.context_json,e.plan_json,"
@@ -804,13 +831,7 @@ def episode_meta(conn, project_id):
         key: str(review.get(key) or "")[:4000] for key in
         ("hook", "stakes", "progression", "payoff", "next_episode", "risks")
     } if isinstance(review, dict) and review else {}
-    actual = [dict(row) for row in conn.execute(
-        "SELECT c.description,ss.dialogue,ss.prompt,ss.image_prompt,c.duration_sec "
-        "FROM clips c JOIN studio_shots ss ON ss.clip_id=c.id JOIN scenes s ON s.id=c.scene_id "
-        "WHERE c.project_id=? AND COALESCE((SELECT json_extract(context_json,'$.purpose') "
-        "FROM studio_shot_context WHERE clip_id=c.id),'') NOT IN ('midroll','outro') "
-        "ORDER BY s.order_index,s.id,c.order_index,c.id", (project_id,),
-    )]
+    actual = editorial_script(conn, project_id, plan.get("prompt_contract_version") == 2)
     result["editorial_stale"] = (
         bool(result["editorial_review"]) and actual != plan.get("editorial_script")
     )

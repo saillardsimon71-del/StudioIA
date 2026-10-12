@@ -54,7 +54,129 @@ def test_extract_json_empty():
         extract_json("   ")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', [429, 503])
+async def test_streaming_provider_error_keeps_its_status_and_readable_body(status):
+    async def handler(request):
+        return httpx.Response(status, stream=httpx.ByteStream(b'{"error":"Temporarily unavailable"}'))
+
+    client = LLMClient(base_url='https://test.invalid/v1', model='test', api_key='')
+    await client.client.aclose()
+    client.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(httpx.HTTPStatusError) as error:
+            await client.chat([{'role': 'user', 'content': 'Une histoire.'}])
+        assert error.value.response.status_code == status
+        assert error.value.response.json() == {'error': 'Temporarily unavailable'}
+    finally:
+        await client.close()
+
+
+@pytest.mark.parametrize("text", [
+    '{"prompt_contract_version":2,"narrative_outline":{"opening":"A conflict"},"scenes":[',
+    '```json\n{"updates":[{"path":["scenes"],"value":[]}\n```',
+    '{"broken": invalid, "nested":{"opening":"A conflict"}}',
+])
+def test_extract_json_does_not_accept_a_nested_fragment_of_a_broken_reply(text):
+    with pytest.raises(ValueError):
+        extract_json(text)
+
+
+def test_extract_json_skips_balanced_invalid_prose_without_selecting_its_children():
+    text = 'An invalid {example {"nested":true}} precedes {"title":"The real result"}.'
+    assert extract_json(text) == {"title": "The real result"}
+
+
+@pytest.mark.asyncio
+async def test_structured_reply_retries_when_required_root_fields_are_missing(monkeypatch):
+    from calliope.agent import llm
+
+    requests = []
+
+    class Client:
+        async def chat(self, messages, **options):
+            requests.append(options)
+            return '{"opening":"Partial"}' if len(requests) == 1 else '{"scenes":[],"prompt_contract_version":2}'
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(llm, "LLMClient", Client)
+    result = await llm.generate_structured([], required_keys=("scenes", "prompt_contract_version"))
+    assert result["prompt_contract_version"] == 2
+    assert len(requests) == 2
+    assert requests[1]["response_format"] == {"type": "json_object"}
+
+
 # ---------- LLMClient response_format fallback ----------
+
+
+@pytest.mark.asyncio
+async def test_structured_generation_routes_only_requested_role_including_json_retry(monkeypatch):
+    from calliope.agent import llm
+    from calliope.config import settings
+
+    monkeypatch.setattr(settings, 'llm_profiles', [
+        {'id': 'active', 'name': 'Technical', 'base_url': 'https://technical.example/v1',
+         'model': 'technical-model', 'api_key': 'technical-key'},
+        {'id': 'writer', 'name': 'Creative', 'base_url': 'https://writer.example/v1',
+         'model': 'writer-model', 'api_key': 'writer-key'},
+    ])
+    monkeypatch.setattr(settings, 'llm_active_id', 'active')
+    monkeypatch.setattr(settings, 'agent_llm_assignments', {'story': 'writer'})
+    monkeypatch.setattr(settings, 'llm_base_url', 'https://technical.example/v1')
+    monkeypatch.setattr(settings, 'llm_model', 'technical-model')
+    monkeypatch.setattr(settings, 'llm_api_key', 'technical-key')
+    requests = []
+
+    def respond(request):
+        payload = json.loads(request.content)
+        requests.append((request.url.host, payload['model'], request.headers['authorization']))
+        text = 'not JSON' if len(requests) == 1 else '{"title":"A scene"}'
+        return httpx.Response(200, content=_sse_body({'content': text}),
+                              headers={'Content-Type': 'text/event-stream'})
+
+    async_client = httpx.AsyncClient
+    monkeypatch.setattr(llm.httpx, 'AsyncClient',
+                        lambda **kwargs: async_client(transport=httpx.MockTransport(respond), **kwargs))
+    assert await llm.generate_structured([], role='story') == {'title': 'A scene'}
+    assert await llm.generate_structured([]) == {'title': 'A scene'}
+    assert requests == [('writer.example', 'writer-model', 'Bearer writer-key'),
+                        ('writer.example', 'writer-model', 'Bearer writer-key'),
+                        ('technical.example', 'technical-model', 'Bearer technical-key')]
+
+
+@pytest.mark.parametrize('base_url, expected', [
+    ('https://openrouter.ai/api/v1', {'reasoning': {'effort': 'low'}}),
+    ('http://127.0.0.1:11434/v1', {'chat_template_kwargs': {'reasoning_effort': 'low'}}),
+])
+def test_profile_reasoning_uses_the_provider_protocol(base_url, expected):
+    client = LLMClient(base_url=base_url, model='model', thinking='low')
+    assert client.thinking_extra_body == expected
+
+
+@pytest.mark.parametrize("first", ['{"initial":{},"changes":[]}', "not JSON"])
+@pytest.mark.asyncio
+async def test_structured_json_mode_is_explicit_and_preserves_format_retry(monkeypatch, first):
+    from calliope.agent import llm
+
+    requests = []
+    closed = []
+
+    class Client:
+        async def chat(self, messages, **options):
+            requests.append(options)
+            return first if len(requests) == 1 else '{"initial":{},"changes":[]}'
+
+        async def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(llm, "LLMClient", Client)
+    result = await llm.generate_structured([], max_tokens=2600, json_mode=True, required_keys=("initial", "changes"))
+    assert result == {"initial": {}, "changes": []}
+    assert len(requests) == (2 if first == "not JSON" else 1)
+    assert all(options["response_format"] == {"type": "json_object"} and options["max_tokens"] == 2600 for options in requests)
+    assert closed == [True]
 
 def _sse_body(message: dict) -> bytes:
     """Encode a full assistant message as a minimal SSE stream."""

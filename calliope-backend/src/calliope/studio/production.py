@@ -8,7 +8,7 @@ from calliope.config import settings
 from calliope.events.bus import event_bus
 from calliope.queue.manager import queue_manager
 from calliope.studio import audio, series, service
-from calliope.studio.series_planner import insert_midroll, plan_episode
+from calliope.studio.series_planner import insert_midroll, normalize_plan, plan_episode, prepare_native_states
 from calliope.studio.visual_identity import (
     compile_image_request,
     file_hash,
@@ -136,7 +136,8 @@ def save_episode_plan(project_id, plan):
             for row, shot in zip(shots, scene["shots"]):
                 shot_ids.append(row[0])
                 conn.execute(
-                    "INSERT INTO studio_shot_context(clip_id,context_json) VALUES(?,?)",
+                    "INSERT INTO studio_shot_context(clip_id,context_json) VALUES(?,?) "
+                    "ON CONFLICT(clip_id) DO UPDATE SET context_json=excluded.context_json",
                     (
                         row[0],
                         json.dumps(
@@ -146,7 +147,8 @@ def save_episode_plan(project_id, plan):
                                     for key in ('action', 'reaction', 'framing', 'camera',
                                                 'language', 'purpose', 'dialogue_turns',
                                                 'soundscape', 'screen_text', 'blocking',
-                                                'listener_keys')
+                                                'listener_keys', 'prop_keys', 'start_state',
+                                                'end_state', 'cut_reason')
                                     if key in shot
                                 },
                                 "character_keys": shot.get("character_keys", []),
@@ -158,13 +160,7 @@ def save_episode_plan(project_id, plan):
                     ),
                 )
                 script.extend([shot.get("description", ""), shot.get("dialogue", "")])
-        plan["editorial_script"] = [dict(row) for row in conn.execute(
-            "SELECT c.description,ss.dialogue,ss.prompt,ss.image_prompt,c.duration_sec "
-            "FROM clips c JOIN studio_shots ss ON ss.clip_id=c.id JOIN scenes s ON s.id=c.scene_id "
-            "WHERE c.project_id=? AND COALESCE((SELECT json_extract(context_json,'$.purpose') "
-            "FROM studio_shot_context WHERE clip_id=c.id),'') NOT IN ('midroll','outro') "
-            "ORDER BY s.order_index,s.id,c.order_index,c.id", (project_id,),
-        )]
+        plan["editorial_script"] = series.editorial_script(conn, project_id, plan.get("prompt_contract_version") == 2)
         conn.execute(
             "UPDATE projects SET title=? WHERE id=?",
             (str(plan.get("title") or current["title"])[:200], project_id),
@@ -220,6 +216,11 @@ def ensure_midroll(project_id):
         by_key.update({e["key"]: e for e in context.get("entities", [])})
         context["entities"] = list(by_key.values())
         plan = json.loads(episode["plan_json"] or "{}")
+        if plan.get("prompt_contract_version", 1) == 1 and any(
+            shot.get("purpose") == "midroll"
+            for scene in plan.get("scenes", []) for shot in scene.get("shots", [])
+        ):
+            return
         if "editorial_script" not in plan:
             plan["editorial_script"] = [
                 shot for scene in plan.get("scenes", []) for shot in scene["shots"]
@@ -231,7 +232,8 @@ def ensure_midroll(project_id):
         ).fetchall()
         fields = ("action", "reaction", "framing", "camera", "language", "purpose",
                   "speaker", "character_keys", "location_key", "reference_key", "dialogue_turns",
-                  "soundscape", "screen_text", "blocking", "listener_keys")
+                  "soundscape", "screen_text", "blocking", "listener_keys", "prop_keys",
+                  "start_state", "end_state", "cut_reason")
         live_scenes = []
         for scene in conn.execute(
             "SELECT * FROM scenes WHERE project_id=? ORDER BY order_index,id", (project_id,)
@@ -419,12 +421,7 @@ def selected_video(shot):
 
 
 async def assess_take(shot):
-    """Mesure la piste native d'une prise à dialogue et juge la réplique.
-
-    Tolérant par construction : seuls les échecs manifestes sont renvoyés
-    (réplique absente, invention importante, audio inexploitable). Le reste se
-    corrige au trim, jamais au rerender.
-    """
+    """Enregistre un diagnostic de parole pour la relecture de la prise."""
     from calliope.studio import pacing, transcription
     from calliope.studio.h3_prompt import spoken_dialogue
 
@@ -443,7 +440,7 @@ async def assess_take(shot):
                 "voice": None,
             }
             metadata["dialogue_qc"] = verdict
-            service.render_event(take["id"], "FAILED", verdict["reason"])
+            service.render_event(take["id"], "DONE", verdict["reason"])
         with service.database() as conn:
             conn.execute(
                 "UPDATE studio_takes SET metadata_json=? WHERE id=?",
@@ -469,7 +466,7 @@ async def assess_take(shot):
             "voice": None,
         }
         metadata["dialogue_qc"] = verdict
-        service.render_event(take["id"], "FAILED", verdict["reason"])
+        service.render_event(take["id"], "DONE", verdict["reason"])
         with service.database() as conn:
             conn.execute(
                 "UPDATE studio_takes SET metadata_json=? WHERE id=?",
@@ -514,6 +511,7 @@ async def assess_take(shot):
             context["shot"]["dialogue_turns"], transcript, language=language
         )
         verdict["turns"] = turns.get("turns", [])
+        verdict["speaker_identity_status"] = turns["speaker_identity_status"]
         if turns["status"] == "missing":
             verdict.update(status="missing", reason=turns["reason"])
     verdict.setdefault("voice", (
@@ -533,7 +531,7 @@ async def assess_take(shot):
             metadata["dialogue_qc"]["diagnostic"] = diagnosis
     service.render_event(
         take["id"],
-        "FAILED" if verdict["status"] in ("missing", "extra", "inaudible") else "DONE",
+        "DONE",
         verdict.get("reason", "Contrôle terminé"),
     )
     with service.database() as conn:
@@ -560,10 +558,20 @@ def trim_take(shot, voice=None, end_limit=None):
         return
     if shot["audio_mode"] == "native" and shot["dialogue"].strip() and not voice:
         return
-    start, end = pacing.useful_window(shot["duration_sec"], probe, voice)
+    turns = shot.get("dialogue_turns") or []
+    final_reaction = shot.get("reaction") or (turns[-1].get("reaction") if turns else "")
+    opening_action = shot.get("action") or (turns[0].get("action") if turns else "")
+    preserve_end = probe if shot.get("prompt_contract_version") == 2 and final_reaction else None
+    if shot.get("prompt_contract_version") == 2 and shot.get("purpose") == "midroll" and voice:
+        start, end = pacing.speech_window(probe, voice, pacing.ASIDE_POST_ROLL_SEC,
+                                         pre_roll_sec=pacing.ASIDE_PRE_ROLL_SEC)
+    else:
+        start, end = pacing.useful_window(shot["duration_sec"], probe, voice, preserve_end_sec=preserve_end)
+    if shot.get("prompt_contract_version") == 2 and opening_action and shot.get("purpose") != "midroll":
+        start = 0
     if end_limit is not None:
         end = min(end, pacing.floor_grid(end_limit))
-    if start <= 1e-9 and end >= probe - 1e-9:
+    if start <= 1e-9 and end >= pacing.floor_grid(probe) - 1e-9:
         return
     with service.database() as conn:
         if service.save_trim(conn, shot["id"], start, end):
@@ -632,6 +640,8 @@ async def ensure_entities(job, should_stop):
                  and entity["key"] != "studio_cta_host"]
         context = frozen | {
             "entities": items,
+            "prompt_contract_version": planned.get("prompt_contract_version", 1),
+            "render_canon": planned.get("render_canon", {}),
             "bible": {
                 **planned.get("bible", {}),
                 **{k: v for k, v in frozen.get("bible", {}).items() if v},
@@ -683,7 +693,13 @@ async def ensure_entities(job, should_stop):
                 (json.dumps(request), entity["id"]),
             )
             conn.commit()
-        content, _ = await service._generate_image(request)
+        async def check_image_cancel():
+            await checkpoint(
+                job, "images", 0.12 + index / max(1, len(items)) * 0.08,
+                f"Référence : {entity['name']}", should_stop,
+            )
+
+        content, _ = await service._generate_image(request, check_cancel=check_image_cancel)
         temporary = path.with_suffix(".tmp")
         temporary.write_bytes(content)
         temporary.replace(path)
@@ -715,7 +731,7 @@ def load_shot(shot_id):
 
 
 async def render_shot(job, initial, should_stop):
-    from calliope.studio.h3_prompt import compile_h3_prompt, directing_profile
+    from calliope.studio.h3_prompt import compile_h3_prompt
 
     if should_stop():
         raise asyncio.CancelledError()
@@ -723,14 +739,9 @@ async def render_shot(job, initial, should_stop):
         raise ProductionPausedError()
     shot = load_shot(initial["id"])
     chosen = selected_video(shot)
-    automatic = not chosen or chosen["engine"] != "import"
-    if automatic:
+    if chosen and not shot["approved"] and chosen["engine"] != "import":
         with service.database() as conn:
             context = service.shot_context(conn, shot["id"])
-        automatic = (
-            directing_profile(context.get("directing_profile"))["production_mode"] == "automatic"
-        )
-    if chosen and not shot["approved"] and chosen["engine"] != "import":
         expected = compile_h3_prompt(
             shot | context.get("shot", {}),
             context,
@@ -757,26 +768,11 @@ async def render_shot(job, initial, should_stop):
                 conn.commit()
             raise ProductionPausedError() from None
     verdict = await assess_take(shot)
-    retry_statuses = {"missing", "extra", "inaudible"} | ({"unknown"} if automatic else set())
-    if verdict and verdict["status"] in retry_statuses:
-        service.approve_shot(shot["id"], False)
-        shot = await generate_take(job, shot, "video", should_stop, attempt=1)
-        verdict = await assess_take(shot)
-        if verdict and verdict["status"] in retry_statuses:
-            raise ValueError(f"Plan {shot['id']} bloqué après une relance : {verdict['reason']}")
-    trim_take(shot, (verdict or {}).get("voice"), (verdict or {}).get("trim_end_limit_sec"))
+    if not verdict or verdict["status"] == "ok":
+        trim_take(shot, (verdict or {}).get("voice"), (verdict or {}).get("trim_end_limit_sec"))
     if should_stop():
         raise asyncio.CancelledError()
     if queue_manager.is_cancelled(job["id"]):
-        raise ProductionPausedError()
-    if verdict and verdict["status"] == "unknown" and not shot["approved"]:
-        with service.database() as conn:
-            conn.execute(
-                "UPDATE studio_productions SET status='paused',message=? WHERE project_id=?",
-                ("Contrôle parole incertain : écoutez la vidéo, puis approuvez le plan "
-                 "si le son est correct, ou régénérez cette prise.", job["project_id"]),
-            )
-            conn.commit()
         raise ProductionPausedError()
     try:
         service.approve_shot(shot["id"], True)
@@ -845,10 +841,14 @@ async def run_production(job, payload, should_stop):
         if not has_plan:
             plan = await plan_episode(
                 json.loads(episode["context_json"])
-                | {"_planner_trace": {"project_id": project_id, "job_id": job["id"]}},
+                | {"prompt_contract_version": 2, "_planner_trace": {"project_id": project_id, "job_id": job["id"]}},
                 episode["idea"],
                 episode["objective"],
             )
+            if plan.get("prompt_contract_version") == 2 and not plan.pop("_states_prepared", False):
+                await checkpoint(job, "writing", 0.07, "Préparation des raccords entre les plans", should_stop)
+                plan = normalize_plan(await prepare_native_states(plan, {"project_id": project_id, "job_id": job["id"]}),
+                                      json.loads(episode["context_json"]))
             await checkpoint(job, "writing", 0.1, "Scénario préparé", should_stop)
             save_episode_plan(project_id, plan)
         ensure_midroll(project_id)

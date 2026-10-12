@@ -52,6 +52,16 @@ export interface Shot {
   image_prompt: string;
   dialogue: string;
   purpose?: string;
+  prompt_contract_version?: number;
+  action?: string;
+  reaction?: string;
+  framing?: string;
+  camera?: string;
+  blocking?: string;
+  prop_keys?: string[];
+  start_state?: Record<string, string>;
+  end_state?: Record<string, string>;
+  cut_reason?: string;
   character_keys?: string[];
   continuation_source?: Take | null;
   continuation_frame_index?: number;
@@ -84,7 +94,16 @@ export type ShotDraft = Pick<
   | "duration_sec"
   | "audio_mode"
   | "continue_from_previous"
+  | "action" | "reaction" | "framing" | "camera" | "blocking"
+  | "prop_keys" | "start_state" | "end_state" | "cut_reason"
 >;
+
+export interface PromptPreview {
+  image_prompt: string;
+  video_prompt: string;
+  prompt_contract_version: number;
+  source_status: "pending_source" | "selected_image" | "selected_previous_video";
+}
 
 export interface Scene {
   id: number;
@@ -421,6 +440,8 @@ export const studio = {
   }) => request<StudioProject>("/projects", "POST", payload),
   example: () => request<StudioProject>("/examples", "POST"),
   board: (id: number) => request<Board>(`/projects/${id}`),
+  promptPreview: (id: number, shotId: number) =>
+    request<PromptPreview>(`/projects/${id}/shots/${shotId}/prompt-preview`),
   plan: (
     id: number,
     payload: { text: string; mode: "script" | "idea"; use_llm: boolean },

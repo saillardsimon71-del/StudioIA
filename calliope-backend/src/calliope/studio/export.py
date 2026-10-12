@@ -107,6 +107,11 @@ def _window_for(clip, probe):
         beat = 0.0
     if beat <= 0:
         return 0.0, probe_sec
+    native = clip.get("prompt_contract_version") == 2
+    turns = clip.get("dialogue_turns") or []
+    final_reaction = clip.get("reaction") or (turns[-1].get("reaction") if turns else "")
+    opening_action = clip.get("action") or (turns[0].get("action") if turns else "")
+    preserve_end = probe_sec if native and final_reaction else None
     if (
         clip.get("audio_mode") == "native"
         and str(clip.get("dialogue") or "").strip()
@@ -114,13 +119,18 @@ def _window_for(clip, probe):
         transcript = clip.get("transcript") or {}
         if transcript.get("status") != "ok" or not transcript.get("speech_intervals"):
             return 0.0, probe_sec
-        if clip.get("trim_to_speech"):
-            return pacing.speech_window(
+        if clip.get("trim_to_speech") or (native and clip.get("purpose") == "midroll"):
+            aside = native and clip.get("purpose") == "midroll"
+            start, end = pacing.speech_window(
                 probe_sec, transcript["speech_intervals"],
-                clip.get("post_roll_sec", pacing.POST_ROLL_SEC),
+                clip.get("post_roll_sec", pacing.ASIDE_POST_ROLL_SEC if aside else pacing.POST_ROLL_SEC),
+                pre_roll_sec=pacing.ASIDE_PRE_ROLL_SEC if aside else pacing.PRE_ROLL_SEC,
             )
-        return pacing.useful_window(beat, probe_sec, transcript["speech_intervals"])
-    return pacing.useful_window(beat, probe_sec, None)
+        else:
+            start, end = pacing.useful_window(beat, probe_sec, transcript["speech_intervals"], preserve_end_sec=preserve_end)
+    else:
+        start, end = pacing.useful_window(beat, probe_sec, None, preserve_end_sec=preserve_end)
+    return (0 if native and opening_action and clip.get("purpose") != "midroll" else start), end
 
 
 def _check_target(duration, target, stage):
@@ -248,7 +258,7 @@ async def assemble(
                     (probe["width"], probe["height"]), (width, height),
                     work / f"text-{index}.ass",
                     take_id=clip.get("take_id"),
-                    phone=clip.get("purpose") == "midroll",
+                    phone=clip.get("purpose") == "midroll" and clip.get("prompt_contract_version", 1) == 1,
                 )
                 overlays.append({"clip_id": clip.get("clip_id"), **overlay_data})
             if not native_audio:
@@ -263,6 +273,7 @@ async def assemble(
                 frozen.get("transitions") == "scene_fades" and index > 0
                 and clip.get("scene_id") is not None
                 and clips[index - 1].get("scene_id") != clip["scene_id"]
+                and clip.get("purpose") != "midroll" and clips[index - 1].get("purpose") != "midroll"
                 and duration >= 8 / 24
             )
             video_map, video_options = "0:v:0", ["-vf", video_filter]

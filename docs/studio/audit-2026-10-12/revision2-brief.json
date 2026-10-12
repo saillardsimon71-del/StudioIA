@@ -1,0 +1,178 @@
+{
+  "series": {
+    "concept": "Mini-série de deux épisodes d'une minute, en français, sur la jalousie, le mensonge et une vengeance publique. Des personnages fruits très humanisés vivent une vraie embrouille de couple. Clara, une fraise élégante, livre Enzo dans un chariot à Jade, une myrtille qu'elle accuse de lui voler son mec. Elle découvre qu'Enzo l'a fait passer pour morte pour séduire Jade et lui soutirer de l'argent. Les deux filles s'allient puis organisent son faux enterrement devant sa famille. Humour absurde, oral, mordant et social ; les personnages agissent selon leurs émotions et leurs décisions ont des conséquences concrètes. Deux épisodes seulement ; lancer uniquement le premier.",
+    "aspect_ratio": "9:16",
+    "language": "fr",
+    "target_seconds": 60,
+    "bible": {
+      "universe": "Monde contemporain à échelle humaine habité par des fruits humanisés adultes. Une embrouille de couple se joue dans un salon de coiffure de quartier élégant. Le lendemain, les filles la prolongent dans la cour d'une maison pour exposer le menteur. Les objets et les lieux sont humains.",
+      "tone": "Comédie sociale absurde avec jalousie, mauvaise foi, insolence et réactions spontanées. Français oral de jeunes adultes. Dialogues vifs, clairement articulés, départ immédiat des répliques et réponses du tac au tac. Les gestes et les réactions se jouent pendant les paroles ; pas de longs temps morts ou de pose répétée. La tension progresse vers une alliance puis une vengeance concrète.",
+      "visual_style": "Animation 3D stylisée de grande qualité, matières détaillées et éclairage crédible. Des fruits à échelle humaine, avec silhouettes et membres humains, vêtements adultes contemporains, visages riches en expressions, couleurs et formes fruitières immédiatement reconnaissables. Clara et Jade sont des femmes adultes élégantes, jamais de petites mascottes dans une coupe à fruits. Le décor humain est dense et vécu, avec une profondeur en plusieurs niveaux, miroirs, étagères, plantes et objets. Lumière chaleureuse latérale, matières tactiles, reflets doux et palette cohérente. Compositions verticales partagées, assez larges pour lire les corps, le chariot et le salon, avec des visages suffisamment grands pour lire leurs réactions. Cadrages plus proches possibles pour une réaction utile. Choix des angles au service de la scène, sans coupe automatique à chaque changement de locuteur. Aucun habillage de téléphone géant. Le sous-titrage est une étape de montage distincte ; l'image générée reste sans sous-titres.",
+      "characters": "clara = Clara, femme adulte de 22 ans, fraise humanisée à échelle humaine, tête et joues évoquant la forme d'une fraise, peau rouge finement ponctuée de graines dorées, petite couronne de feuilles, visage féminin expressif avec de grands yeux bruns, cheveux bruns attachés, silhouette féminine adulte avec proportions humaines, bras et jambes humains. Robe noire élégante, veste crème et boucles dorées. Assurance blessée, répond du tac au tac. Voix féminine adulte française médium légèrement rauque, ferme et vive, naturelle et intelligible, sans diction traînante.\njade = Jade, femme adulte de 23 ans, myrtille humanisée à échelle humaine, visage féminin arrondi et expressif, peau violette bleutée mate avec léger reflet de fruit, petits signes de calice au sommet, cheveux noirs au carré, silhouette féminine adulte et membres humains. Veste lilas et jean bleu. D'abord incrédule, puis mordante. Voix féminine adulte française un peu plus grave que Clara, nette, sèche, énergique et intelligible.\nenzo = Enzo, homme adulte de 23 ans, tête de banane jaune allongée et légèrement courbe sur un corps humain adulte, petit pédoncule brun en haut, visage expressif, bras et jambes humains. Blouson blanc uni sur haut sombre, pantalon foncé et baskets. Charmeur arrogant, puis paniqué. Voix masculine adulte française médium, un peu nasale, vive et claire ; ses excuses partent immédiatement, sans changer de timbre entre scènes.",
+      "relationships": "Clara croit d'abord que Jade lui a volé Enzo. Jade pensait Clara morte : Enzo lui a raconté le deuil de sa copine et a pleuré pour obtenir des vacances payées. Clara et Jade découvrent qu'elles ont été manipulées, cessent de se traiter en rivales et s'allient. Enzo tente des excuses puis essaie de monter les filles l'une contre l'autre. Patricia est sa mère, uniquement prévue dans l'épisode suivant.",
+      "locations": "Épisode 1 : un seul salon de coiffure humain chaleureux et détaillé. Miroirs avec ampoules, plans de travail en marbre clair, produits sur étagères, plantes, fauteuil pivotant de Jade et entrée visible. Le passage est assez large pour un chariot. Le trio et l'action principale se lisent au premier plan ; le mobilier et l'entrée donnent de la profondeur. Géographie stable entre prises. Épisode 2 prévu : une cour de maison fleurie avec portail, table et cercueil décoratif vide. Cette cour ne doit pas apparaître dans l'épisode 1.",
+      "world_rules": "Les fruits humanisés sont des personnes adultes à taille humaine. Les femmes ont des silhouettes humaines et les marqueurs de leur fruit. Le chariot est un chariot de supermarché en métal à quatre roues, assez grand pour accueillir Enzo assis ; l'absurdité est jouée avec sérieux. Le faux enterrement est une mise en scène sociale pour révéler des mensonges, sans mort réelle ni violence physique. Les téléphones sont de vrais accessoires tenus en main seulement quand l'histoire les utilise.",
+      "past_events": "Avant le premier épisode, Enzo entretient une relation avec Clara et fréquente aussi Jade. Il a dit à Jade que sa copine était morte, a pleuré sur son canapé et lui a fait payer ses vacances. Clara vient de découvrir l'infidélité et croit d'abord Jade responsable. Ces informations sont révélées dans l'échange, sans exposition préalable.",
+      "ongoing_plot": "Le lendemain, les deux filles organisent le faux enterrement d'Enzo. La mère découvre qu'elle aussi a payé pour l'enterrement inventé de Clara. L'appel final du premier épisode n'a pas été décroché à l'écran. Les fleurs du deuxième épisode appartiennent à son décor. L'épisode 2 termine l'arc, mais ne doit pas être préparé ni produit maintenant.",
+      "continuity": "Mêmes visages, vêtements et voix. Ouverture : Enzo assis dans le panier métallique du chariot, jambes repliées, Clara derrière sa poignée à gauche, Jade debout à droite face à eux. Enzo tente de se redresser pour partir ; Clara bloque son passage et il reste auprès du chariot. Pas de bouquet ni de sac de linge dans cette version. Clara sort son téléphone uniquement pour la photo finale, puis l'envoie. Le téléphone sonne ; l'appel de sa mère n'est pas décroché. Le seul aparté central s'adresse au spectateur, sans téléphone incrusté. Retour immédiat à l'action quittée. Aucune outro."
+    },
+    "directing_profile": {
+      "preset": "fast_dialogue_social_fiction",
+      "framing": "story_driven",
+      "camera": "scene_driven",
+      "dialogue_density": "brisk",
+      "reactions": "immediate",
+      "active_listening": true,
+      "continuity": true,
+      "silences": "brief",
+      "music": "postproduction",
+      "music_style": "playful",
+      "music_gain_db": -18.0,
+      "ambience_gain_db": -34.0,
+      "number_format": "grouped_comma",
+      "attached_values": false,
+      "require_reference_approval": false,
+      "production_mode": "automatic",
+      "transitions": "cuts"
+    },
+    "title": "Mort de honte - Version retravaillée"
+  },
+  "episode": {
+    "idea": "Réaliser uniquement le scénario approuvé ci-dessous. Conserver exactement les répliques, leurs locuteurs et leur ordre ; préparer leur mise en scène sans réécrire l'histoire. Les horaires sont des repères, pas des pauses à remplir. La première prise est l'échange d'ouverture entre Clara et Jade, environ sept secondes, Enzo silencieux. Les actions se jouent pendant les paroles, avec un débit français vif, intelligible et des réponses immédiates. L'image d'ouverture montre Enzo dans le panier du chariot et Jade debout, pas Enzo dans un fauteuil. Un seul salon pendant tout l'épisode, riche et profond, cadre partagé lisible. Le logiciel insère une seule incitation centrale par Clara après 'Tu bouges pas.' et avant 'Clara, je t'aime. C'est toi que je choisis.'. Ne pas écrire la réplique d'incitation dans les prises narratives. Après cet aparté, reprendre immédiatement la même confrontation. Clara sort son téléphone seulement pour la photo finale. Pas de bouquet, pas de sac de linge, pas de téléphone graphique ajouté. La sonnerie finale n'est pas une voix : aucun interlocuteur supplémentaire. La photo est prise puis effectivement envoyée. La mère appelle, mais personne ne décroche. Durée cible une minute, sans silence de remplissage.\n\n{\n  \"title\": \"Livraison express - Version 2\",\n  \"beats\": [\n    {\n      \"moment\": \"00:00-00:07 - La livraison impossible\",\n      \"action\": \"Dans le salon de coiffure, Clara pousse le chariot vers Jade. Enzo est assis dans son panier, genoux repliés, expression vexée. Le cadre situe les trois personnages, la porte et la profondeur du salon.\\n\\n\\n\\n\\n\\nClara s'arrête, surprise par la réaction. Enzo comprend que ses deux versions vont se rencontrer.\",\n      \"dialogue_turns\": [\n        {\n          \"speaker\": \"clara\",\n          \"text\": \"Tu veux mon mec ? Tiens, prends-le !\"\n        },\n        {\n          \"speaker\": \"jade\",\n          \"text\": \"T'es vivante ?!\"\n        }\n      ]\n    },\n    {\n      \"moment\": \"00:07-00:21 - Le mensonge est dit clairement\",\n      \"action\": \"Jade se rapproche du chariot. Les regards des deux filles se concentrent maintenant sur Enzo.\",\n      \"dialogue_turns\": [\n        {\n          \"speaker\": \"clara\",\n          \"text\": \"Pourquoi ? Il t'a dit quoi ?\"\n        },\n        {\n          \"speaker\": \"jade\",\n          \"text\": \"Qu'il t'avait enterrée !\"\n        },\n        {\n          \"speaker\": \"enzo\",\n          \"text\": \"Notre couple. J'ai enterré notre couple.\"\n        },\n        {\n          \"speaker\": \"jade\",\n          \"text\": \"Et les vacances que j'ai payées pour ton deuil ?\"\n        },\n        {\n          \"speaker\": \"clara\",\n          \"text\": \"Tu t'es payé des vacances avec ma mort ?\"\n        }\n      ]\n    },\n    {\n      \"moment\": \"00:21-00:28 - Il tente de partir\",\n      \"action\": \"Enzo commence à se redresser pour sortir. Clara bloque son passage et le regarde directement.\",\n      \"dialogue_turns\": [\n        {\n          \"speaker\": \"jade\",\n          \"text\": \"Mon argent. Tu me le rends.\"\n        },\n        {\n          \"speaker\": \"enzo\",\n          \"text\": \"Je vais chercher ma carte.\"\n        },\n        {\n          \"speaker\": \"clara\",\n          \"text\": \"Tu bouges pas.\"\n        }\n      ]\n    },\n    {\n      \"moment\": \"00:33-00:46 - Il essaie de les séparer\",\n      \"action\": \"Clara hésite un instant. Jade la regarde.\\n\\n\\n\\n\\n\\n\\n\\nLes filles échangent un regard entendu. Enzo perd leur attention et son assurance.\",\n      \"dialogue_turns\": [\n        {\n          \"speaker\": \"enzo\",\n          \"text\": \"Clara, je t'aime. C'est toi que je choisis.\"\n        },\n        {\n          \"speaker\": \"jade\",\n          \"text\": \"Il m'a dit ça juste avant le virement.\"\n        },\n        {\n          \"speaker\": \"clara\",\n          \"text\": \"En pleurant ?\"\n        },\n        {\n          \"speaker\": \"jade\",\n          \"text\": \"Exactement.\"\n        },\n        {\n          \"speaker\": \"enzo\",\n          \"text\": \"Vous allez pas vous mettre à deux contre moi !\"\n        }\n      ]\n    },\n    {\n      \"moment\": \"00:46-01:00 - La vengeance commence vraiment\",\n      \"action\": \"Clara sort son téléphone et cadre Enzo. Jade se place à côté du chariot, dans sa ligne de fuite.\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\nClara prend la photo, puis l'envoie avec un geste net sur son téléphone. Aucun texte à lire n'est nécessaire à la scène.\\n\\n\\n\\nLe téléphone sonne immédiatement. Clara regarde l'écran, puis Enzo.\\n\\n\\n\\nEnzo reste figé. La sonnerie et sa réaction terminent l'épisode, sans voix supplémentaire ni outro.\",\n      \"dialogue_turns\": [\n        {\n          \"speaker\": \"clara\",\n          \"text\": \"Souris. On va faire une photo.\"\n        },\n        {\n          \"speaker\": \"enzo\",\n          \"text\": \"Pourquoi ?\"\n        },\n        {\n          \"speaker\": \"jade\",\n          \"text\": \"Pour ton enterrement.\"\n        },\n        {\n          \"speaker\": \"clara\",\n          \"text\": \"Demain. Ta mère est invitée.\"\n        },\n        {\n          \"speaker\": \"enzo\",\n          \"text\": \"Pas ma mère !\"\n        },\n        {\n          \"speaker\": \"clara\",\n          \"text\": \"C'est envoyé.\"\n        },\n        {\n          \"speaker\": \"clara\",\n          \"text\": \"Ta mère appelle. Tu réponds ?\"\n        }\n      ]\n    }\n  ],\n  \"summary\": \"Clara livre Enzo assis dans un chariot à Jade. Jade croyait Clara enterrée : Enzo a inventé sa mort pour séduire Jade et lui faire payer des vacances. Les filles exigent un remboursement. Enzo essaie de partir puis de séduire Clara pour briser leur alliance. Elles le photographient et envoient l'annonce de son faux enterrement à sa mère, qui appelle immédiatement.\",\n  \"events\": [\n    \"Clara arrive avec Enzo réellement assis dans le panier du chariot ; Jade est debout.\",\n    \"Jade révèle le faux décès de Clara et les vacances payées à Enzo.\",\n    \"Jade réclame son argent ; Clara empêche Enzo de partir.\",\n    \"Enzo essaie de séduire Clara ; Jade révèle la même manipulation avant son virement.\",\n    \"Clara photographie Enzo et envoie la photo à sa mère. Le téléphone sonne ; Clara annonce l'appel sans décrocher.\"\n  ],\n  \"ongoing_plot\": \"Le lendemain, les deux filles organisent le faux enterrement d'Enzo. La mère découvre qu'elle aussi a payé pour l'enterrement inventé de Clara. L'appel final du premier épisode n'a pas été décroché à l'écran. Les fleurs du deuxième épisode appartiennent à son décor. L'épisode 2 termine l'arc, mais ne doit pas être préparé ni produit maintenant.\"\n}",
+    "objective": "Épisode 1 retravaillé uniquement. Faire comprendre le mensonge immédiatement, montrer deux tactiques échouées d'Enzo, concrétiser la vengeance par la photo envoyée et l'appel de sa mère. Jeu rapide et intelligible, sans attente entre les échanges. Une seule incitation centrale rapide par Clara.",
+    "request_id": "mort-de-honte-revision2-20261012",
+    "prepare_only": true
+  },
+  "expected_story": {
+    "title": "Livraison express - Version 2",
+    "beats": [
+      {
+        "moment": "00:00-00:07 - La livraison impossible",
+        "action": "Dans le salon de coiffure, Clara pousse le chariot vers Jade. Enzo est assis dans son panier, genoux repliés, expression vexée. Le cadre situe les trois personnages, la porte et la profondeur du salon.\n\n\n\n\n\nClara s'arrête, surprise par la réaction. Enzo comprend que ses deux versions vont se rencontrer.",
+        "dialogue_turns": [
+          {
+            "speaker": "clara",
+            "text": "Tu veux mon mec ? Tiens, prends-le !"
+          },
+          {
+            "speaker": "jade",
+            "text": "T'es vivante ?!"
+          }
+        ]
+      },
+      {
+        "moment": "00:07-00:21 - Le mensonge est dit clairement",
+        "action": "Jade se rapproche du chariot. Les regards des deux filles se concentrent maintenant sur Enzo.",
+        "dialogue_turns": [
+          {
+            "speaker": "clara",
+            "text": "Pourquoi ? Il t'a dit quoi ?"
+          },
+          {
+            "speaker": "jade",
+            "text": "Qu'il t'avait enterrée !"
+          },
+          {
+            "speaker": "enzo",
+            "text": "Notre couple. J'ai enterré notre couple."
+          },
+          {
+            "speaker": "jade",
+            "text": "Et les vacances que j'ai payées pour ton deuil ?"
+          },
+          {
+            "speaker": "clara",
+            "text": "Tu t'es payé des vacances avec ma mort ?"
+          }
+        ]
+      },
+      {
+        "moment": "00:21-00:28 - Il tente de partir",
+        "action": "Enzo commence à se redresser pour sortir. Clara bloque son passage et le regarde directement.",
+        "dialogue_turns": [
+          {
+            "speaker": "jade",
+            "text": "Mon argent. Tu me le rends."
+          },
+          {
+            "speaker": "enzo",
+            "text": "Je vais chercher ma carte."
+          },
+          {
+            "speaker": "clara",
+            "text": "Tu bouges pas."
+          }
+        ]
+      },
+      {
+        "moment": "00:33-00:46 - Il essaie de les séparer",
+        "action": "Clara hésite un instant. Jade la regarde.\n\n\n\n\n\n\n\nLes filles échangent un regard entendu. Enzo perd leur attention et son assurance.",
+        "dialogue_turns": [
+          {
+            "speaker": "enzo",
+            "text": "Clara, je t'aime. C'est toi que je choisis."
+          },
+          {
+            "speaker": "jade",
+            "text": "Il m'a dit ça juste avant le virement."
+          },
+          {
+            "speaker": "clara",
+            "text": "En pleurant ?"
+          },
+          {
+            "speaker": "jade",
+            "text": "Exactement."
+          },
+          {
+            "speaker": "enzo",
+            "text": "Vous allez pas vous mettre à deux contre moi !"
+          }
+        ]
+      },
+      {
+        "moment": "00:46-01:00 - La vengeance commence vraiment",
+        "action": "Clara sort son téléphone et cadre Enzo. Jade se place à côté du chariot, dans sa ligne de fuite.\n\n\n\n\n\n\n\n\n\n\n\nClara prend la photo, puis l'envoie avec un geste net sur son téléphone. Aucun texte à lire n'est nécessaire à la scène.\n\n\n\nLe téléphone sonne immédiatement. Clara regarde l'écran, puis Enzo.\n\n\n\nEnzo reste figé. La sonnerie et sa réaction terminent l'épisode, sans voix supplémentaire ni outro.",
+        "dialogue_turns": [
+          {
+            "speaker": "clara",
+            "text": "Souris. On va faire une photo."
+          },
+          {
+            "speaker": "enzo",
+            "text": "Pourquoi ?"
+          },
+          {
+            "speaker": "jade",
+            "text": "Pour ton enterrement."
+          },
+          {
+            "speaker": "clara",
+            "text": "Demain. Ta mère est invitée."
+          },
+          {
+            "speaker": "enzo",
+            "text": "Pas ma mère !"
+          },
+          {
+            "speaker": "clara",
+            "text": "C'est envoyé."
+          },
+          {
+            "speaker": "clara",
+            "text": "Ta mère appelle. Tu réponds ?"
+          }
+        ]
+      }
+    ],
+    "summary": "Clara livre Enzo assis dans un chariot à Jade. Jade croyait Clara enterrée : Enzo a inventé sa mort pour séduire Jade et lui faire payer des vacances. Les filles exigent un remboursement. Enzo essaie de partir puis de séduire Clara pour briser leur alliance. Elles le photographient et envoient l'annonce de son faux enterrement à sa mère, qui appelle immédiatement.",
+    "events": [
+      "Clara arrive avec Enzo réellement assis dans le panier du chariot ; Jade est debout.",
+      "Jade révèle le faux décès de Clara et les vacances payées à Enzo.",
+      "Jade réclame son argent ; Clara empêche Enzo de partir.",
+      "Enzo essaie de séduire Clara ; Jade révèle la même manipulation avant son virement.",
+      "Clara photographie Enzo et envoie la photo à sa mère. Le téléphone sonne ; Clara annonce l'appel sans décrocher."
+    ],
+    "ongoing_plot": "Le lendemain, les deux filles organisent le faux enterrement d'Enzo. La mère découvre qu'elle aussi a payé pour l'enterrement inventé de Clara. L'appel final du premier épisode n'a pas été décroché à l'écran. Les fleurs du deuxième épisode appartiennent à son décor. L'épisode 2 termine l'arc, mais ne doit pas être préparé ni produit maintenant."
+  }
+}

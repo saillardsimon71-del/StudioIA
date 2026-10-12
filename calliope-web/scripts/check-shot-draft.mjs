@@ -58,4 +58,13 @@ assert.equal(draft.description, legacy.description);
 assert.equal(draft.duration_sec, legacy.duration_sec);
 assert.deepEqual(draft.dialogue_turns, []);
 assert.deepEqual(draft.screen_text, []);
+const native = { ...structuredClone(fixture), prompt_contract_version: 2,
+    action: 'A lifts the case.', reaction: 'B steps back.', framing: 'Wide.',
+    camera: 'Static.', blocking: 'A left, B right.', prop_keys: ['case'],
+    start_state: { case: 'Closed.' }, end_state: { case: 'Open.' }, cut_reason: 'Réaction.' };
+const nativeDraft = initialize(native, true);
+assert.equal(nativeDraft.action, 'A lifts the case.');
+assert.equal(nativeDraft.reaction, 'B steps back.');
+nativeDraft.start_state.case = 'Edited.';
+assert.equal(native.start_state.case, 'Closed.', 'Native states must survive editing without changing saved data.');
 console.log('Shot draft checks passed: plain and reactive shots, independent edits, legacy fields.');

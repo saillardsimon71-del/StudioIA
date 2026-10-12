@@ -59,6 +59,17 @@ class ShotCreate(BaseModel):
     trim_start_sec: float | None = Field(default=None, ge=0, le=900)
     trim_end_sec: float | None = Field(default=None, ge=0, le=900)
     audio_mode: Literal["native", "silent"] = "native"
+    continue_from_previous: bool = False
+    dialogue_turns: list[DialogueTurn] = Field(default_factory=list, max_length=30)
+    prop_keys: list[str] = Field(default_factory=list, max_length=30)
+    start_state: dict[str, str] = Field(default_factory=dict)
+    end_state: dict[str, str] = Field(default_factory=dict)
+    cut_reason: str = Field(default="", max_length=5000)
+    action: str = Field(default="", max_length=5000)
+    reaction: str = Field(default="", max_length=5000)
+    framing: str = Field(default="", max_length=5000)
+    camera: str = Field(default="", max_length=5000)
+    blocking: str = Field(default="", max_length=5000)
 
 
 class ShotUpdate(BaseModel):
@@ -75,6 +86,15 @@ class ShotUpdate(BaseModel):
     audio_mode: Literal["native", "silent"] | None = None
     continue_from_previous: bool | None = None
     order_index: int | None = Field(default=None, ge=1)
+    prop_keys: list[str] | None = Field(default=None, max_length=30)
+    start_state: dict[str, str] | None = None
+    end_state: dict[str, str] | None = None
+    cut_reason: str | None = Field(default=None, max_length=5000)
+    action: str | None = Field(default=None, max_length=5000)
+    reaction: str | None = Field(default=None, max_length=5000)
+    framing: str | None = Field(default=None, max_length=5000)
+    camera: str | None = Field(default=None, max_length=5000)
+    blocking: str | None = Field(default=None, max_length=5000)
 
 
 class GenerateRequest(BaseModel):
@@ -301,6 +321,11 @@ async def edit_shot(project_id: int, shot_id: int, payload: ShotUpdate):
         if value is not None or key in ("trim_start_sec", "trim_end_sec")
     }
     return service.update_shot(project_id, shot_id, data)
+
+
+@router.get("/projects/{project_id}/shots/{shot_id}/prompt-preview")
+async def prompt_preview(project_id: int, shot_id: int):
+    return service.preview_prompts(project_id, shot_id)
 
 
 @router.delete("/projects/{project_id}/shots/{shot_id}")

@@ -1,0 +1,2085 @@
+{
+  "recorded_at_utc": "2026-10-12T11:23:11.926213+00:00",
+  "project_id": 27,
+  "title": "Livraison express",
+  "episode_number": 1,
+  "production": {
+    "status": "done",
+    "stage": "done",
+    "progress": 1.0,
+    "message": "Épisode prêt",
+    "error": null
+  },
+  "render_canon": {
+    "style": "High-quality stylized 3D animation in vertical 9:16. Detailed tactile materials, credible warm side lighting, soft reflections and a coherent palette. Adult human-scale fruit people, never tiny mascots. Shared, sufficiently wide compositions show bodies, cart and salon depth while preserving readable faces. No generated subtitles, decorative text or giant phone overlays.",
+    "characters": {
+      "clara": {
+        "name": "Clara",
+        "appearance": "Adult strawberry woman, 22, with human feminine proportions and limbs; strawberry-shaped red head and cheeks with fine golden seeds, small leaf crown, large brown eyes and tied-back brown hair. Black elegant dress, cream jacket, gold earrings.",
+        "voice": "Adult French female medium voice, slightly husky, firm, lively, natural and intelligible; immediate delivery without drawn-out diction."
+      },
+      "jade": {
+        "name": "Jade",
+        "appearance": "Adult blueberry woman, 23, with human feminine proportions and limbs; rounded feminine face, matte blue-purple skin with subtle fruit sheen, small upper calyx marks and black bob. Lilac jacket and blue jeans.",
+        "voice": "Adult French female voice slightly lower than Clara's, clear, dry, energetic and intelligible."
+      },
+      "enzo": {
+        "name": "Enzo",
+        "appearance": "Adult banana man, 23; elongated slightly curved yellow head, small brown top stem, expressive face, adult human body and limbs. Plain white jacket, dark top, dark trousers and sneakers.",
+        "voice": "Adult French male medium voice, slightly nasal, quick and clear. Excuses begin immediately; the timbre remains stable."
+      }
+    },
+    "locations": {
+      "salon": "Warm neighborhood salon. The entrance is in the rear left, opening onto a broad aisle toward Jade's swivel chair on the right foreground. Bulb-lit mirrors and pale marble worktops line the right wall; product shelves and plants occupy deeper layers. Keep this geography stable and mirror reflections physically consistent."
+    },
+    "props": {
+      "cart": "Human-scale metal supermarket shopping cart with four wheels and a basket large enough for Enzo to sit inside.",
+      "bouquet": "One modest hand-held bouquet of fresh flowers wrapped in plain unprinted paper; identical throughout.",
+      "laundry_bag": "A soft, plain fabric laundry bag resting inside the cart at Enzo's feet.",
+      "phone": "Clara's ordinary hand-held smartphone with a plain case and no readable interface required.",
+      "jade_chair": "An adult-size salon swivel chair with padded seat and back, armrests and a metal pedestal."
+    }
+  },
+  "speaker_ids": {
+    "clara": "S1",
+    "enzo": "S2",
+    "jade": "S3"
+  },
+  "shots": [
+    {
+      "id": 213,
+      "description": "La livraison et la question impossible",
+      "prompt": "Clara is at the cart handle inside the salon entrance, with seated Enzo holding flowers and Jade visible in her chair. All three are readable against the layered salon.",
+      "image_prompt": "A frozen wide vertical view inside the warm salon: Clara grips the handle of a metal shopping cart just inside the entrance; Enzo sits in its basket with a bouquet against his chest and a laundry bag at his feet. Jade sits at the right-hand salon chair, her torso still oriented toward the mirror and her eyes catching the arrivals. Bulb-lit mirrors, shelves, plants and the open aisle remain visible in depth.",
+      "duration_sec": 11.8,
+      "purpose": "",
+      "continue_from_previous": false,
+      "dialogue_turns": [
+        {
+          "speaker": "clara",
+          "text": "Tu veux mon mec ? Tiens, je te le livre !",
+          "action": "Clara immediately pushes the cart briskly toward Jade while addressing her. Jade swivels her chair toward them during the accusation.",
+          "reaction": "Enzo stiffens indignantly; Jade looks between the two arrivals."
+        },
+        {
+          "speaker": "enzo",
+          "text": "Mais t'es complètement folle !",
+          "action": "Enzo protests toward Clara as she stops pushing and parks the cart beside Jade's chair.",
+          "reaction": "Clara fixes him with a hard look."
+        },
+        {
+          "speaker": "clara",
+          "text": "Fallait me quitter avant de la pécho.",
+          "action": "Clara answers briskly, turning her accusatory attention back toward Jade.",
+          "reaction": "Jade studies Clara's living face in disbelief."
+        },
+        {
+          "speaker": "jade",
+          "text": "Clara ? Mais... t'es pas morte ?",
+          "action": "Jade asks directly, leaning slightly toward Clara.",
+          "reaction": "Clara's gaze leaves Jade and locks onto Enzo. Enzo falls silent."
+        }
+      ],
+      "selected_image_id": 383,
+      "selected_video_id": 385,
+      "trim_start_sec": null,
+      "trim_end_sec": null,
+      "takes": [
+        {
+          "id": 385,
+          "kind": "video",
+          "status": "done",
+          "engine": "FastH3 8-Step V2 / MiniMax H3",
+          "prompt": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] One continuous shot. High-quality stylized 3D animation in vertical 9:16. Detailed tactile materials, credible warm side lighting, soft reflections and a coherent palette. Adult human-scale fruit people, never tiny mascots. Shared, sufficiently wide compositions show bodies, cart and salon depth while preserving readable faces. No generated subtitles, decorative text or giant phone overlays. Clara: Adult strawberry woman, 22, with human feminine proportions and limbs; strawberry-shaped red head and cheeks with fine golden seeds, small leaf crown, large brown eyes and tied-back brown hair. Black elegant dress, cream jacket, gold earrings. Clara's voice: Adult French female medium voice, slightly husky, firm, lively, natural and intelligible; immediate delivery without drawn-out diction. Enzo: Adult banana man, 23; elongated slightly curved yellow head, small brown top stem, expressive face, adult human body and limbs. Plain white jacket, dark top, dark trousers and sneakers. Enzo's voice: Adult French male medium voice, slightly nasal, quick and clear. Excuses begin immediately; the timbre remains stable. Jade: Adult blueberry woman, 23, with human feminine proportions and limbs; rounded feminine face, matte blue-purple skin with subtle fruit sheen, small upper calyx marks and black bob. Lilac jacket and blue jeans. Jade's voice: Adult French female voice slightly lower than Clara's, clear, dry, energetic and intelligible. Clara is at the cart handle inside the salon entrance, with seated Enzo holding flowers and Jade visible in her chair. All three are readable against the layered salon. Clara travels behind the cart to its parked position left of Jade's chair. Enzo remains seated throughout. Jade stays seated. Shared vertical wide three-shot, including bodies, cart wheels, Jade's chair and the entrance in depth. A gentle lateral follow keeps the moving cart and Jade in the same composition, settling when the cart stops. Brisk, clearly articulated conversational delivery. Listeners follow their interlocutor with responsive expressions and posture. Clara immediately pushes the cart briskly toward Jade while addressing her. Jade swivels her chair toward them during the accusation. Clara (S1) says: <d>[French] Tu veux mon mec ? Tiens, je te le livre !</d> Enzo stiffens indignantly; Jade looks between the two arrivals. Enzo protests toward Clara as she stops pushing and parks the cart beside Jade's chair. Enzo (S2) says: <d>[French] Mais t'es complètement folle !</d> Clara fixes him with a hard look. Clara answers briskly, turning her accusatory attention back toward Jade. Clara (S1) says: <d>[French] Fallait me quitter avant de la pécho.</d> Jade studies Clara's living face in disbelief. Jade asks directly, leaning slightly toward Clara. Jade (S3) says: <d>[French] Clara ? Mais... t'es pas morte ?</d> Clara's gaze leaves Jade and locks onto Enzo. Enzo falls silent. After the last line, the scene continues through the described physical reactions and ambient sounds.\n\noverall_soundscape: Quiet wheel rattle, light chair swivel and subdued room tone; no music or background speech.\n\nnon_diegetic_music: N/A",
+          "source_take_id": 383,
+          "error": null,
+          "local_media": "LOCAL_ASSET/27/studio/takes/385/video.mp4",
+          "metadata": {
+            "duration_sec": 12.25,
+            "has_audio": true,
+            "dialogue_qc": {
+              "status": "ok",
+              "reason": "",
+              "turns": [
+                {
+                  "turn": 0,
+                  "speaker": "clara",
+                  "expected_speaker": "clara",
+                  "expected": "Tu veux mon mec ? Tiens, je te le livre !",
+                  "coverage": 1.0,
+                  "status": "ok"
+                },
+                {
+                  "turn": 1,
+                  "speaker": "enzo",
+                  "expected_speaker": "enzo",
+                  "expected": "Mais t'es complètement folle !",
+                  "coverage": 1.0,
+                  "status": "ok"
+                },
+                {
+                  "turn": 2,
+                  "speaker": "clara",
+                  "expected_speaker": "clara",
+                  "expected": "Fallait me quitter avant de la pécho.",
+                  "coverage": 0.8571428571428571,
+                  "status": "ok"
+                },
+                {
+                  "turn": 3,
+                  "speaker": "jade",
+                  "expected_speaker": "jade",
+                  "expected": "Clara ? Mais... t'es pas morte ?",
+                  "coverage": 1.0,
+                  "status": "ok"
+                }
+              ],
+              "speaker_identity_status": "unverified",
+              "voice": [
+                [
+                  1.1400000000000006,
+                  4.02
+                ],
+                [
+                  4.02,
+                  5.54
+                ],
+                [
+                  5.54,
+                  6.92
+                ],
+                [
+                  8.739999999999998,
+                  12.12
+                ]
+              ]
+            },
+            "transcription_cache": {
+              "signature": [
+                4288722,
+                1791799975292111800,
+                "C:/Users/saill/.cache/whisper/small.pt",
+                "fr"
+              ],
+              "transcript": {
+                "status": "ok",
+                "text": "Tu veux mon mec ? Tiens, je te le livre ! Mais t'es complètement folle ! Fallais me quitter avant de la pécho. Clara ? Mais t'es pas morte ?",
+                "segments": [
+                  {
+                    "start": 1.1400000000000006,
+                    "end": 4.02,
+                    "text": " Tu veux mon mec ? Tiens, je te le livre !",
+                    "avg_logprob": -0.3750473403930664,
+                    "no_speech_prob": 0.13536612689495087,
+                    "compression_ratio": 1.1639344262295082,
+                    "words": [
+                      {
+                        "word": " Tu",
+                        "start": 1.1400000000000006,
+                        "end": 1.62,
+                        "probability": 0.3841344118118286
+                      },
+                      {
+                        "word": " veux",
+                        "start": 1.62,
+                        "end": 1.78,
+                        "probability": 0.9989050626754761
+                      },
+                      {
+                        "word": " mon",
+                        "start": 1.78,
+                        "end": 1.98,
+                        "probability": 0.9579713344573975
+                      },
+                      {
+                        "word": " mec",
+                        "start": 1.98,
+                        "end": 2.24,
+                        "probability": 0.9899936318397522
+                      },
+                      {
+                        "word": " ?",
+                        "start": 2.24,
+                        "end": 2.66,
+                        "probability": 0.7887927889823914
+                      },
+                      {
+                        "word": " Tiens,",
+                        "start": 2.66,
+                        "end": 2.88,
+                        "probability": 0.97366863489151
+                      },
+                      {
+                        "word": " je",
+                        "start": 3.16,
+                        "end": 3.28,
+                        "probability": 0.9468119144439697
+                      },
+                      {
+                        "word": " te",
+                        "start": 3.28,
+                        "end": 3.42,
+                        "probability": 0.996756374835968
+                      },
+                      {
+                        "word": " le",
+                        "start": 3.42,
+                        "end": 3.52,
+                        "probability": 0.9446837902069092
+                      },
+                      {
+                        "word": " livre",
+                        "start": 3.52,
+                        "end": 3.78,
+                        "probability": 0.9151833653450012
+                      },
+                      {
+                        "word": " !",
+                        "start": 3.78,
+                        "end": 4.02,
+                        "probability": 0.6863812804222107
+                      }
+                    ]
+                  },
+                  {
+                    "start": 4.02,
+                    "end": 5.54,
+                    "text": " Mais t'es complètement folle !",
+                    "avg_logprob": -0.3750473403930664,
+                    "no_speech_prob": 0.13536612689495087,
+                    "compression_ratio": 1.1639344262295082,
+                    "words": [
+                      {
+                        "word": " Mais",
+                        "start": 4.02,
+                        "end": 4.16,
+                        "probability": 0.9180485606193542
+                      },
+                      {
+                        "word": " t",
+                        "start": 4.16,
+                        "end": 4.38,
+                        "probability": 0.663244903087616
+                      },
+                      {
+                        "word": "'es",
+                        "start": 4.38,
+                        "end": 4.46,
+                        "probability": 0.9983022212982178
+                      },
+                      {
+                        "word": " complètement",
+                        "start": 4.46,
+                        "end": 4.92,
+                        "probability": 0.9934307932853699
+                      },
+                      {
+                        "word": " folle",
+                        "start": 4.92,
+                        "end": 5.34,
+                        "probability": 0.9833386838436127
+                      },
+                      {
+                        "word": " !",
+                        "start": 5.34,
+                        "end": 5.54,
+                        "probability": 0.9210521578788757
+                      }
+                    ]
+                  },
+                  {
+                    "start": 5.54,
+                    "end": 6.92,
+                    "text": " Fallais me quitter avant de la pécho.",
+                    "avg_logprob": -0.3750473403930664,
+                    "no_speech_prob": 0.13536612689495087,
+                    "compression_ratio": 1.1639344262295082,
+                    "words": [
+                      {
+                        "word": " Fallais",
+                        "start": 5.54,
+                        "end": 5.72,
+                        "probability": 0.7184662520885468
+                      },
+                      {
+                        "word": " me",
+                        "start": 5.72,
+                        "end": 5.9,
+                        "probability": 0.9476772546768188
+                      },
+                      {
+                        "word": " quitter",
+                        "start": 5.9,
+                        "end": 6.1,
+                        "probability": 0.9867990612983704
+                      },
+                      {
+                        "word": " avant",
+                        "start": 6.1,
+                        "end": 6.36,
+                        "probability": 0.9909001588821411
+                      },
+                      {
+                        "word": " de",
+                        "start": 6.36,
+                        "end": 6.5,
+                        "probability": 0.997902512550354
+                      },
+                      {
+                        "word": " la",
+                        "start": 6.5,
+                        "end": 6.6,
+                        "probability": 0.8545471429824829
+                      },
+                      {
+                        "word": " pécho.",
+                        "start": 6.6,
+                        "end": 6.92,
+                        "probability": 0.7719244658946991
+                      }
+                    ]
+                  },
+                  {
+                    "start": 8.739999999999998,
+                    "end": 12.12,
+                    "text": " Clara ? Mais t'es pas morte ?",
+                    "avg_logprob": -0.3750473403930664,
+                    "no_speech_prob": 0.13536612689495087,
+                    "compression_ratio": 1.1639344262295082,
+                    "words": [
+                      {
+                        "word": " Clara",
+                        "start": 8.739999999999998,
+                        "end": 9.219999999999999,
+                        "probability": 0.9882722496986389
+                      },
+                      {
+                        "word": " ?",
+                        "start": 9.219999999999999,
+                        "end": 9.7,
+                        "probability": 0.6715048551559448
+                      },
+                      {
+                        "word": " Mais",
+                        "start": 9.7,
+                        "end": 9.96,
+                        "probability": 0.9847393035888672
+                      },
+                      {
+                        "word": " t",
+                        "start": 9.96,
+                        "end": 11.04,
+                        "probability": 0.2340034544467926
+                      },
+                      {
+                        "word": "'es",
+                        "start": 11.04,
+                        "end": 11.04,
+                        "probability": 0.9968017935752869
+                      },
+                      {
+                        "word": " pas",
+                        "start": 11.04,
+                        "end": 11.26,
+                        "probability": 0.9989744424819946
+                      },
+                      {
+                        "word": " morte",
+                        "start": 11.26,
+                        "end": 11.6,
+                        "probability": 0.9861834049224854
+                      },
+                      {
+                        "word": " ?",
+                        "start": 11.6,
+                        "end": 12.12,
+                        "probability": 0.9764623045921326
+                      }
+                    ]
+                  }
+                ],
+                "speech_intervals": [
+                  [
+                    1.1400000000000006,
+                    4.02
+                  ],
+                  [
+                    4.02,
+                    5.54
+                  ],
+                  [
+                    5.54,
+                    6.92
+                  ],
+                  [
+                    8.739999999999998,
+                    12.12
+                  ]
+                ],
+                "reason": ""
+              },
+              "activity": {
+                "intervals": [
+                  [
+                    0.407969,
+                    6.930781
+                  ],
+                  [
+                    8.141094,
+                    8.550031
+                  ],
+                  [
+                    9.635281,
+                    9.775344
+                  ],
+                  [
+                    10.953625,
+                    11.628656
+                  ]
+                ],
+                "max_db": -0.4
+              }
+            }
+          }
+        },
+        {
+          "id": 383,
+          "kind": "image",
+          "status": "done",
+          "engine": "agnes-image-2.5-flash",
+          "prompt": "A frozen wide vertical view inside the warm salon: Clara grips the handle of a metal shopping cart just inside the entrance; Enzo sits in its basket with a bouquet against his chest and a laundry bag at his feet. Jade sits at the right-hand salon chair, her torso still oriented toward the mirror and her eyes catching the arrivals. Bulb-lit mirrors, shelves, plants and the open aisle remain visible in depth.\nImmutable visual identity clara (Clara): Adult strawberry woman, 22, with human feminine proportions and limbs; strawberry-shaped red head and cheeks with fine golden seeds, small leaf crown, large brown eyes and tied-back brown hair. Black elegant dress, cream jacket, gold earrings..\nImmutable visual identity enzo (Enzo): Adult banana man, 23; elongated slightly curved yellow head, small brown top stem, expressive face, adult human body and limbs. Plain white jacket, dark top, dark trousers and sneakers..\nImmutable visual identity jade (Jade): Adult blueberry woman, 23, with human feminine proportions and limbs; rounded feminine face, matte blue-purple skin with subtle fruit sheen, small upper calyx marks and black bob. Lilac jacket and blue jeans..\nImmutable visual identity salon (Salon de coiffure): Warm neighborhood salon. The entrance is in the rear left, opening onto a broad aisle toward Jade's swivel chair on the right foreground. Bulb-lit mirrors and pale marble worktops line the right wall; product shelves and plants occupy deeper layers. Keep this geography stable and mirror reflections physically consistent..\nVisual style: High-quality stylized 3D animation in vertical 9:16. Detailed tactile materials, credible warm side lighting, soft reflections and a coherent palette. Adult human-scale fruit people, never tiny mascots. Shared, sufficiently wide compositions show bodies, cart and salon depth while preserving readable faces. No generated subtitles, decorative text or giant phone overlays..\nHuman-scale metal supermarket shopping cart with four wheels and a basket large enough for Enzo to sit inside.\nOne modest hand-held bouquet of fresh flowers wrapped in plain unprinted paper; identical throughout.\nA soft, plain fabric laundry bag resting inside the cart at Enzo's feet.\nAn adult-size salon swivel chair with padded seat and back, armrests and a metal pedestal.\nAt the start, cart: Just inside the salon entrance, with Clara gripping its handle and Enzo seated in its basket.\nAt the start, bouquet: Held by Enzo against his chest inside the cart basket.\nAt the start, laundry_bag: Resting inside the cart at Enzo's feet.\nAt the start, jade_chair: Positioned in the right foreground, occupied by Jade and oriented toward the mirror.\nClara travels behind the cart to its parked position left of Jade's chair. Enzo remains seated throughout. Jade stays seated.\nShared vertical wide three-shot, including bodies, cart wheels, Jade's chair and the entrance in depth.\nReference image 1: clara (character). Use this image only for this entity's visual identity.\nReference image 2: enzo (character). Use this image only for this entity's visual identity.\nReference image 3: jade (character). Use this image only for this entity's visual identity.\nReference image 4: salon (location). Preserve this environment's architecture, furniture and spatial layout; use the requested camera angle.",
+          "source_take_id": null,
+          "error": null,
+          "local_media": "LOCAL_ASSET/27/studio/takes/383/image.png",
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "id": 214,
+      "description": "Le faux deuil et les vacances payées",
+      "prompt": "The cart is parked beside Jade. Clara watches Enzo, who still holds the bouquet. Jade faces both arrivals.",
+      "image_prompt": "The previous final frame: stationary cart beside Jade's turned chair, Clara behind the handle looking at Enzo, Enzo seated holding the bouquet against his chest, and Jade watching Clara with disbelief. The laundry bag remains at Enzo's feet.",
+      "duration_sec": 14.6,
+      "purpose": "",
+      "continue_from_previous": true,
+      "dialogue_turns": [
+        {
+          "speaker": "clara",
+          "text": "Pardon ?",
+          "action": "Clara sharply questions the revelation without releasing her stare at Enzo.",
+          "reaction": "Jade prepares to explain, visibly unsettled."
+        },
+        {
+          "speaker": "jade",
+          "text": "Il m'a dit qu'il avait perdu sa copine.",
+          "action": "Jade indicates Enzo with one hand while keeping her eyes on his face.",
+          "reaction": "Enzo searches for an immediate excuse."
+        },
+        {
+          "speaker": "enzo",
+          "text": "Perdu... sentimentalement.",
+          "action": "Enzo offers the correction with a strained, ingratiating expression, keeping the flowers against himself.",
+          "reaction": "Jade's incredulity hardens."
+        },
+        {
+          "speaker": "jade",
+          "text": "T'as pleuré sur mon canapé !",
+          "action": "Jade confronts Enzo directly with a terse accusing gesture.",
+          "reaction": "Clara registers the staged grief."
+        },
+        {
+          "speaker": "clara",
+          "text": "T'as pleuré ?",
+          "action": "Clara repeats the accusation to Enzo, brows raised in disgust.",
+          "reaction": "Enzo avoids her eyes; Jade presses on immediately."
+        },
+        {
+          "speaker": "jade",
+          "text": "J'ai payé ses vacances pour qu'il fasse son deuil !",
+          "action": "Jade states the financial consequence emphatically, still watching Enzo.",
+          "reaction": "After the revelation, Enzo extends the bouquet to Jade. She takes it without softening. Clara recognizes that Jade was manipulated too."
+        }
+      ],
+      "selected_image_id": null,
+      "selected_video_id": 387,
+      "trim_start_sec": null,
+      "trim_end_sec": null,
+      "takes": [
+        {
+          "id": 387,
+          "kind": "video",
+          "status": "done",
+          "engine": "FastH3 8-Step V2 / MiniMax H3",
+          "prompt": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] One continuous shot. High-quality stylized 3D animation in vertical 9:16. Detailed tactile materials, credible warm side lighting, soft reflections and a coherent palette. Adult human-scale fruit people, never tiny mascots. Shared, sufficiently wide compositions show bodies, cart and salon depth while preserving readable faces. No generated subtitles, decorative text or giant phone overlays. Clara: Adult strawberry woman, 22, with human feminine proportions and limbs; strawberry-shaped red head and cheeks with fine golden seeds, small leaf crown, large brown eyes and tied-back brown hair. Black elegant dress, cream jacket, gold earrings. Clara's voice: Adult French female medium voice, slightly husky, firm, lively, natural and intelligible; immediate delivery without drawn-out diction. Enzo: Adult banana man, 23; elongated slightly curved yellow head, small brown top stem, expressive face, adult human body and limbs. Plain white jacket, dark top, dark trousers and sneakers. Enzo's voice: Adult French male medium voice, slightly nasal, quick and clear. Excuses begin immediately; the timbre remains stable. Jade: Adult blueberry woman, 23, with human feminine proportions and limbs; rounded feminine face, matte blue-purple skin with subtle fruit sheen, small upper calyx marks and black bob. Lilac jacket and blue jeans. Jade's voice: Adult French female voice slightly lower than Clara's, clear, dry, energetic and intelligible. The cart is parked beside Jade. Clara watches Enzo, who still holds the bouquet. Jade faces both arrivals. The cart stays parked within Jade's reach. Clara stands behind and left of Enzo; Jade remains in the turned chair. Maintain the shared three-shot and layered salon depth, with the bouquet handoff unobstructed. Hold the settled composition without a speaker-driven cut. Brisk, clearly articulated conversational delivery. Listeners follow their interlocutor with responsive expressions and posture. Clara sharply questions the revelation without releasing her stare at Enzo. Clara (S1) says: <d>[French] Pardon ?</d> Jade prepares to explain, visibly unsettled. Jade indicates Enzo with one hand while keeping her eyes on his face. Jade (S3) says: <d>[French] Il m'a dit qu'il avait perdu sa copine.</d> Enzo searches for an immediate excuse. Enzo offers the correction with a strained, ingratiating expression, keeping the flowers against himself. Enzo (S2) says: <d>[French] Perdu... sentimentalement.</d> Jade's incredulity hardens. Jade confronts Enzo directly with a terse accusing gesture. Jade (S3) says: <d>[French] T'as pleuré sur mon canapé !</d> Clara registers the staged grief. Clara repeats the accusation to Enzo, brows raised in disgust. Clara (S1) says: <d>[French] T'as pleuré ?</d> Enzo avoids her eyes; Jade presses on immediately. Jade states the financial consequence emphatically, still watching Enzo. Jade (S3) says: <d>[French] J'ai payé ses vacances pour qu'il fasse son deuil !</d> After the revelation, Enzo extends the bouquet to Jade. She takes it without softening. Clara recognizes that Jade was manipulated too. Clara and Jade exchange a brief recognizing look, then turn together toward Enzo. After the last line, the scene continues through the described physical reactions and ambient sounds.\n\noverall_soundscape: Soft paper rustle during the handoff, restrained clothing movement and quiet room tone.\n\nnon_diegetic_music: N/A",
+          "source_take_id": 385,
+          "error": null,
+          "local_media": "LOCAL_ASSET/27/studio/takes/387/video.mp4",
+          "metadata": {
+            "duration_sec": 15.083333,
+            "has_audio": true,
+            "dialogue_qc": {
+              "status": "ok",
+              "reason": "",
+              "turns": [
+                {
+                  "turn": 0,
+                  "speaker": "clara",
+                  "expected_speaker": "clara",
+                  "expected": "Pardon ?",
+                  "coverage": 1.0,
+                  "status": "ok"
+                },
+                {
+                  "turn": 1,
+                  "speaker": "jade",
+                  "expected_speaker": "jade",
+                  "expected": "Il m'a dit qu'il avait perdu sa copine.",
+                  "coverage": 1.0,
+                  "status": "ok"
+                },
+                {
+                  "turn": 2,
+                  "speaker": "enzo",
+                  "expected_speaker": "enzo",
+                  "expected": "Perdu... sentimentalement.",
+                  "coverage": 0.5,
+                  "status": "ok"
+                },
+                {
+                  "turn": 3,
+                  "speaker": "jade",
+                  "expected_speaker": "jade",
+                  "expected": "T'as pleuré sur mon canapé !",
+                  "coverage": 1.0,
+                  "status": "ok"
+                },
+                {
+                  "turn": 4,
+                  "speaker": "clara",
+                  "expected_speaker": "clara",
+                  "expected": "T'as pleuré ?",
+                  "coverage": 1.0,
+                  "status": "ok"
+                },
+                {
+                  "turn": 5,
+                  "speaker": "jade",
+                  "expected_speaker": "jade",
+                  "expected": "J'ai payé ses vacances pour qu'il fasse son deuil !",
+                  "coverage": 1.0,
+                  "status": "ok"
+                }
+              ],
+              "speaker_identity_status": "unverified",
+              "voice": [
+                [
+                  0.0,
+                  1.0
+                ],
+                [
+                  2.16,
+                  3.66
+                ],
+                [
+                  5.34,
+                  5.74
+                ],
+                [
+                  6.179999999999998,
+                  6.58
+                ],
+                [
+                  6.94,
+                  8.0
+                ],
+                [
+                  8.22,
+                  9.28
+                ],
+                [
+                  9.28,
+                  11.18
+                ]
+              ]
+            },
+            "transcription_cache": {
+              "signature": [
+                4518590,
+                1791800137362410400,
+                "C:/Users/saill/.cache/whisper/small.pt",
+                "fr"
+              ],
+              "transcript": {
+                "status": "ok",
+                "text": "Pardon ? Il m'a dit qu'il avait perdu sa copine. Perdu... ...santimentalement. T'as pleuré sur mon canapé. T'as pleuré ? J'ai payé ses vacances pour qu'il fasse son deuil.",
+                "segments": [
+                  {
+                    "start": 0.0,
+                    "end": 1.0,
+                    "text": " Pardon ?",
+                    "avg_logprob": -0.3491785098344852,
+                    "no_speech_prob": 0.11548171192407608,
+                    "compression_ratio": 1.2962962962962963,
+                    "words": [
+                      {
+                        "word": " Pardon",
+                        "start": 0.0,
+                        "end": 0.7,
+                        "probability": 0.6044299602508545
+                      },
+                      {
+                        "word": " ?",
+                        "start": 0.7,
+                        "end": 1.0,
+                        "probability": 0.4813114106655121
+                      }
+                    ]
+                  },
+                  {
+                    "start": 2.16,
+                    "end": 3.66,
+                    "text": " Il m'a dit qu'il avait perdu sa copine.",
+                    "avg_logprob": -0.3491785098344852,
+                    "no_speech_prob": 0.11548171192407608,
+                    "compression_ratio": 1.2962962962962963,
+                    "words": [
+                      {
+                        "word": " Il",
+                        "start": 2.16,
+                        "end": 2.22,
+                        "probability": 0.8844247460365295
+                      },
+                      {
+                        "word": " m",
+                        "start": 2.22,
+                        "end": 2.38,
+                        "probability": 0.9970705509185791
+                      },
+                      {
+                        "word": "'a",
+                        "start": 2.38,
+                        "end": 2.38,
+                        "probability": 0.9973799884319305
+                      },
+                      {
+                        "word": " dit",
+                        "start": 2.38,
+                        "end": 2.52,
+                        "probability": 0.9956725835800171
+                      },
+                      {
+                        "word": " qu",
+                        "start": 2.52,
+                        "end": 2.68,
+                        "probability": 0.9903708100318909
+                      },
+                      {
+                        "word": "'il",
+                        "start": 2.68,
+                        "end": 2.68,
+                        "probability": 0.9979964196681976
+                      },
+                      {
+                        "word": " avait",
+                        "start": 2.68,
+                        "end": 2.88,
+                        "probability": 0.9927113056182861
+                      },
+                      {
+                        "word": " perdu",
+                        "start": 2.88,
+                        "end": 3.1,
+                        "probability": 0.995525062084198
+                      },
+                      {
+                        "word": " sa",
+                        "start": 3.1,
+                        "end": 3.26,
+                        "probability": 0.9883933663368225
+                      },
+                      {
+                        "word": " copine.",
+                        "start": 3.26,
+                        "end": 3.66,
+                        "probability": 0.9951907992362976
+                      }
+                    ]
+                  },
+                  {
+                    "start": 5.34,
+                    "end": 5.74,
+                    "text": " Perdu...",
+                    "avg_logprob": -0.3491785098344852,
+                    "no_speech_prob": 0.11548171192407608,
+                    "compression_ratio": 1.2962962962962963,
+                    "words": [
+                      {
+                        "word": " Perdu...",
+                        "start": 5.34,
+                        "end": 5.74,
+                        "probability": 0.6023312757412592
+                      }
+                    ]
+                  },
+                  {
+                    "start": 6.179999999999998,
+                    "end": 6.58,
+                    "text": " ...santimentalement.",
+                    "avg_logprob": -0.3491785098344852,
+                    "no_speech_prob": 0.11548171192407608,
+                    "compression_ratio": 1.2962962962962963,
+                    "words": [
+                      {
+                        "word": " ...santimentalement.",
+                        "start": 6.179999999999998,
+                        "end": 6.58,
+                        "probability": 0.6107990480959415
+                      }
+                    ]
+                  },
+                  {
+                    "start": 6.94,
+                    "end": 8.0,
+                    "text": " T'as pleuré sur mon canapé.",
+                    "avg_logprob": -0.3491785098344852,
+                    "no_speech_prob": 0.11548171192407608,
+                    "compression_ratio": 1.2962962962962963,
+                    "words": [
+                      {
+                        "word": " T",
+                        "start": 6.94,
+                        "end": 6.94,
+                        "probability": 0.880613386631012
+                      },
+                      {
+                        "word": "'as",
+                        "start": 6.94,
+                        "end": 7.0,
+                        "probability": 0.9978691935539246
+                      },
+                      {
+                        "word": " pleuré",
+                        "start": 7.0,
+                        "end": 7.3,
+                        "probability": 0.9885955254236857
+                      },
+                      {
+                        "word": " sur",
+                        "start": 7.3,
+                        "end": 7.46,
+                        "probability": 0.9972512125968933
+                      },
+                      {
+                        "word": " mon",
+                        "start": 7.46,
+                        "end": 7.64,
+                        "probability": 0.9983186721801758
+                      },
+                      {
+                        "word": " canapé.",
+                        "start": 7.64,
+                        "end": 8.0,
+                        "probability": 0.9682924747467041
+                      }
+                    ]
+                  },
+                  {
+                    "start": 8.22,
+                    "end": 9.28,
+                    "text": " T'as pleuré ?",
+                    "avg_logprob": -0.3491785098344852,
+                    "no_speech_prob": 0.11548171192407608,
+                    "compression_ratio": 1.2962962962962963,
+                    "words": [
+                      {
+                        "word": " T",
+                        "start": 8.22,
+                        "end": 8.32,
+                        "probability": 0.9869128465652466
+                      },
+                      {
+                        "word": "'as",
+                        "start": 8.32,
+                        "end": 8.36,
+                        "probability": 0.9987287223339081
+                      },
+                      {
+                        "word": " pleuré",
+                        "start": 8.36,
+                        "end": 8.78,
+                        "probability": 0.9975882569948832
+                      },
+                      {
+                        "word": " ?",
+                        "start": 8.78,
+                        "end": 9.28,
+                        "probability": 0.8333837985992432
+                      }
+                    ]
+                  },
+                  {
+                    "start": 9.28,
+                    "end": 11.18,
+                    "text": " J'ai payé ses vacances pour qu'il fasse son deuil.",
+                    "avg_logprob": -0.3491785098344852,
+                    "no_speech_prob": 0.11548171192407608,
+                    "compression_ratio": 1.2962962962962963,
+                    "words": [
+                      {
+                        "word": " J",
+                        "start": 9.28,
+                        "end": 9.46,
+                        "probability": 0.9752853512763977
+                      },
+                      {
+                        "word": "'ai",
+                        "start": 9.46,
+                        "end": 9.54,
+                        "probability": 0.9993057548999786
+                      },
+                      {
+                        "word": " payé",
+                        "start": 9.54,
+                        "end": 9.76,
+                        "probability": 0.993484377861023
+                      },
+                      {
+                        "word": " ses",
+                        "start": 9.76,
+                        "end": 9.92,
+                        "probability": 0.8895148634910583
+                      },
+                      {
+                        "word": " vacances",
+                        "start": 9.92,
+                        "end": 10.26,
+                        "probability": 0.9994303584098816
+                      },
+                      {
+                        "word": " pour",
+                        "start": 10.26,
+                        "end": 10.42,
+                        "probability": 0.986302375793457
+                      },
+                      {
+                        "word": " qu",
+                        "start": 10.42,
+                        "end": 10.6,
+                        "probability": 0.9994612336158752
+                      },
+                      {
+                        "word": "'il",
+                        "start": 10.6,
+                        "end": 10.6,
+                        "probability": 0.9802933633327484
+                      },
+                      {
+                        "word": " fasse",
+                        "start": 10.6,
+                        "end": 10.76,
+                        "probability": 0.9911955296993256
+                      },
+                      {
+                        "word": " son",
+                        "start": 10.76,
+                        "end": 10.96,
+                        "probability": 0.9972322583198547
+                      },
+                      {
+                        "word": " deuil.",
+                        "start": 10.96,
+                        "end": 11.18,
+                        "probability": 0.8718308806419373
+                      }
+                    ]
+                  }
+                ],
+                "speech_intervals": [
+                  [
+                    0.0,
+                    1.0
+                  ],
+                  [
+                    2.16,
+                    3.66
+                  ],
+                  [
+                    5.34,
+                    5.74
+                  ],
+                  [
+                    6.179999999999998,
+                    6.58
+                  ],
+                  [
+                    6.94,
+                    8.0
+                  ],
+                  [
+                    8.22,
+                    9.28
+                  ],
+                  [
+                    9.28,
+                    11.18
+                  ]
+                ],
+                "reason": ""
+              },
+              "activity": {
+                "intervals": [
+                  [
+                    0.379688,
+                    0.718313
+                  ],
+                  [
+                    1.275906,
+                    3.637719
+                  ],
+                  [
+                    4.313375,
+                    6.418031
+                  ],
+                  [
+                    6.838563,
+                    8.756844
+                  ],
+                  [
+                    9.309094,
+                    11.2315
+                  ],
+                  [
+                    12.346344,
+                    13.394031
+                  ]
+                ],
+                "max_db": -0.1
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 215,
+      "description": "Le personnage s'adresse brièvement au spectateur.",
+      "prompt": "An energetic, conversational aside in the current story location.",
+      "image_prompt": "The speaking character already faces the viewer in the current location, face and free hand clearly visible, matching the story lighting.",
+      "duration_sec": 4.6,
+      "purpose": "midroll",
+      "continue_from_previous": false,
+      "dialogue_turns": [
+        {
+          "speaker": "clara",
+          "text": "Abonne-toi, copie le lien et commente GO si tu veux recevoir un guide pour faire des vidéos gratuitement."
+        }
+      ],
+      "selected_image_id": 384,
+      "selected_video_id": 386,
+      "trim_start_sec": 0.0,
+      "trim_end_sec": 5.125,
+      "takes": [
+        {
+          "id": 386,
+          "kind": "video",
+          "status": "done",
+          "engine": "FastH3 8-Step V2 / MiniMax H3",
+          "prompt": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] One continuous shot. High-quality stylized 3D animation in vertical 9:16. Detailed tactile materials, credible warm side lighting, soft reflections and a coherent palette. Adult human-scale fruit people, never tiny mascots. Shared, sufficiently wide compositions show bodies, cart and salon depth while preserving readable faces. No generated subtitles, decorative text or giant phone overlays. Clara: Adult strawberry woman, 22, with human feminine proportions and limbs; strawberry-shaped red head and cheeks with fine golden seeds, small leaf crown, large brown eyes and tied-back brown hair. Black elegant dress, cream jacket, gold earrings. Clara's voice: Adult French female medium voice, slightly husky, firm, lively, natural and intelligible; immediate delivery without drawn-out diction. An energetic, conversational aside in the current story location. The speaking character remains in the established location, with face and free pointing hand clearly visible. A readable medium close-up of the character's face and pointing hand. A quick small zoom accompanies the first words, then holds the framing during speech. The character points one finger toward the viewer while speaking immediately. Clara (S1) speaks with rapid but intelligible delivery in one fluid sentence, within about 4.6 seconds, beginning immediately while pointing: <d>[French] Abonne-toi, copie le lien et commente GO si tu veux recevoir un guide pour faire des vidéos gratuitement.</d> Keep the phrase continuous without pauses between the requests or before the benefit. Finish immediately after the last word, without a held pose.\n\noverall_soundscape: N/A\n\nnon_diegetic_music: N/A",
+          "source_take_id": 384,
+          "error": null,
+          "local_media": "LOCAL_ASSET/27/studio/takes/386/video.mp4",
+          "metadata": {
+            "duration_sec": 5.166667,
+            "has_audio": true,
+            "dialogue_qc": {
+              "status": "ok",
+              "reason": "",
+              "turns": [
+                {
+                  "turn": 0,
+                  "speaker": "clara",
+                  "expected_speaker": "clara",
+                  "expected": "Abonne-toi, copie le lien et commente GO si tu veux recevoir un guide pour faire des vidéos gratuitement.",
+                  "coverage": 0.9473684210526315,
+                  "status": "ok"
+                }
+              ],
+              "speaker_identity_status": "unverified",
+              "voice": [
+                [
+                  0.0,
+                  4.98
+                ]
+              ]
+            },
+            "transcription_cache": {
+              "signature": [
+                2053109,
+                1791800022213887500,
+                "C:/Users/saill/.cache/whisper/small.pt",
+                "fr"
+              ],
+              "transcript": {
+                "status": "ok",
+                "text": "Abonne-toi, copie le lien et commande GO si tu veux recevoir un guide pour faire des vidéos gratuitement.",
+                "segments": [
+                  {
+                    "start": 0.0,
+                    "end": 4.98,
+                    "text": " Abonne-toi, copie le lien et commande GO si tu veux recevoir un guide pour faire des vidéos gratuitement.",
+                    "avg_logprob": -0.20029687881469727,
+                    "no_speech_prob": 0.06752075254917145,
+                    "compression_ratio": 1.0707070707070707,
+                    "words": [
+                      {
+                        "word": " Abonne",
+                        "start": 0.0,
+                        "end": 0.4,
+                        "probability": 0.9713552892208099
+                      },
+                      {
+                        "word": "-toi,",
+                        "start": 0.4,
+                        "end": 0.66,
+                        "probability": 0.9432048797607422
+                      },
+                      {
+                        "word": " copie",
+                        "start": 0.86,
+                        "end": 1.02,
+                        "probability": 0.9656684398651123
+                      },
+                      {
+                        "word": " le",
+                        "start": 1.02,
+                        "end": 1.12,
+                        "probability": 0.9925389885902405
+                      },
+                      {
+                        "word": " lien",
+                        "start": 1.12,
+                        "end": 1.36,
+                        "probability": 0.9990252256393433
+                      },
+                      {
+                        "word": " et",
+                        "start": 1.36,
+                        "end": 1.6,
+                        "probability": 0.9453703761100769
+                      },
+                      {
+                        "word": " commande",
+                        "start": 1.6,
+                        "end": 2.0,
+                        "probability": 0.9316353499889374
+                      },
+                      {
+                        "word": " GO",
+                        "start": 2.0,
+                        "end": 2.16,
+                        "probability": 0.33890652656555176
+                      },
+                      {
+                        "word": " si",
+                        "start": 2.16,
+                        "end": 2.46,
+                        "probability": 0.7075462937355042
+                      },
+                      {
+                        "word": " tu",
+                        "start": 2.46,
+                        "end": 2.6,
+                        "probability": 0.9958835244178772
+                      },
+                      {
+                        "word": " veux",
+                        "start": 2.6,
+                        "end": 2.74,
+                        "probability": 0.9994121789932251
+                      },
+                      {
+                        "word": " recevoir",
+                        "start": 2.74,
+                        "end": 3.14,
+                        "probability": 0.9987775981426239
+                      },
+                      {
+                        "word": " un",
+                        "start": 3.14,
+                        "end": 3.32,
+                        "probability": 0.9956373572349548
+                      },
+                      {
+                        "word": " guide",
+                        "start": 3.32,
+                        "end": 3.5,
+                        "probability": 0.9893139004707336
+                      },
+                      {
+                        "word": " pour",
+                        "start": 3.5,
+                        "end": 3.7,
+                        "probability": 0.9962988495826721
+                      },
+                      {
+                        "word": " faire",
+                        "start": 3.7,
+                        "end": 3.86,
+                        "probability": 0.9984453320503235
+                      },
+                      {
+                        "word": " des",
+                        "start": 3.86,
+                        "end": 3.98,
+                        "probability": 0.995341420173645
+                      },
+                      {
+                        "word": " vidéos",
+                        "start": 3.98,
+                        "end": 4.36,
+                        "probability": 0.9894444346427917
+                      },
+                      {
+                        "word": " gratuitement.",
+                        "start": 4.36,
+                        "end": 4.98,
+                        "probability": 0.994579404592514
+                      }
+                    ]
+                  }
+                ],
+                "speech_intervals": [
+                  [
+                    0.0,
+                    4.98
+                  ]
+                ],
+                "reason": ""
+              },
+              "activity": {
+                "intervals": [
+                  [
+                    0.0,
+                    5.166667
+                  ]
+                ],
+                "max_db": -0.0
+              }
+            }
+          }
+        },
+        {
+          "id": 384,
+          "kind": "image",
+          "status": "done",
+          "engine": "agnes-image-2.5-flash",
+          "prompt": "The speaking character already faces the viewer in the current location, face and free hand clearly visible, matching the story lighting.\nImmutable visual identity clara (Clara): Adult strawberry woman, 22, with human feminine proportions and limbs; strawberry-shaped red head and cheeks with fine golden seeds, small leaf crown, large brown eyes and tied-back brown hair. Black elegant dress, cream jacket, gold earrings..\nImmutable visual identity salon (Salon de coiffure): Warm neighborhood salon. The entrance is in the rear left, opening onto a broad aisle toward Jade's swivel chair on the right foreground. Bulb-lit mirrors and pale marble worktops line the right wall; product shelves and plants occupy deeper layers. Keep this geography stable and mirror reflections physically consistent..\nVisual style: High-quality stylized 3D animation in vertical 9:16. Detailed tactile materials, credible warm side lighting, soft reflections and a coherent palette. Adult human-scale fruit people, never tiny mascots. Shared, sufficiently wide compositions show bodies, cart and salon depth while preserving readable faces. No generated subtitles, decorative text or giant phone overlays..\nThe speaking character remains in the established location, with face and free pointing hand clearly visible.\nA readable medium close-up of the character's face and pointing hand.\nReference image 1: clara (character). Use this image only for this entity's visual identity.\nReference image 2: salon (location). Preserve this environment's architecture, furniture and spatial layout; use the requested camera angle.",
+          "source_take_id": null,
+          "error": null,
+          "local_media": "LOCAL_ASSET/27/studio/takes/384/image.png",
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "id": 216,
+      "description": "Les rivales deviennent alliées",
+      "prompt": "Clara and Jade face Enzo together. Jade holds the bouquet. Enzo remains seated in the parked cart.",
+      "image_prompt": "The previous final frame: Clara and Jade both look toward Enzo, now united in their attention. Jade holds the same bouquet; Enzo sits in the cart with the laundry bag at his feet.",
+      "duration_sec": 14,
+      "purpose": "",
+      "continue_from_previous": true,
+      "dialogue_turns": [
+        {
+          "speaker": "clara",
+          "text": "T'as transformé ma mort en cagnotte ?",
+          "action": "Clara challenges Enzo immediately, her anger now directed entirely at him.",
+          "reaction": "Enzo looks for support from Jade."
+        },
+        {
+          "speaker": "enzo",
+          "text": "Vous allez croire l'autre plutôt que moi ?",
+          "action": "Enzo looks from Jade to Clara, attempting to recruit each against the other.",
+          "reaction": "Jade reacts sharply to being called the other."
+        },
+        {
+          "speaker": "jade",
+          "text": "L'autre ? T'étais dans mon lit hier !",
+          "action": "Jade answers with cutting disbelief, holding the bouquet away from him.",
+          "reaction": "Clara meets Jade's eyes in recognition."
+        },
+        {
+          "speaker": "clara",
+          "text": "Et dans le mien ce matin.",
+          "action": "Clara supplies the complementary proof and returns her gaze to Enzo.",
+          "reaction": "Enzo's confidence collapses."
+        },
+        {
+          "speaker": "enzo",
+          "text": "Je peux sortir du chariot ?",
+          "action": "Still seated, Enzo glances down at the cart rim as he asks to leave.",
+          "reaction": "Neither woman makes room for him; Clara's expression turns purposeful."
+        }
+      ],
+      "selected_image_id": null,
+      "selected_video_id": 388,
+      "trim_start_sec": null,
+      "trim_end_sec": null,
+      "takes": [
+        {
+          "id": 388,
+          "kind": "video",
+          "status": "done",
+          "engine": "FastH3 8-Step V2 / MiniMax H3",
+          "prompt": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] One continuous shot. High-quality stylized 3D animation in vertical 9:16. Detailed tactile materials, credible warm side lighting, soft reflections and a coherent palette. Adult human-scale fruit people, never tiny mascots. Shared, sufficiently wide compositions show bodies, cart and salon depth while preserving readable faces. No generated subtitles, decorative text or giant phone overlays. Clara: Adult strawberry woman, 22, with human feminine proportions and limbs; strawberry-shaped red head and cheeks with fine golden seeds, small leaf crown, large brown eyes and tied-back brown hair. Black elegant dress, cream jacket, gold earrings. Clara's voice: Adult French female medium voice, slightly husky, firm, lively, natural and intelligible; immediate delivery without drawn-out diction. Enzo: Adult banana man, 23; elongated slightly curved yellow head, small brown top stem, expressive face, adult human body and limbs. Plain white jacket, dark top, dark trousers and sneakers. Enzo's voice: Adult French male medium voice, slightly nasal, quick and clear. Excuses begin immediately; the timbre remains stable. Jade: Adult blueberry woman, 23, with human feminine proportions and limbs; rounded feminine face, matte blue-purple skin with subtle fruit sheen, small upper calyx marks and black bob. Lilac jacket and blue jeans. Jade's voice: Adult French female voice slightly lower than Clara's, clear, dry, energetic and intelligible. Clara and Jade face Enzo together. Jade holds the bouquet. Enzo remains seated in the parked cart. No one relocates. Enzo remains inside the stationary cart, Jade remains seated with the bouquet, and Clara remains by the handle. Shared wide composition keeps both women's complementary reactions and Enzo's trapped posture visible. Hold the same angle and framing across the software aside boundary. Brisk, clearly articulated conversational delivery. Listeners follow their interlocutor with responsive expressions and posture. Clara challenges Enzo immediately, her anger now directed entirely at him. Clara (S1) says: <d>[French] T'as transformé ma mort en cagnotte ?</d> Enzo looks for support from Jade. Enzo looks from Jade to Clara, attempting to recruit each against the other. Enzo (S2) says: <d>[French] Vous allez croire l'autre plutôt que moi ?</d> Jade reacts sharply to being called the other. Jade answers with cutting disbelief, holding the bouquet away from him. Jade (S3) says: <d>[French] L'autre ? T'étais dans mon lit hier !</d> Clara meets Jade's eyes in recognition. Clara supplies the complementary proof and returns her gaze to Enzo. Clara (S1) says: <d>[French] Et dans le mien ce matin.</d> Enzo's confidence collapses. Still seated, Enzo glances down at the cart rim as he asks to leave. Enzo (S2) says: <d>[French] Je peux sortir du chariot ?</d> Neither woman makes room for him; Clara's expression turns purposeful. After the last line, the scene continues through the described physical reactions and ambient sounds.\n\noverall_soundscape: Quiet room tone with small fabric movements; no added voices or music.\n\nnon_diegetic_music: N/A",
+          "source_take_id": 387,
+          "error": null,
+          "local_media": "LOCAL_ASSET/27/studio/takes/388/video.mp4",
+          "metadata": {
+            "duration_sec": 14.375,
+            "has_audio": true,
+            "dialogue_qc": {
+              "status": "ok",
+              "reason": "",
+              "turns": [
+                {
+                  "turn": 0,
+                  "speaker": "clara",
+                  "expected_speaker": "clara",
+                  "expected": "T'as transformé ma mort en cagnotte ?",
+                  "coverage": 0.8571428571428571,
+                  "status": "ok"
+                },
+                {
+                  "turn": 1,
+                  "speaker": "enzo",
+                  "expected_speaker": "enzo",
+                  "expected": "Vous allez croire l'autre plutôt que moi ?",
+                  "coverage": 1.0,
+                  "status": "ok"
+                },
+                {
+                  "turn": 2,
+                  "speaker": "jade",
+                  "expected_speaker": "jade",
+                  "expected": "L'autre ? T'étais dans mon lit hier !",
+                  "coverage": 1.0,
+                  "status": "ok"
+                },
+                {
+                  "turn": 3,
+                  "speaker": "clara",
+                  "expected_speaker": "clara",
+                  "expected": "Et dans le mien ce matin.",
+                  "coverage": 1.0,
+                  "status": "ok"
+                },
+                {
+                  "turn": 4,
+                  "speaker": "enzo",
+                  "expected_speaker": "enzo",
+                  "expected": "Je peux sortir du chariot ?",
+                  "coverage": 1.0,
+                  "status": "ok"
+                }
+              ],
+              "speaker_identity_status": "unverified",
+              "voice": [
+                [
+                  0.0,
+                  2.48
+                ],
+                [
+                  2.94,
+                  6.16
+                ],
+                [
+                  6.16,
+                  9.84
+                ],
+                [
+                  12.5,
+                  14.34
+                ]
+              ]
+            },
+            "transcription_cache": {
+              "signature": [
+                5291529,
+                1791800249252464000,
+                "C:/Users/saill/.cache/whisper/small.pt",
+                "fr"
+              ],
+              "transcript": {
+                "status": "ok",
+                "text": "T'as transformé ma mort en canyoute. Vous allez croire l'autre plutôt que moi ? L'autre ? T'étais dans mon lit hier et dans le mien ce matin. Je peux sortir du chariot ?",
+                "segments": [
+                  {
+                    "start": 0.0,
+                    "end": 2.48,
+                    "text": " T'as transformé ma mort en canyoute.",
+                    "avg_logprob": -0.35409572206694506,
+                    "no_speech_prob": 0.06586403399705887,
+                    "compression_ratio": 1.2463768115942029,
+                    "words": [
+                      {
+                        "word": " T",
+                        "start": 0.0,
+                        "end": 0.56,
+                        "probability": 0.5362975597381592
+                      },
+                      {
+                        "word": "'as",
+                        "start": 0.56,
+                        "end": 0.64,
+                        "probability": 0.9940725266933441
+                      },
+                      {
+                        "word": " transformé",
+                        "start": 0.64,
+                        "end": 1.24,
+                        "probability": 0.9902505278587341
+                      },
+                      {
+                        "word": " ma",
+                        "start": 1.24,
+                        "end": 1.48,
+                        "probability": 0.9937226176261902
+                      },
+                      {
+                        "word": " mort",
+                        "start": 1.48,
+                        "end": 1.72,
+                        "probability": 0.9718034267425537
+                      },
+                      {
+                        "word": " en",
+                        "start": 1.72,
+                        "end": 2.04,
+                        "probability": 0.99367356300354
+                      },
+                      {
+                        "word": " canyoute.",
+                        "start": 2.04,
+                        "end": 2.48,
+                        "probability": 0.7883207201957703
+                      }
+                    ]
+                  },
+                  {
+                    "start": 2.94,
+                    "end": 6.16,
+                    "text": " Vous allez croire l'autre plutôt que moi ?",
+                    "avg_logprob": -0.35409572206694506,
+                    "no_speech_prob": 0.06586403399705887,
+                    "compression_ratio": 1.2463768115942029,
+                    "words": [
+                      {
+                        "word": " Vous",
+                        "start": 2.94,
+                        "end": 3.08,
+                        "probability": 0.9044964909553528
+                      },
+                      {
+                        "word": " allez",
+                        "start": 3.08,
+                        "end": 3.44,
+                        "probability": 0.9450505375862122
+                      },
+                      {
+                        "word": " croire",
+                        "start": 3.44,
+                        "end": 3.72,
+                        "probability": 0.9980790317058563
+                      },
+                      {
+                        "word": " l",
+                        "start": 3.72,
+                        "end": 3.9,
+                        "probability": 0.9909667372703552
+                      },
+                      {
+                        "word": "'autre",
+                        "start": 3.9,
+                        "end": 4.06,
+                        "probability": 0.9938385784626007
+                      },
+                      {
+                        "word": " plutôt",
+                        "start": 4.06,
+                        "end": 4.42,
+                        "probability": 0.8019548654556274
+                      },
+                      {
+                        "word": " que",
+                        "start": 4.42,
+                        "end": 4.68,
+                        "probability": 0.9971724152565002
+                      },
+                      {
+                        "word": " moi",
+                        "start": 4.68,
+                        "end": 5.12,
+                        "probability": 0.9975847005844116
+                      },
+                      {
+                        "word": " ?",
+                        "start": 5.12,
+                        "end": 6.16,
+                        "probability": 0.5369787216186523
+                      }
+                    ]
+                  },
+                  {
+                    "start": 6.16,
+                    "end": 9.84,
+                    "text": " L'autre ? T'étais dans mon lit hier et dans le mien ce matin.",
+                    "avg_logprob": -0.35409572206694506,
+                    "no_speech_prob": 0.06586403399705887,
+                    "compression_ratio": 1.2463768115942029,
+                    "words": [
+                      {
+                        "word": " L",
+                        "start": 6.16,
+                        "end": 6.3,
+                        "probability": 0.9203265309333801
+                      },
+                      {
+                        "word": "'autre",
+                        "start": 6.3,
+                        "end": 6.6,
+                        "probability": 0.9948457777500153
+                      },
+                      {
+                        "word": " ?",
+                        "start": 6.6,
+                        "end": 6.96,
+                        "probability": 0.834106981754303
+                      },
+                      {
+                        "word": " T",
+                        "start": 6.96,
+                        "end": 7.16,
+                        "probability": 0.9711653590202332
+                      },
+                      {
+                        "word": "'étais",
+                        "start": 7.16,
+                        "end": 7.24,
+                        "probability": 0.9902195632457733
+                      },
+                      {
+                        "word": " dans",
+                        "start": 7.24,
+                        "end": 7.44,
+                        "probability": 0.9983083009719849
+                      },
+                      {
+                        "word": " mon",
+                        "start": 7.44,
+                        "end": 7.68,
+                        "probability": 0.997844934463501
+                      },
+                      {
+                        "word": " lit",
+                        "start": 7.68,
+                        "end": 7.82,
+                        "probability": 0.99024498462677
+                      },
+                      {
+                        "word": " hier",
+                        "start": 7.82,
+                        "end": 8.28,
+                        "probability": 0.9551476240158081
+                      },
+                      {
+                        "word": " et",
+                        "start": 8.28,
+                        "end": 8.72,
+                        "probability": 0.564181387424469
+                      },
+                      {
+                        "word": " dans",
+                        "start": 8.72,
+                        "end": 8.84,
+                        "probability": 0.9981410503387451
+                      },
+                      {
+                        "word": " le",
+                        "start": 8.84,
+                        "end": 9.06,
+                        "probability": 0.9912832975387573
+                      },
+                      {
+                        "word": " mien",
+                        "start": 9.06,
+                        "end": 9.26,
+                        "probability": 0.9692308008670807
+                      },
+                      {
+                        "word": " ce",
+                        "start": 9.26,
+                        "end": 9.44,
+                        "probability": 0.9453502297401428
+                      },
+                      {
+                        "word": " matin.",
+                        "start": 9.44,
+                        "end": 9.84,
+                        "probability": 0.9997565150260925
+                      }
+                    ]
+                  },
+                  {
+                    "start": 12.5,
+                    "end": 14.34,
+                    "text": " Je peux sortir du chariot ?",
+                    "avg_logprob": -0.35409572206694506,
+                    "no_speech_prob": 0.06586403399705887,
+                    "compression_ratio": 1.2463768115942029,
+                    "words": [
+                      {
+                        "word": " Je",
+                        "start": 12.5,
+                        "end": 13.06,
+                        "probability": 0.9569585919380188
+                      },
+                      {
+                        "word": " peux",
+                        "start": 13.06,
+                        "end": 13.2,
+                        "probability": 0.9966503977775574
+                      },
+                      {
+                        "word": " sortir",
+                        "start": 13.2,
+                        "end": 13.5,
+                        "probability": 0.9979223608970642
+                      },
+                      {
+                        "word": " du",
+                        "start": 13.5,
+                        "end": 13.72,
+                        "probability": 0.998931348323822
+                      },
+                      {
+                        "word": " chariot",
+                        "start": 13.72,
+                        "end": 14.02,
+                        "probability": 0.972430020570755
+                      },
+                      {
+                        "word": " ?",
+                        "start": 14.02,
+                        "end": 14.34,
+                        "probability": 0.9074381589889526
+                      }
+                    ]
+                  }
+                ],
+                "speech_intervals": [
+                  [
+                    0.0,
+                    2.48
+                  ],
+                  [
+                    2.94,
+                    6.16
+                  ],
+                  [
+                    6.16,
+                    9.84
+                  ],
+                  [
+                    12.5,
+                    14.34
+                  ]
+                ],
+                "reason": ""
+              },
+              "activity": {
+                "intervals": [
+                  [
+                    0.0,
+                    5.315313
+                  ],
+                  [
+                    6.087937,
+                    6.561187
+                  ],
+                  [
+                    7.06075,
+                    10.233844
+                  ],
+                  [
+                    12.915875,
+                    14.040156
+                  ]
+                ],
+                "max_db": -0.5
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 217,
+      "description": "Le portrait pour son faux enterrement",
+      "prompt": "Enzo sits uneasily in the parked cart. Jade holds his bouquet within reach of his chest. Clara stands beside the handle with her phone still concealed.",
+      "image_prompt": "The previous final frame: Enzo seated and looking anxiously toward the women, Jade holding the bouquet, and Clara standing behind-left with a purposeful expression. The cart, chair and laundry bag retain their positions; no phone is visible.",
+      "duration_sec": 15,
+      "purpose": "",
+      "continue_from_previous": true,
+      "dialogue_turns": [
+        {
+          "speaker": "clara",
+          "text": "Attends. Il nous faut une photo.",
+          "action": "As Clara speaks, Jade places the bouquet against Enzo's chest and arranges his hands around it in a mortuary pose. Simultaneously, Clara takes her phone from her jacket pocket and aims it at Enzo.",
+          "reaction": "Enzo looks uneasily from the flowers to the phone."
+        },
+        {
+          "speaker": "enzo",
+          "text": "Pour quoi faire ?",
+          "action": "Enzo questions Clara while keeping the arranged pose.",
+          "reaction": "Clara looks at him over the phone."
+        },
+        {
+          "speaker": "clara",
+          "text": "Ton enterrement. Demain.",
+          "action": "Clara announces the punishment matter-of-factly while composing the portrait.",
+          "reaction": "Enzo stares at her in alarm."
+        },
+        {
+          "speaker": "jade",
+          "text": "Ta famille est invitée.",
+          "action": "Jade adds the public consequence, watching Enzo's face.",
+          "reaction": "Enzo urgently seeks Clara's gaze."
+        },
+        {
+          "speaker": "enzo",
+          "text": "Ma mère aussi ?",
+          "action": "Enzo asks Clara with immediate, personal panic.",
+          "reaction": "Clara meets his gaze without sympathy."
+        },
+        {
+          "speaker": "clara",
+          "text": "Surtout ta mère. Souris.",
+          "action": "Clara confirms the invitation and gives the brisk instruction, keeping the phone aimed.",
+          "reaction": "Enzo attempts a panicked smile. Clara takes the photo."
+        }
+      ],
+      "selected_image_id": null,
+      "selected_video_id": 389,
+      "trim_start_sec": null,
+      "trim_end_sec": null,
+      "takes": [
+        {
+          "id": 389,
+          "kind": "video",
+          "status": "done",
+          "engine": "FastH3 8-Step V2 / MiniMax H3",
+          "prompt": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] One continuous shot. High-quality stylized 3D animation in vertical 9:16. Detailed tactile materials, credible warm side lighting, soft reflections and a coherent palette. Adult human-scale fruit people, never tiny mascots. Shared, sufficiently wide compositions show bodies, cart and salon depth while preserving readable faces. No generated subtitles, decorative text or giant phone overlays. Clara: Adult strawberry woman, 22, with human feminine proportions and limbs; strawberry-shaped red head and cheeks with fine golden seeds, small leaf crown, large brown eyes and tied-back brown hair. Black elegant dress, cream jacket, gold earrings. Clara's voice: Adult French female medium voice, slightly husky, firm, lively, natural and intelligible; immediate delivery without drawn-out diction. Enzo: Adult banana man, 23; elongated slightly curved yellow head, small brown top stem, expressive face, adult human body and limbs. Plain white jacket, dark top, dark trousers and sneakers. Enzo's voice: Adult French male medium voice, slightly nasal, quick and clear. Excuses begin immediately; the timbre remains stable. Jade: Adult blueberry woman, 23, with human feminine proportions and limbs; rounded feminine face, matte blue-purple skin with subtle fruit sheen, small upper calyx marks and black bob. Lilac jacket and blue jeans. Jade's voice: Adult French female voice slightly lower than Clara's, clear, dry, energetic and intelligible. Enzo sits uneasily in the parked cart. Jade holds his bouquet within reach of his chest. Clara stands beside the handle with her phone still concealed. Jade reaches from her chair to arrange the flowers and hands. Clara photographs from behind-left of the cart without obstructing Jade. Enzo never leaves the basket. Keep all three, the real hand-held phone and the mortuary bouquet pose readable within the established vertical composition. Remain steady; no funeral insert, phone-screen insert or promotional outro. Brisk, clearly articulated conversational delivery. Listeners follow their interlocutor with responsive expressions and posture. As Clara speaks, Jade places the bouquet against Enzo's chest and arranges his hands around it in a mortuary pose. Simultaneously, Clara takes her phone from her jacket pocket and aims it at Enzo. Clara (S1) says: <d>[French] Attends. Il nous faut une photo.</d> Enzo looks uneasily from the flowers to the phone. Enzo questions Clara while keeping the arranged pose. Enzo (S2) says: <d>[French] Pour quoi faire ?</d> Clara looks at him over the phone. Clara announces the punishment matter-of-factly while composing the portrait. Clara (S1) says: <d>[French] Ton enterrement. Demain.</d> Enzo stares at her in alarm. Jade adds the public consequence, watching Enzo's face. Jade (S3) says: <d>[French] Ta famille est invitée.</d> Enzo urgently seeks Clara's gaze. Enzo asks Clara with immediate, personal panic. Enzo (S2) says: <d>[French] Ma mère aussi ?</d> Clara meets his gaze without sympathy. Clara confirms the invitation and gives the brisk instruction, keeping the phone aimed. Clara (S1) says: <d>[French] Surtout ta mère. Souris.</d> Enzo attempts a panicked smile. Clara takes the photo. End immediately on Enzo's forced smile and the women's resolved alliance, all still inside the salon. After the last line, the scene continues through the described physical reactions and ambient sounds.\n\noverall_soundscape: Brief bouquet wrapper and jacket fabric rustles, a restrained phone shutter click, quiet salon room tone.\n\nnon_diegetic_music: N/A",
+          "source_take_id": 388,
+          "error": null,
+          "local_media": "LOCAL_ASSET/27/studio/takes/389/video.mp4",
+          "metadata": {
+            "duration_sec": 15.083333,
+            "has_audio": true,
+            "dialogue_qc": {
+              "status": "missing",
+              "reason": "Tour de parole 2 absent du transcript fiable.",
+              "turns": [
+                {
+                  "turn": 0,
+                  "speaker": "clara",
+                  "expected_speaker": "clara",
+                  "expected": "Attends. Il nous faut une photo.",
+                  "coverage": 1.0,
+                  "status": "ok"
+                },
+                {
+                  "turn": 1,
+                  "speaker": "enzo",
+                  "expected_speaker": "enzo",
+                  "expected": "Pour quoi faire ?",
+                  "coverage": 0.3333333333333333,
+                  "status": "missing"
+                },
+                {
+                  "turn": 2,
+                  "speaker": "clara",
+                  "expected_speaker": "clara",
+                  "expected": "Ton enterrement. Demain.",
+                  "coverage": 1.0,
+                  "status": "ok"
+                },
+                {
+                  "turn": 3,
+                  "speaker": "jade",
+                  "expected_speaker": "jade",
+                  "expected": "Ta famille est invitée.",
+                  "coverage": 1.0,
+                  "status": "ok"
+                },
+                {
+                  "turn": 4,
+                  "speaker": "enzo",
+                  "expected_speaker": "enzo",
+                  "expected": "Ma mère aussi ?",
+                  "coverage": 1.0,
+                  "status": "ok"
+                },
+                {
+                  "turn": 5,
+                  "speaker": "clara",
+                  "expected_speaker": "clara",
+                  "expected": "Surtout ta mère. Souris.",
+                  "coverage": 1.0,
+                  "status": "ok"
+                }
+              ],
+              "speaker_identity_status": "unverified",
+              "voice": [
+                [
+                  0.0,
+                  2.5
+                ],
+                [
+                  4.38,
+                  5.42
+                ],
+                [
+                  5.42,
+                  7.1
+                ],
+                [
+                  8.0,
+                  9.2
+                ],
+                [
+                  9.72,
+                  10.74
+                ],
+                [
+                  10.74,
+                  11.72
+                ],
+                [
+                  12.34,
+                  12.6
+                ]
+              ]
+            },
+            "transcription_cache": {
+              "signature": [
+                5118866,
+                1791800366718264100,
+                "C:/Users/saill/.cache/whisper/small.pt",
+                "fr"
+              ],
+              "transcript": {
+                "status": "ok",
+                "text": "Attends, il nous faut une photo. Pourquoi faire ? Ton enterrement. Demain. Ta famille est invitée. Ma mère aussi ? Surtout ta mère. Souris.",
+                "segments": [
+                  {
+                    "start": 0.0,
+                    "end": 2.5,
+                    "text": " Attends, il nous faut une photo.",
+                    "avg_logprob": -0.5558095154938875,
+                    "no_speech_prob": 0.00881149061024189,
+                    "compression_ratio": 1.1735537190082646,
+                    "words": [
+                      {
+                        "word": " Attends,",
+                        "start": 0.0,
+                        "end": 0.58,
+                        "probability": 0.8272418975830078
+                      },
+                      {
+                        "word": " il",
+                        "start": 1.3,
+                        "end": 1.38,
+                        "probability": 0.9933995008468628
+                      },
+                      {
+                        "word": " nous",
+                        "start": 1.38,
+                        "end": 1.54,
+                        "probability": 0.9981157779693604
+                      },
+                      {
+                        "word": " faut",
+                        "start": 1.54,
+                        "end": 1.66,
+                        "probability": 0.9963855743408203
+                      },
+                      {
+                        "word": " une",
+                        "start": 1.66,
+                        "end": 1.82,
+                        "probability": 0.9991320967674255
+                      },
+                      {
+                        "word": " photo.",
+                        "start": 1.82,
+                        "end": 2.5,
+                        "probability": 0.994017481803894
+                      }
+                    ]
+                  },
+                  {
+                    "start": 4.38,
+                    "end": 5.42,
+                    "text": " Pourquoi faire ?",
+                    "avg_logprob": -0.5558095154938875,
+                    "no_speech_prob": 0.00881149061024189,
+                    "compression_ratio": 1.1735537190082646,
+                    "words": [
+                      {
+                        "word": " Pourquoi",
+                        "start": 4.38,
+                        "end": 4.56,
+                        "probability": 0.7298741936683655
+                      },
+                      {
+                        "word": " faire",
+                        "start": 4.56,
+                        "end": 5.04,
+                        "probability": 0.982020914554596
+                      },
+                      {
+                        "word": " ?",
+                        "start": 5.04,
+                        "end": 5.42,
+                        "probability": 0.8764998316764832
+                      }
+                    ]
+                  },
+                  {
+                    "start": 5.42,
+                    "end": 7.1,
+                    "text": " Ton enterrement. Demain.",
+                    "avg_logprob": -0.5558095154938875,
+                    "no_speech_prob": 0.00881149061024189,
+                    "compression_ratio": 1.1735537190082646,
+                    "words": [
+                      {
+                        "word": " Ton",
+                        "start": 5.42,
+                        "end": 5.56,
+                        "probability": 0.9585122466087341
+                      },
+                      {
+                        "word": " enterrement.",
+                        "start": 5.56,
+                        "end": 6.1,
+                        "probability": 0.8293427228927612
+                      },
+                      {
+                        "word": " Demain.",
+                        "start": 6.94,
+                        "end": 7.1,
+                        "probability": 0.9441606402397156
+                      }
+                    ]
+                  },
+                  {
+                    "start": 8.0,
+                    "end": 9.2,
+                    "text": " Ta famille est invitée.",
+                    "avg_logprob": -0.5558095154938875,
+                    "no_speech_prob": 0.00881149061024189,
+                    "compression_ratio": 1.1735537190082646,
+                    "words": [
+                      {
+                        "word": " Ta",
+                        "start": 8.0,
+                        "end": 8.04,
+                        "probability": 0.9214649796485901
+                      },
+                      {
+                        "word": " famille",
+                        "start": 8.04,
+                        "end": 8.38,
+                        "probability": 0.9995500445365906
+                      },
+                      {
+                        "word": " est",
+                        "start": 8.38,
+                        "end": 8.58,
+                        "probability": 0.9951080679893494
+                      },
+                      {
+                        "word": " invitée.",
+                        "start": 8.58,
+                        "end": 9.2,
+                        "probability": 0.9163206815719604
+                      }
+                    ]
+                  },
+                  {
+                    "start": 9.72,
+                    "end": 10.74,
+                    "text": " Ma mère aussi ?",
+                    "avg_logprob": -0.5558095154938875,
+                    "no_speech_prob": 0.00881149061024189,
+                    "compression_ratio": 1.1735537190082646,
+                    "words": [
+                      {
+                        "word": " Ma",
+                        "start": 9.72,
+                        "end": 9.82,
+                        "probability": 0.9608874320983887
+                      },
+                      {
+                        "word": " mère",
+                        "start": 9.82,
+                        "end": 10.04,
+                        "probability": 0.9932138919830322
+                      },
+                      {
+                        "word": " aussi",
+                        "start": 10.04,
+                        "end": 10.38,
+                        "probability": 0.9913806319236755
+                      },
+                      {
+                        "word": " ?",
+                        "start": 10.38,
+                        "end": 10.74,
+                        "probability": 0.8955815434455872
+                      }
+                    ]
+                  },
+                  {
+                    "start": 10.74,
+                    "end": 11.72,
+                    "text": " Surtout ta mère.",
+                    "avg_logprob": -0.5558095154938875,
+                    "no_speech_prob": 0.00881149061024189,
+                    "compression_ratio": 1.1735537190082646,
+                    "words": [
+                      {
+                        "word": " Surtout",
+                        "start": 10.74,
+                        "end": 11.02,
+                        "probability": 0.9153037269910177
+                      },
+                      {
+                        "word": " ta",
+                        "start": 11.02,
+                        "end": 11.22,
+                        "probability": 0.9587538242340088
+                      },
+                      {
+                        "word": " mère.",
+                        "start": 11.22,
+                        "end": 11.72,
+                        "probability": 0.9974097609519958
+                      }
+                    ]
+                  },
+                  {
+                    "start": 12.34,
+                    "end": 12.6,
+                    "text": " Souris.",
+                    "avg_logprob": -0.5558095154938875,
+                    "no_speech_prob": 0.00881149061024189,
+                    "compression_ratio": 1.1735537190082646,
+                    "words": [
+                      {
+                        "word": " Souris.",
+                        "start": 12.34,
+                        "end": 12.6,
+                        "probability": 0.8327821493148804
+                      }
+                    ]
+                  }
+                ],
+                "speech_intervals": [
+                  [
+                    0.0,
+                    2.5
+                  ],
+                  [
+                    4.38,
+                    5.42
+                  ],
+                  [
+                    5.42,
+                    7.1
+                  ],
+                  [
+                    8.0,
+                    9.2
+                  ],
+                  [
+                    9.72,
+                    10.74
+                  ],
+                  [
+                    10.74,
+                    11.72
+                  ],
+                  [
+                    12.34,
+                    12.6
+                  ]
+                ],
+                "reason": ""
+              },
+              "activity": {
+                "intervals": [
+                  [
+                    0.0,
+                    3.202531
+                  ],
+                  [
+                    4.274125,
+                    4.96675
+                  ],
+                  [
+                    5.420562,
+                    6.072656
+                  ],
+                  [
+                    6.679188,
+                    7.030219
+                  ],
+                  [
+                    7.954438,
+                    8.977313
+                  ],
+                  [
+                    9.632531,
+                    11.563219
+                  ],
+                  [
+                    12.15825,
+                    12.56425
+                  ],
+                  [
+                    14.226094,
+                    14.309
+                  ]
+                ],
+                "max_db": -0.3
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "exports": [
+    {
+      "id": 29,
+      "status": "done",
+      "revision": 15,
+      "error": null,
+      "local_media": "LOCAL_ASSET/27/studio/exports/film-29.mp4"
+    }
+  ]
+}

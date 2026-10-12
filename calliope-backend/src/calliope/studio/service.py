@@ -69,8 +69,41 @@ def shot_context(conn, shot_id):
         **{k: v for k, v in context.get("bible", {}).items() if v},
     }
     context["shot"] = json.loads(row["shot_json"] or "{}") if row else {}
-    context["speaker_ids"] = (plan.get("speaker_ids") or {}) | (context.get("speaker_ids") or {})
+    context["prompt_contract_version"] = plan.get("prompt_contract_version", 1)
+    context["render_canon"] = plan.get("render_canon", {})
+    context["speaker_ids"] = (plan.get("speaker_ids") or {}) if context["prompt_contract_version"] == 2 else (
+        (plan.get("speaker_ids") or {}) | (context.get("speaker_ids") or {})
+    )
     return context
+
+
+def preview_prompts(project_id, shot_id):
+    from calliope.studio.h3_prompt import compile_h3_prompt
+    from calliope.studio.visual_identity import compile_image_request
+
+    with database() as conn:
+        require_shot(conn, shot_id, project_id)
+        shot = public_shot(conn, shot_id)
+        context = shot_context(conn, shot_id)
+        source_status = "pending_source"
+        if shot["continue_from_previous"]:
+            try:
+                _previous_video(conn, shot_id)
+                source_status = "selected_previous_video"
+            except HTTPException:
+                pass
+        elif shot["selected_image_id"]:
+            source_status = "selected_image"
+        try:
+            return {
+                "image_prompt": compile_image_request(shot, context)["prompt"],
+                "video_prompt": compile_h3_prompt(shot | context["shot"], context,
+                                                  first_frame=source_status != "pending_source"),
+                "prompt_contract_version": context["prompt_contract_version"],
+                "source_status": source_status,
+            }
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(422, f"Demande incomplète : {exc}") from None
 
 
 def render_event(take_id, phase=None, detail="", snapshot=None, **updates):
@@ -256,6 +289,11 @@ def public_shot(conn, shot_id):
     clip["screen_text"] = context.get("screen_text", [])
     clip["character_keys"] = context.get("character_keys", [])
     clip["purpose"] = context.get("purpose", "")
+    clip.update({key: context[key] for key in (
+        "prop_keys", "start_state", "end_state", "cut_reason", "action", "reaction",
+        "framing", "camera", "blocking"
+    ) if key in context})
+    clip["prompt_contract_version"] = shot_context(conn, shot_id)["prompt_contract_version"]
     if clip["continue_from_previous"]:
         try:
             previous = _previous_video(conn, shot_id)
@@ -424,7 +462,7 @@ def add_shot(conn, project_id, scene_id, data):
     )
     conn.execute(
         "INSERT INTO studio_shots(clip_id,prompt,image_prompt,dialogue,audio_mode,"
-        "trim_start_sec,trim_end_sec) VALUES(?,?,?,?,?,?,?)",
+        "trim_start_sec,trim_end_sec,continue_from_previous) VALUES(?,?,?,?,?,?,?,?)",
         (
             cur.lastrowid,
             str(data.get("prompt") or description),
@@ -433,8 +471,15 @@ def add_shot(conn, project_id, scene_id, data):
             data.get("audio_mode") or "native",
             data.get("trim_start_sec"),
             data.get("trim_end_sec"),
+            int(data.get("continue_from_previous", False)),
         ),
     )
+    context_fields = ("dialogue_turns", "prop_keys", "start_state", "end_state", "cut_reason",
+                      "action", "reaction", "framing", "camera", "blocking")
+    context = {key: data[key] for key in context_fields if key in data}
+    if context:
+        conn.execute("INSERT INTO studio_shot_context(clip_id,context_json) VALUES(?,?)",
+                     (cur.lastrowid, json.dumps(context)))
     return cur.lastrowid
 
 
@@ -549,7 +594,10 @@ def update_shot(project_id, shot_id, data):
             conn.execute("UPDATE studio_shots SET approved=0 WHERE clip_id=?", (shot_id,))
             touch(conn, project_id)
         context_data = shot_context(conn, shot_id)["shot"]
-        for key in ("dialogue_turns", "soundscape", "screen_text"):
+        context_fields = ("dialogue_turns", "soundscape", "screen_text", "prop_keys",
+                          "start_state", "end_state", "cut_reason", "action", "reaction",
+                          "framing", "camera", "blocking")
+        for key in context_fields:
             if key in data:
                 context_data[key] = data[key]
         if data.get("dialogue_turns"):
@@ -559,12 +607,28 @@ def update_shot(project_id, shot_id, data):
                 context_data.get("character_keys", [])
                 + [t["speaker"] for t in data["dialogue_turns"]]
             ))
-        if any(key in data for key in ("dialogue_turns", "soundscape", "screen_text")):
+        if any(key in data for key in context_fields):
             conn.execute(
                 "INSERT INTO studio_shot_context(clip_id,context_json) VALUES(?,?) "
                 "ON CONFLICT(clip_id) DO UPDATE SET context_json=excluded.context_json",
                 (shot_id, json.dumps(context_data)),
             )
+        if changed and shot_context(conn, shot_id)["prompt_contract_version"] == 2:
+            from calliope.studio.series_planner import _speaker_ids_for_plan, _validate_native_contract
+
+            row = conn.execute("SELECT plan_json FROM studio_episodes WHERE project_id=?", (project_id,)).fetchone()
+            plan = json.loads(row[0])
+            live = [public_shot(conn, item[0]) | shot_context(conn, item[0])["shot"] for item in conn.execute(
+                "SELECT c.id FROM clips c JOIN scenes s ON s.id=c.scene_id WHERE c.project_id=? "
+                "ORDER BY s.order_index,s.id,c.order_index,c.id", (project_id,)
+            ).fetchall()]
+            live_plan = plan | {"scenes": [{"shots": live}]}
+            try:
+                _validate_native_contract(live_plan, shot_context(conn, shot_id)["entities"])
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from None
+            plan["speaker_ids"] = _speaker_ids_for_plan(live_plan)
+            conn.execute("UPDATE studio_episodes SET plan_json=? WHERE project_id=?", (json.dumps(plan), project_id))
         result = public_shot(conn, shot_id)
         conn.commit()
         return result
@@ -865,7 +929,9 @@ def approve_shot(shot_id, approved):
                 raise HTTPException(
                     409, "Choisissez une prise vidéo terminée avant de valider ce plan."
                 )
-            qc = json.loads(take["metadata_json"] or "{}").get("dialogue_qc") or {}
+            metadata = json.loads(take["metadata_json"] or "{}")
+            if shot["audio_mode"] == "native" and metadata.get("has_audio") is False:
+                raise HTTPException(409, "La piste sonore native attendue est absente.")
             context = shot_context(conn, shot_id)
             if context.get("directing_profile", {}).get("require_reference_approval") or any(
                 label.get("anchor") == "character" for label in shot.get("screen_text", [])
@@ -883,10 +949,6 @@ def approve_shot(shot_id, approved):
                         "Vérifiez et approuvez l'identité et les zones "
                         "de la vidéo réelle avant le montage.",
                     )
-            if qc.get("status") in ("missing", "extra", "inaudible"):
-                raise HTTPException(
-                    409, "Contrôle parole bloquant : " + qc.get("reason", qc["status"])
-                )
         if shot["approved"] != approved:
             conn.execute(
                 "UPDATE studio_shots SET approved=? WHERE clip_id=?", (int(approved), shot_id)
@@ -1225,12 +1287,8 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
                 missing.append(f"{row['heading']} / plan {row['order_index']}")
                 continue
             effective = json.loads(take["metadata_json"] or "{}")
-            if (effective.get("dialogue_qc") or {}).get("status") in (
-                "missing",
-                "extra",
-                "inaudible",
-            ):
-                missing.append(f"{row['heading']} / plan {row['order_index']} (contrôle parole)")
+            if shot["audio_mode"] == "native" and effective.get("has_audio") is False:
+                missing.append(f"{row['heading']} / plan {row['order_index']} (piste sonore absente)")
                 continue
             clips.append(
                 {
@@ -1246,7 +1304,14 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
                     "audio_mode": shot["audio_mode"],
                     "screen_text": shot.get("screen_text", []),
                     "purpose": shot.get("purpose", ""),
-                    "transcript": (effective.get('transcription_cache') or {}).get('transcript'),
+                    "prompt_contract_version": shot["prompt_contract_version"],
+                    "action": shot.get("action", ""),
+                    "reaction": shot.get("reaction", ""),
+                    "dialogue_turns": shot.get("dialogue_turns", []),
+                    "transcript": (
+                        (effective.get('transcription_cache') or {}).get('transcript')
+                        if (effective.get("dialogue_qc") or {}).get("status") == "ok" else None
+                    ),
                 }
             )
         if missing or not clips:
@@ -1289,7 +1354,7 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
         return {"job_id": cur.lastrowid}
 
 
-async def _generate_image(request):
+async def _generate_image(request, *, check_cancel=None):
     from calliope.studio.visual_identity import verify_reference_inputs
 
     verify_reference_inputs(request)
@@ -1327,10 +1392,23 @@ async def _generate_image(request):
                 ]
             else:
                 payload["return_base64"] = True
-            response = await client.post(
-                request["image_base_url"].rstrip("/") + "/images/generations",
-                headers=headers, json=payload,
-            )
+            for attempt in range(4):
+                if check_cancel:
+                    await check_cancel()
+                response = await client.post(
+                    request["image_base_url"].rstrip("/") + "/images/generations",
+                    headers=headers, json=payload,
+                )
+                if (
+                    response.status_code != 503
+                    or "image queue is full" not in response.text.lower()
+                    or attempt == 3
+                ):
+                    break
+                for _ in range(10 * 2 ** attempt):
+                    await asyncio.sleep(1)
+                    if check_cancel:
+                        await check_cancel()
         elif references:
             files = [
                 ("image", (Path(path).name, Path(path).read_bytes(), "image/png"))
@@ -1453,7 +1531,13 @@ async def run_studio_job(job, payload, should_stop):
                             "La référence approuvée a changé. Créez une nouvelle demande."
                         )
         if take["kind"] == "image":
-            content, metadata = await _generate_image(request)
+            async def check_image_cancel():
+                if should_stop():
+                    raise asyncio.CancelledError()
+                if queue_manager.is_cancelled(job["id"]):
+                    raise StudioCancelledError()
+
+            content, metadata = await _generate_image(request, check_cancel=check_image_cancel)
             path = directory / "image.png"
             if queue_manager.is_cancelled(job["id"]):
                 raise StudioCancelledError()

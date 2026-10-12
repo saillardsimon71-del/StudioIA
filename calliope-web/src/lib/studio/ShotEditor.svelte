@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import TakeGallery from './TakeGallery.svelte';
 	import VisualReview from './VisualReview.svelte';
-	import { studio, newRequestId, errorMessage, selectedTake, type Shot, type ShotDraft, type Take, type MediaKind } from './api';
+	import { studio, newRequestId, errorMessage, selectedTake, type Shot, type ShotDraft, type Take, type MediaKind, type PromptPreview } from './api';
 	let { shot, projectId, onrefresh, onclose, ondirty }: { shot: Shot; projectId: number; onrefresh: () => Promise<void>; onclose: () => void; ondirty: (dirty: boolean) => void } = $props();
 	let initializedId = 0;
 	let draft = $state<ShotDraft>({ description: '', prompt: '', image_prompt: '', dialogue: '', duration_sec: 5, audio_mode: 'native', continue_from_previous: false });
@@ -10,6 +10,9 @@
 	let busy = $state('');
 	let error = $state('');
 	let message = $state('');
+	let preview = $state<PromptPreview | null>(null);
+	let previewError = $state('');
+	let previewLoading = $state(false);
 	let nTakes = $state(1);
 	let seed = $state<number | undefined>();
 	let editor: HTMLElement;
@@ -29,8 +32,15 @@
 	$effect(() => {
 		if (initializedId === shot.id) return;
 		initializedId = shot.id;
-		draft = { description: shot.description ?? '', prompt: shot.prompt ?? '', image_prompt: shot.image_prompt ?? '', dialogue: shot.dialogue ?? '', dialogue_turns: $state.snapshot(shot.dialogue_turns ?? []), soundscape: shot.soundscape ?? '', screen_text: $state.snapshot(shot.screen_text ?? []), duration_sec: shot.duration_sec, audio_mode: shot.audio_mode, continue_from_previous: shot.continue_from_previous ?? false };
+		draft = { description: shot.description ?? '', prompt: shot.prompt ?? '', image_prompt: shot.image_prompt ?? '', dialogue: shot.dialogue ?? '', dialogue_turns: $state.snapshot(shot.dialogue_turns ?? []), soundscape: shot.soundscape ?? '', screen_text: $state.snapshot(shot.screen_text ?? []), duration_sec: shot.duration_sec, audio_mode: shot.audio_mode, continue_from_previous: shot.continue_from_previous ?? false,
+		...(shot.prompt_contract_version === 2 ? {
+			action: shot.action ?? '', reaction: shot.reaction ?? '', framing: shot.framing ?? '',
+			camera: shot.camera ?? '', blocking: shot.blocking ?? '', cut_reason: shot.cut_reason ?? '',
+			prop_keys: $state.snapshot(shot.prop_keys ?? []), start_state: $state.snapshot(shot.start_state ?? {}),
+			end_state: $state.snapshot(shot.end_state ?? {})
+		} : {}) };
 		saved = JSON.stringify(draft);
+		preview = null; previewError = '';
 		error = ''; message = '';
 	});
 	$effect(() => ondirty(dirty));
@@ -41,6 +51,15 @@
 		const snapshot = { ...draft };
 		await studio.saveShot(projectId, shot.id, snapshot);
 		saved = JSON.stringify(snapshot);
+		preview = null;
+	}
+	async function loadPreview() {
+		if (dirty || previewLoading) return;
+		const id = shot.id;
+		previewLoading = true; previewError = '';
+		try { const value = await studio.promptPreview(projectId, id); if (shot.id === id) preview = value; }
+		catch (err) { if (shot.id === id) previewError = errorMessage(err); }
+		finally { previewLoading = false; }
 	}
 	async function run(name: string, action: () => Promise<void>) {
 		if (busy) return;
@@ -88,6 +107,16 @@
 		<form onsubmit={save} class="stack">
 			<label>Titre du plan<input required bind:value={draft.description} /></label>
 			<label>Prompt vidéo et mouvement<textarea bind:value={draft.prompt} rows="5" placeholder="Sujet, action, cadrage, mouvement de caméra et ambiance."></textarea></label>
+			{#if shot.prompt_contract_version === 2}
+				<details><summary>Actions et mise en scène</summary><div class="stack">
+					<label>Action avant la parole<textarea bind:value={draft.action} rows="2"></textarea></label>
+					<label>Action finale après les répliques<textarea bind:value={draft.reaction} rows="2"></textarea></label>
+					<label>Cadrage<textarea bind:value={draft.framing} rows="2"></textarea></label>
+					<label>Caméra<textarea bind:value={draft.camera} rows="2"></textarea></label>
+					<label>Placements et regards<textarea bind:value={draft.blocking} rows="2"></textarea></label>
+					<label>Raison de la coupe<textarea bind:value={draft.cut_reason} rows="2"></textarea></label>
+				</div></details>
+			{/if}
 			{#if draft.dialogue_turns?.length}
 				{#each draft.dialogue_turns as turn, index}
 					<label>Réplique {index + 1} - {turn.speaker}<textarea bind:value={turn.text} rows="2"></textarea></label>
@@ -131,6 +160,18 @@
 			<div class="row"><button disabled={!dirty || !valid || !!busy} class="primary">{busy === 'save' ? 'Enregistrement...' : 'Enregistrer les changements'}</button>{#if dirty}<span class="hint">Modifications non enregistrées</span>{/if}</div>
 			{#if shot.approved && dirty}<p class="hint">Ces changements retireront l'approbation. Vos prises restent conservées.</p>{/if}
 		</form>
+		<details ontoggle={(event) => { if ((event.currentTarget as HTMLDetailsElement).open) loadPreview(); }}>
+			<summary>Voir les demandes image et vidéo</summary>
+			<p class="hint">Aperçu des changements enregistrés. Aucune génération n'est lancée.</p>
+			{#if dirty}<p class="hint">Enregistrez les changements pour actualiser cet aperçu.</p>{/if}
+			<button disabled={dirty || previewLoading} onclick={loadPreview}>{previewLoading ? 'Chargement...' : 'Actualiser l\'aperçu'}</button>
+			{#if previewError}<p class="error">{previewError}</p>{/if}
+			{#if preview}
+				<p class="hint">{preview.source_status === 'pending_source' ? 'Image de départ encore à choisir : demande vidéo provisoire.' : preview.source_status === 'selected_previous_video' ? 'Source : dernière image conservée du plan narratif précédent.' : 'Source : image choisie.'}</p>
+				<label>Demande image<textarea readonly value={preview.image_prompt} rows="6"></textarea></label>
+				<label>Demande vidéo<textarea readonly value={preview.video_prompt} rows="8"></textarea></label>
+			{/if}
+		</details>
 		<section class="reference stack"><h3>Référence visuelle</h3>
 			{#if draft.continue_from_previous && shot.continuation_source?.url}<h4>Dernière frame conservée du plan précédent</h4><VisualReview take={shot.continuation_source} labels={draft.screen_text} initialFrame={shot.continuation_frame_index ?? 0} disabled={!!busy} onreview={(frameIndex) => review(shot.continuation_source!, frameIndex, shot.id)} />{/if}
 			{#if chosenImage?.url}<div class="reference-preview media"><img src={chosenImage.url} alt="Référence actuellement choisie pour le plan" /></div><p class="hint">Image choisie: prise {chosenImage.id}</p>{:else}<p class="hint">Sans référence, la vidéo part de votre prompt.</p>{/if}

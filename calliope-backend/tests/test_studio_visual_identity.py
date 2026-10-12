@@ -139,7 +139,7 @@ def test_canonical_variant_uses_approved_base_and_persists_actual_request(client
     production.save_episode_plan(project, plan)
     requests = []
 
-    async def image(request):
+    async def image(request, *, check_cancel=None):
         requests.append(request)
         return service.normalized_image(png_bytes())
 
@@ -229,7 +229,7 @@ def test_strict_canonical_review_pauses_before_variant_and_any_video(client, mon
     production.save_episode_plan(project, plan)
     calls = []
 
-    async def image(request):
+    async def image(request, *, check_cancel=None):
         calls.append(request)
         return service.normalized_image(png_bytes())
 

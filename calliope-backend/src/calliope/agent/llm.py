@@ -5,6 +5,7 @@ import json
 import logging
 import time
 from typing import Any, AsyncIterator
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -55,7 +56,7 @@ _PROTECTED_PAYLOAD_KEYS = frozenset({"model", "messages", "stream"})
 # replaced, so a per-profile thinking setting and a per-call override can both
 # be in flight (e.g. thinking="off" from the profile + reasoning_effort from the
 # H3 rewrite call site) without one clobbering the other.
-_NESTED_EXTRA_KEYS = frozenset({"chat_template_kwargs"})
+_NESTED_EXTRA_KEYS = frozenset({"chat_template_kwargs", "reasoning"})
 
 
 def thinking_extra_body(thinking: Any) -> dict[str, Any]:
@@ -266,6 +267,10 @@ class LLMClient:
         # Applied first on every request so a call-site extra_body can still
         # override an individual knob (see _merge_extra_body).
         self.thinking_extra_body = thinking_extra_body(self.thinking)
+        if self.thinking and urlsplit(self.base_url).hostname == 'openrouter.ai':
+            self.thinking_extra_body = {'reasoning': (
+                {'enabled': False} if self.thinking == THINKING_OFF else {'effort': self.thinking}
+            )}
         # With every completion streamed (chat/chat_with_tools consume
         # chat_stream), the timeout bounds the gap BETWEEN chunks, not total
         # generation time: a thinking model streaming reasoning_content keeps
@@ -688,6 +693,8 @@ class LLMClient:
                     elif "tools" in payload:
                         retry_without = "tools"
                 if retry_without is None:
+                    if resp.is_error:
+                        await resp.aread()
                     resp.raise_for_status()
                     async for ev in self._parse_sse(resp, tool_acc):
                         yield ev
@@ -819,15 +826,39 @@ def extract_json(text: str) -> dict[str, Any]:
             if isinstance(parsed, dict):
                 return parsed
         except json.JSONDecodeError:
-            pass
-        start = text.find("{", start + 1)
+            depth = 0
+            quoted = False
+            escaped = False
+            for index in range(start, len(text)):
+                char = text[index]
+                if quoted:
+                    if escaped:
+                        escaped = False
+                    elif char == "\\":
+                        escaped = True
+                    elif char == '"':
+                        quoted = False
+                elif char == '"':
+                    quoted = True
+                elif char == "{":
+                    depth += 1
+                elif char == "}":
+                    depth -= 1
+                    if depth == 0:
+                        start = text.find("{", index + 1)
+                        break
+            else:
+                start = -1
     raise ValueError(f"No JSON object found in LLM reply (len={len(text)})")
 
 
 async def generate_structured(
-    messages: list[dict[str, str]], temperature: float = 0.7, max_tokens: int | None = None
+    messages: list[dict[str, str]], temperature: float = 0.7, max_tokens: int | None = None,
+    required_keys=(),
+    json_mode=False,
+    role: str | None = None,
 ) -> dict[str, Any]:
-    client = LLMClient()
+    client = LLMClient.for_role(role) if role else LLMClient()
     try:
         # JSON mode is off by default: several OpenAI-compatible servers
         # (notably LM Studio) reject response_format, and the prompts already
@@ -838,15 +869,24 @@ async def generate_structured(
             # content — that must reach the retry below, so it lives inside
             # this try alongside the parse.
             options = {"max_tokens": max_tokens} if max_tokens is not None else {}
+            if json_mode:
+                options["response_format"] = {"type": "json_object"}
             text = await client.chat(messages, temperature=temperature, **options)
-            return extract_json(text)
+            result = extract_json(text)
+            if any(key not in result for key in required_keys):
+                raise ValueError(f"Structured reply missing root fields: {', '.join(required_keys)}")
+            return result
         except ValueError as exc:
             # One retry with JSON mode requested, for servers that support it
             logger.warning("LLM reply unusable (%s); retrying with json_object mode", exc)
+            options.pop("response_format", None)
             text = await client.chat(
                 messages, temperature=temperature, response_format={"type": "json_object"},
                 **options,
             )
-            return extract_json(text)
+            result = extract_json(text)
+            if any(key not in result for key in required_keys):
+                raise ValueError(f"Structured reply missing root fields: {', '.join(required_keys)}")
+            return result
     finally:
         await client.close()

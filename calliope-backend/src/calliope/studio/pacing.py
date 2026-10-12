@@ -25,6 +25,8 @@ GRID = 1 / GRID_FPS
 # Fenêtre utile autour de la parole détectée.
 PRE_ROLL_SEC = 0.2
 POST_ROLL_SEC = 0.35
+ASIDE_PRE_ROLL_SEC = 2 / GRID_FPS
+ASIDE_POST_ROLL_SEC = 3 / GRID_FPS
 VOICE_MIN_SEC = 0.06
 MERGE_GAP_SEC = 0.35
 
@@ -123,7 +125,7 @@ def detect_voice(path, probe_sec: float = 0.0) -> dict | None:
     return {"intervals": merged, "max_db": max_db}
 
 
-def useful_window(beat_sec, probe_sec, voice=None) -> tuple[float, float]:
+def useful_window(beat_sec, probe_sec, voice=None, *, preserve_end_sec=None) -> tuple[float, float]:
     """Fenêtre utile (début, fin) d'une prise, en secondes, sur la grille 24 fps.
 
     beat_sec est la durée utile visée par le scénario ; une valeur nulle garde
@@ -151,6 +153,8 @@ def useful_window(beat_sec, probe_sec, voice=None) -> tuple[float, float]:
             end = min(available, int(math.ceil(segments[-1][1] * GRID_FPS - 1e-9)))
     else:
         start, end = 0, target
+    if preserve_end_sec is not None:
+        end = min(available, max(end, math.ceil(float(preserve_end_sec) * GRID_FPS)))
     return start / GRID_FPS, end / GRID_FPS
 
 
@@ -174,12 +178,12 @@ def explicit_window(trim_start, trim_end, probe_sec) -> tuple[float, float]:
     return start, end
 
 
-def speech_window(probe_sec, speech_intervals, post_roll_sec=POST_ROLL_SEC):
+def speech_window(probe_sec, speech_intervals, post_roll_sec=POST_ROLL_SEC, *, pre_roll_sec=PRE_ROLL_SEC):
     probe = max(0.0, float(probe_sec))
     segments = list(speech_intervals or [])
     if not segments:
         return 0.0, probe
-    start = max(0.0, floor_grid(min(float(b) for b, _ in segments) - PRE_ROLL_SEC))
+    start = max(0.0, floor_grid(min(float(b) for b, _ in segments) - max(0.0, pre_roll_sec)))
     end = min(probe, math.ceil(
         (max(float(e) for _, e in segments) + max(0.0, float(post_roll_sec))) * GRID_FPS
     ) / GRID_FPS)

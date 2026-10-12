@@ -110,9 +110,9 @@ def test_production_mode_cannot_change_during_rendering(client, episode):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("second_status", ["ok", "extra", "unknown"])
-async def test_automatic_uncertain_native_speech_gets_one_retry(
-    client, episode, monkeypatch, second_status
+@pytest.mark.parametrize("status", ["ok", "extra", "unknown"])
+async def test_automatic_dialogue_diagnostic_preserves_the_completed_take(
+    client, episode, monkeypatch, status
 ):
     from calliope.queue.manager import queue_manager
     from calliope.studio import production, service
@@ -132,14 +132,10 @@ async def test_automatic_uncertain_native_speech_gets_one_retry(
     monkeypatch.setattr(queue_manager, "is_cancelled", lambda _: False)
     from calliope.studio import h3_prompt
     monkeypatch.setattr(h3_prompt, "compile_h3_prompt", lambda *args, **kwargs: "")
-    assessments = iter([
-        {"status": "unknown", "reason": "Uncertain."},
-        {"status": second_status, "reason": "Second assessment."},
-    ])
     retries, approved = [], []
 
     async def assess(_):
-        return next(assessments)
+        return {"status": status, "reason": "Diagnostic à vérifier."}
 
     async def generate(*args, **kwargs):
         retries.append(kwargs["attempt"])
@@ -148,11 +144,6 @@ async def test_automatic_uncertain_native_speech_gets_one_retry(
     monkeypatch.setattr(production, "assess_take", assess)
     monkeypatch.setattr(production, "generate_take", generate)
     monkeypatch.setattr(service, "approve_shot", lambda *args: approved.append(args))
-    if second_status == "ok":
-        await production.render_shot(queue_manager.get_job(episode["job_id"]), shot, lambda: False)
-        assert approved[-1] == (700, True)
-    else:
-        with pytest.raises(ValueError, match="après une relance"):
-            await production.render_shot(queue_manager.get_job(episode["job_id"]), shot, lambda: False)
-        assert (700, True) not in approved
-    assert retries == [1]
+    await production.render_shot(queue_manager.get_job(episode["job_id"]), shot, lambda: False)
+    assert approved == [(700, True)]
+    assert retries == []

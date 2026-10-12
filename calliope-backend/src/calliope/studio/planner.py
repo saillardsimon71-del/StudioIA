@@ -7,7 +7,7 @@ SPEECH = re.compile(r"^([\wÀ-ÿ][\wÀ-ÿ .-]{0,40}):\s*(.+)$")
 WORDS_PER_SEC = 2.2
 
 
-def beat_duration(dialogue="", fallback=4.0):
+def beat_duration(dialogue="", fallback=4.0, *, words_per_sec=WORDS_PER_SEC):
     """Durée utile d'un plan : le temps honnête de sa réplique, à 0,1 s près.
 
     Le découpage n'étire jamais un plan pour remplir ; sans réplique, un beat
@@ -16,7 +16,7 @@ def beat_duration(dialogue="", fallback=4.0):
     words = len(str(dialogue or "").split())
     if not words:
         return fallback
-    return max(1.0, min(15.0, round(words / WORDS_PER_SEC + 0.3, 1)))
+    return max(1.0, min(15.0, round(words / words_per_sec + 0.3, 1)))
 
 
 def _chunks(text, words=30):

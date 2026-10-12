@@ -1,0 +1,9 @@
+{
+  "image_base_url": "https://apihub.agnes-ai.com/v1",
+  "image_model": "agnes-image-2.5-flash",
+  "aspect_ratio": "9:16",
+  "reference_paths": [
+    "REPOSITORY\\calliope-backend\\data\\assets\\series\\19\\references\\entity-93.png"
+  ],
+  "prompt": "A single vertical 9:16 frame from a detailed 3D animated comedy. Exactly THREE adults and three heads in the frame. CENTER: the banana-headed young adult man in the supplied portrait, wearing his white jacket, dark top, dark trousers and sneakers, seated INSIDE the deep metal wire basket of a supermarket shopping cart, knees folded within the basket, torso and yellow banana head above its rim. LEFT: Clara, an elegant young adult woman whose head is a red strawberry with golden seeds, big brown eyes and green leaves at the crown, human feminine body, black knee-length dress, cream cropped jacket, gold hoop earrings and black shoes. She stands on the floor behind the cart handle with both hands on it. RIGHT: Jade, an adult woman with a blue-purple blueberry head, expressive feminine face, black bob haircut, lilac jacket, blue jeans and dark shoes, standing on the floor beside the cart. Clara and Jade look toward each other; Enzo looks toward Jade. Enzo is the sole cart passenger.\n\nThe complete cast is this single strawberry woman, this single banana man and this single blueberry woman. Wide shared eye-level three-quarter view shows their faces and bodies, basket and cart wheels. Cart fills the lower central foreground. Rich warm hair salon setting with mirrors and glowing bulbs, product shelves, plants, marble surfaces and a glass entrance in the deep background. The salon chairs in the background are empty. Lively expressive cinematic 3D, warm side lighting, tactile materials. One single view, no extra human characters, no collage, no captions. The banana portrait supplies his appearance only; this scene's three-person composition determines all body positions."
+}

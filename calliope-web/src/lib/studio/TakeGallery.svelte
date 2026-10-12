@@ -24,7 +24,11 @@
 				<div class="between"><span class="take-name">Prise {take.id}</span><span class:approved={selectedId === take.id} class:pending={isActive(take.status)} class:failed={!!take.error} class="badge">{selectedId === take.id ? 'Choisie' : statusLabel(take.status)}</span></div>
 				{#if take.error}<p class="take-error">{take.error}</p>{/if}
                 <RenderProgress state={take.render_state} callId={take.modal_call_id} />
-                {#if take.metadata.dialogue_qc}<p class="hint">Contrôle parole : {String((take.metadata.dialogue_qc as { status: string; reason: string }).status)} - {String((take.metadata.dialogue_qc as { reason: string }).reason)}</p>{/if}
+                {#if take.metadata.dialogue_qc}
+                    {@const qc = take.metadata.dialogue_qc as { status: string; reason: string }}
+                    <p class="hint">Contrôle automatique du texte : {qc.status === 'ok' ? 'réussi' : 'à vérifier'}{#if qc.reason} : {qc.reason}{/if}</p>
+                    <p class="hint">Voix, prononciation et attribution à vérifier en regardant la prise.</p>
+                {/if}
 				{#if take.url}<div class="row"><button class="small" disabled={busy || selectedId === take.id} onclick={() => onselect(take)}>{selectedId === take.id ? 'Prise choisie' : kind === 'image' ? 'Utiliser cette image' : 'Choisir cette vidéo'}</button><label class="check hint"><input type="checkbox" checked={compared.includes(take.id)} onchange={() => toggle(take.id)} />Comparer</label></div>{/if}
 				<details><summary>Informations</summary><div class="take-info"><p>{take.prompt || 'Média importé'}</p>{#if take.seed !== null}<p>Graine: {take.seed}</p>{/if}{#if take.source_take_id}<p>Image source: prise {take.source_take_id}</p>{/if}{#if take.metadata?.duration_sec}<p>Durée réelle: {String(take.metadata.duration_sec)} s</p>{/if}<p>{new Date(take.created_at).toLocaleString('fr-FR')}</p>{#if take.url}<a href={take.url} download>Télécharger la prise</a>{/if}</div></details>
 			</div>

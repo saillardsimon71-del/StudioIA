@@ -288,7 +288,7 @@ def assess_prompt_recitation(expected, transcript, compiled_prompt, language=Non
 
 def assess_turns(turns, transcript, language=None):
     if not transcript or transcript.get("status") != "ok":
-        return {"status": "unknown", "reason": "Transcription indisponible."}
+        return {"status": "unknown", "reason": "Transcription indisponible.", "speaker_identity_status": "unverified"}
     wanted = [_comparison_tokens(_tokens(turn["text"], language))[0] for turn in turns]
     heard = _comparison_tokens(_tokens(transcript.get("text"), language))[0]
     flat = [word for turn in wanted for word in turn]
@@ -306,6 +306,7 @@ def assess_turns(turns, transcript, language=None):
         coverage = matched / max(1, len(words))
         status = "missing" if reliable and len(words) >= 3 and coverage < 0.45 else "ok"
         checks.append({"turn": index, "speaker": turns[index]["speaker"],
+                       "expected_speaker": turns[index]["speaker"],
                        "expected": turns[index]["text"], "coverage": coverage, "status": status})
         offset += len(words)
     missing = next((item for item in checks if item["status"] == "missing"), None)
@@ -315,6 +316,7 @@ def assess_turns(turns, transcript, language=None):
             f"Tour de parole {missing['turn'] + 1} absent du transcript fiable." if missing else ""
         ),
         "turns": checks,
+        "speaker_identity_status": "unverified",
     }
 
 

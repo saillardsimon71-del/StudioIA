@@ -1,0 +1,34 @@
+{
+  "recorded_at_utc": "2026-10-12T11:23:11.944733+00:00",
+  "dry_run": false,
+  "roles": {
+    "main": {
+      "model": "agnes-2.5-flash",
+      "thinking": null
+    },
+    "planner": {
+      "model": "openai/gpt-6.1-sol",
+      "thinking": "low"
+    },
+    "story": {
+      "model": "anthropic/claude-opus-5.5",
+      "thinking": "low"
+    },
+    "script": {
+      "model": "openai/gpt-6.1-sol",
+      "thinking": "low"
+    },
+    "assets": {
+      "model": "agnes-2.5-flash",
+      "thinking": null
+    },
+    "video": {
+      "model": "agnes-2.5-flash",
+      "thinking": null
+    }
+  },
+  "image_model": "agnes-image-2.5-flash",
+  "modal_app": "studio-ia-h3",
+  "modal_function": "render_clip",
+  "render_timeout_seconds": 5400
+}

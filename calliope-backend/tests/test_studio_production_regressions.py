@@ -172,11 +172,10 @@ def test_pause_prevents_the_next_shot_from_overwriting_paused_state(client, monk
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status,approved,needs_listening", [
-    ("unknown", False, True), ("unknown", True, False), ("ok", False, False),
-])
-async def test_uncertain_audio_requires_listening_without_automatic_gpu_retry(
-    client, monkeypatch, status, approved, needs_listening
+@pytest.mark.parametrize("status", ["unknown", "missing", "extra", "inaudible", "ok"])
+@pytest.mark.parametrize("approved", [False, True])
+async def test_dialogue_assessment_does_not_block_or_rerender_a_completed_take(
+    client, monkeypatch, status, approved
 ):
     previous = queue_manager.paused
     queue_manager.paused = True
@@ -205,16 +204,7 @@ async def test_uncertain_audio_requires_listening_without_automatic_gpu_retry(
         monkeypatch.setattr(production, 'assess_take', assess)
         monkeypatch.setattr(production, 'generate_take', generate)
         job = queue_manager.get_job(created['job_id'])
-        if needs_listening:
-            with pytest.raises(production.ProductionPausedError):
-                await production.render_shot(job, shot, lambda: False)
-            assert decisions == []
-            state = service.board(created['project_id'])['production']
-            assert state['status'] == 'paused'
-            assert 'écoutez' in state['message']
-            assert 'incertain' in state['message']
-        else:
-            await production.render_shot(job, shot, lambda: False)
-            assert decisions == [(shot['id'], True)]
+        await production.render_shot(job, shot, lambda: False)
+        assert decisions == [(shot['id'], True)]
     finally:
         queue_manager.paused = previous

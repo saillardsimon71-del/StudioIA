@@ -86,6 +86,18 @@ def test_inspect_media_reports_real_video_and_audio(export_module, media):
     assert result["duration_sec"] == 0.75
 
 
+async def test_central_aside_uses_direct_cuts_even_with_scene_fades(export_module, media, tmp_path):
+    native, silent = media
+    snapshot = snapshot_for((native, 1.25, "native"), (native, 1.25, "native"), (silent, 0.75, "silent"))
+    snapshot["transitions"] = "scene_fades"
+    for index, clip in enumerate(snapshot["clips"]):
+        clip["scene_id"] = index + 1
+    snapshot["clips"][1]["purpose"] = "midroll"
+    result = await export_module.assemble(snapshot, tmp_path / "direct-aside.mp4")
+    assert result["transitions"] == []
+    assert result["duration_sec"] == pytest.approx(3.25, abs=1 / 24)
+
+
 @pytest.mark.parametrize("same_scene", [False, True])
 async def test_scene_fade_preserves_duration_and_voice_start(
     export_module, media, tmp_path, same_scene

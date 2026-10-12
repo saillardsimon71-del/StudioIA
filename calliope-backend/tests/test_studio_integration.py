@@ -92,7 +92,7 @@ def test_ambiguous_submission_cannot_resume(client):
 
 
 @pytest.mark.asyncio
-async def test_retained_take_gets_qc_and_second_failure_blocks_approval(monkeypatch):
+async def test_retained_take_keeps_qc_without_rerender_or_blocking_approval(monkeypatch):
     from calliope.studio import production
 
     shot = {
@@ -117,9 +117,8 @@ async def test_retained_take_gets_qc_and_second_failure_blocks_approval(monkeypa
     monkeypatch.setattr(production, "assess_take", qc)
     monkeypatch.setattr(production, "generate_take", generate)
     monkeypatch.setattr(service, "approve_shot", lambda *args: approved.append(args))
-    with pytest.raises(ValueError, match="silence"):
-        await production.render_shot({"id": 1}, shot, lambda: False)
-    assert checked == [9, 9] and attempts == [1] and not any(item[1] for item in approved)
+    await production.render_shot({"id": 1}, shot, lambda: False)
+    assert checked == [9] and attempts == [] and approved == [(9, True)]
 
 
 @pytest.mark.asyncio
@@ -695,14 +694,18 @@ async def test_retrieved_invalid_result_is_terminal_before_validation(client, mo
 
 
 @pytest.mark.parametrize("audio,expected", [(False, 409), (True, 200)])
+@pytest.mark.parametrize("qc_status", ["unknown", "missing", "extra"])
 def test_export_checks_legacy_approved_takes_without_generating(
-    client, tmp_path, monkeypatch, audio, expected
+    client, tmp_path, monkeypatch, audio, expected, qc_status
 ):
     from calliope.engines.modal_h3 import ModalH3Engine
     from calliope.studio import pacing, transcription
     from tests.test_studio import video_bytes
 
     project, board = new_board(client)
+    monkeypatch.setattr(transcription, "assess_transcript", lambda *args, **kwargs: {
+        "status": qc_status, "reason": "Diagnostic de parole à vérifier.",
+    })
     monkeypatch.setattr(
         ModalH3Engine, "spawn", lambda *args: pytest.fail("export generated a take")
     )
@@ -741,7 +744,11 @@ def test_export_checks_legacy_approved_takes_without_generating(
         assert response.status_code == expected, response.text
         if audio:
             payload = json.loads(queue_manager.get_job(response.json()["job_id"])["payload_json"])
-            assert all(clip["transcript"]["status"] == "unknown" for clip in payload["clips"])
+            assert all(clip["transcript"] is None for clip in payload["clips"])
+            for scene in board["scenes"]:
+                for shot in scene["shots"]:
+                    service.approve_shot(shot["id"], False)
+                    assert service.approve_shot(shot["id"], True)["approved"] is True
     with service.database() as conn:
         metadata = [
             json.loads(
@@ -759,7 +766,7 @@ def test_export_checks_legacy_approved_takes_without_generating(
         ).fetchone()[0]
     assert count == len(take_ids) and exports == (2 if audio else 0)
     assert all(
-        item["dialogue_qc"]["status"] == ("unknown" if audio else "inaudible") for item in metadata
+        item["dialogue_qc"]["status"] == (qc_status if audio else "inaudible") for item in metadata
     )
     assert len(calls) == (len(take_ids) if audio else 0)
 

@@ -124,8 +124,90 @@ def spoken_dialogue(shot, context=None) -> str:
     return dialogue
 
 
+def _compile_native_prompt(shot, context, first_frame):
+    profile = directing_profile(context.get("directing_profile"))
+    shot = (context.get("shot") or {}) | shot
+    canon = context["render_canon"]
+    labels = shot.get("screen_text") or []
+
+    def prose(value):
+        return strip_generated_text(validate_h3_prose(value), labels)
+
+    dialogue = spoken_dialogue(shot, context)
+    turns = shot.get("dialogue_turns") or (
+        [{"speaker": shot.get("speaker"), "text": dialogue}] if dialogue else []
+    )
+    speaking = {turn["speaker"] for turn in turns} if dialogue else set()
+    parts = ["[Shot 1] One continuous shot.", prose(canon["style"])]
+    for key in dict.fromkeys(shot.get("character_keys", []) + list(speaking)):
+        character = canon["characters"][key]
+        parts.append(f"{prose(character['name'])}: {prose(character['appearance'])}")
+        if key in speaking:
+            parts.append(f"{prose(character['name'])}'s voice: {prose(character['voice'])}")
+    if not first_frame:
+        location = shot.get("location_key")
+        if location:
+            parts.append(prose(canon["locations"][location]))
+        for key in shot.get("prop_keys", []):
+            parts.append(prose(canon["props"][key]))
+        for key, state in shot.get("start_state", {}).items():
+            parts.append(f"At the start, {key}: {prose(state)}")
+    for field in ("prompt", "blocking", "framing", "camera"):
+        if shot.get(field):
+            parts.append(prose(shot[field]))
+    if not shot.get("framing") and profile["framing"] == "close_preferred":
+        parts.append("A shared composition with readable faces and the useful scene action.")
+    if not shot.get("camera") and profile["camera"] in ("static", "subtle"):
+        parts.append("The camera stays stable.")
+    if dialogue and profile["dialogue_density"] == "brisk" and shot.get("purpose") != "midroll":
+        parts.append("Brisk, clearly articulated conversational delivery.")
+    if dialogue and profile["active_listening"] and shot.get("purpose") != "midroll":
+        parts.append("Listeners follow their interlocutor with responsive expressions and posture.")
+    if shot.get("action"):
+        parts.append(prose(shot["action"]))
+    if not dialogue:
+        parts.append("The characters express the action silently through gestures and posture.")
+    for turn in turns:
+        if turn.get("action"):
+            parts.append(prose(turn["action"]))
+        if dialogue:
+            language = dialogue_language(shot.get("language") or context.get("language"))
+            character = canon["characters"][turn["speaker"]]
+            speaker_id = context["speaker_ids"][turn["speaker"]]
+            text = validate_h3_prose(turn["text"])
+            delivery = (
+                "speaks with rapid but intelligible delivery in one fluid sentence, "
+                f"within about {float(shot.get('duration_sec') or 4):g} seconds, beginning immediately while pointing:"
+                if shot.get("purpose") == "midroll" else "says:"
+            )
+            parts.append(f"{prose(character['name'])} ({speaker_id}) {delivery} <d>[{language}] {text}</d>")
+        if turn.get("reaction"):
+            parts.append(prose(turn["reaction"]))
+    if shot.get("reaction"):
+        parts.append(prose(shot["reaction"]))
+    if dialogue and shot.get("purpose") == "midroll":
+        parts.append("Keep the phrase continuous without pauses between the requests or before "
+                     "the benefit. Finish immediately after the last word, without a held pose.")
+    if dialogue and shot.get("purpose") != "midroll":
+        parts.append("After the last line, the scene continues through the described "
+                     "physical reactions and ambient sounds.")
+    if labels:
+        parts.append("Clean blank label surfaces for the exact text added in editing.")
+    soundscape = "N/A" if shot.get("audio_mode") == "silent" or shot.get("purpose") == "midroll" else prose(
+        shot.get("soundscape") or "Faint location ambience and natural physical sounds."
+    )
+    result = "integrated_multimodal_description: " + " ".join(parts)
+    result += f"\n\noverall_soundscape: {soundscape}\n\nnon_diegetic_music: N/A"
+    if first_frame:
+        result = ("For the target video, at 0.00 seconds into the target video, "
+                  "<Picture 1> (from [Shot 1]) is fully referenced.\n\n" + result)
+    return result
+
+
 def compile_h3_prompt(shot, context=None, first_frame=False) -> str:
     context = context or {}
+    if context.get("prompt_contract_version") == 2:
+        return _compile_native_prompt(shot, context, first_frame)
     profile = directing_profile(context.get("directing_profile"))
     labels = shot.get("screen_text") or context.get("shot", {}).get("screen_text") or []
     if profile.get("attached_values") and not labels:
@@ -219,7 +301,8 @@ def compile_h3_prompt(shot, context=None, first_frame=False) -> str:
                 ids[item["key"]] = f"S{len(ids) + 1}"
         midroll = (shot.get("purpose") or info.get("purpose")) == "midroll"
         delivery = (
-            "natural" if midroll or profile["dialogue_density"] != "brisk"
+            "rapid but intelligible" if midroll
+            else "natural" if profile["dialogue_density"] != "brisk"
             else "brisk conversational"
         )
         for index, turn in enumerate(turns, start=1):
@@ -249,8 +332,10 @@ def compile_h3_prompt(shot, context=None, first_frame=False) -> str:
         parts.append("Only the tagged words below are spoken, in the listed order.")
         if midroll:
             parts.append(
-                "Each tagged line is spoken exactly once, clearly within about four seconds. "
-                "After the line, the character stays silent and holds the pointing gesture."
+                f"Each tagged line is spoken exactly once, clearly within about {float(shot.get('duration_sec') or 4):g} seconds. "
+                "Begin speaking in the first frames, in one quick continuous phrase without pauses "
+                "between the requests or before the benefit. The pointing gesture accompanies the "
+                "words rather than delaying them. Finish immediately after the last word, without a held pose."
             )
         if len(turns) > 1:
             parts.append("The speakers take turns in this order, without overlapping speech.")

@@ -158,6 +158,20 @@ def test_continuation_rejects_missing_video(tmp_path):
         request(previous_video_path=tmp_path / "missing.mp4")
 
 
+def test_continuation_extracts_last_frame_after_millisecond_trim_rounding(tmp_path):
+    if not shutil.which("ffmpeg"):
+        pytest.skip("FFmpeg absent")
+    video = tmp_path / "124-frames.mp4"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=64x64:r=24",
+        "-vf", "drawbox=color=blue:t=fill:enable='eq(n,123)'", "-frames:v", "124", "-c:v", "libx264", str(video)
+    ], check=True, capture_output=True)
+    payload = request(previous_video_path=video, previous_video_time=5.167)
+    with Image.open(io.BytesIO(base64.b64decode(payload["image_base64"]))) as image:
+        red, green, blue = image.getpixel((32, 32))
+        assert blue > 240 and red < 10 and green < 10
+
+
 def test_reference_and_continuation_cannot_be_combined(tmp_path):
     with pytest.raises(ValueError):
         request(image_path=tmp_path / "image.png", previous_video_path=tmp_path / "video.mp4")
