@@ -136,8 +136,8 @@
       active_listening: true,
       continuity: true,
       silences: social ? "brief" : "story_driven",
-      music: "postproduction",
-      music_style: social ? "tension" : "neutral",
+      music: "none",
+      music_style: "neutral",
       music_gain_db: -12,
       ambience_gain_db: -34,
       number_format: "grouped_comma",
@@ -357,15 +357,6 @@
               <label>Silences<select bind:value={profile.silences}>
                 <option value="story_driven">Selon l'émotion</option>
                 <option value="brief">Courts et motivés</option>
-              </select></label>
-              <label>Musique<select bind:value={profile.music}>
-                <option value="postproduction">Choisie au montage</option>
-                <option value="none">Aucune</option>
-              </select></label>
-              <label>Identité musicale<select bind:value={profile.music_style}>
-                <option value="neutral">Minimaliste</option><option value="tension">Tension</option>
-                <option value="warm">Chaleureuse</option><option value="playful">Ludique</option>
-                <option value="energetic">Énergique</option><option value="horror">Inquiétante</option>
               </select></label>
               <label>Volume musical (dB)<input type="number" min="-60" max="0" bind:value={profile.music_gain_db} /></label>
               <label>Format des nombres<select bind:value={profile.number_format}>

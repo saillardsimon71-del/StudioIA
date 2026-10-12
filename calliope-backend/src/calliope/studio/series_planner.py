@@ -188,7 +188,9 @@ async def _develop_creative_story(context, idea, objective, trace=None):
     prompt = """Tu écris des scènes de fiction courtes, pas des résumés de concepts.
 Ecris trois petites scènes différentes pour le brief ci-dessous. Fais parler les
 personnages comme des gens qui se connaissent, se désirent, se jalousent ou se
-mentent. Leurs réponses ont du répondant. On découvre leur problème dans l'action,
+mentent. Ils savent où appuyer pour blesser, faire céder ou sauver la face.
+Leurs réponses rebondissent sur les mots de l'autre et les détails de leur histoire,
+avec leur vocabulaire, leur mauvaise foi et leurs contradictions. On découvre leur problème dans l'action,
 sans préambule. Fais arriver quelque chose : leurs décisions aggravent ou règlent
 ce problème. La dernière action ou réplique donne sa saveur à la scène.
 Le canon fixe les personnes et le monde, pas la prochaine intrigue. idea et
@@ -281,10 +283,17 @@ adapté au genre demandé. En comédie absurde, confronte des émotions familiè
 Le brief donne le niveau d'irrévérence, d'intimité ou d'humour cru. Le gag vient
 de la situation et des réactions, au-delà d'un décor ou de personnages originaux.
 
-Écris des échanges oraux, spontanés, avec du répondant et des personnalités
-distinctes. Les décisions ont des conséquences visibles, l'embrouille évolue
-et aboutit à une vraie chute ou récompense. Celle-ci peut ouvrir un problème
-précis pour la suite. Garde les actions utiles à cette idée, faciles à suivre.
+Écris des paroles qu'on pourrait entendre dans une vraie embrouille : chacun
+cherche à obtenir quelque chose de l'autre, sauver la face ou toucher son point
+sensible. Fais entendre leurs personnalités dans les mots, les esquives, les
+détails embarrassants qu'ils connaissent. Une accusation précise blesse plus
+qu'une formule passe-partout ; une réponse de mauvaise foi fait avancer le conflit.
+Exemple extérieur au canon : à "Tu m'as menti", préfère un détail vécu tel que
+"T'avais même pas fini de pleurer que tu m'envoyais ton RIB." Invente tes propres
+phrases, sans reprendre cet exemple ni ajouter des insultes pour faire du bruit.
+Les décisions ont des conséquences visibles, l'embrouille évolue et aboutit à
+une vraie chute ou récompense. Celle-ci peut ouvrir un problème précis pour la
+suite. Garde les actions utiles à cette idée, faciles à suivre.
 Une scène courte et forte vaut mieux qu'une idée mince étirée pour remplir.
 Le logiciel ajoute l'incitation centrale ; le temps indiqué est celui du récit.
 
@@ -305,7 +314,10 @@ des scènes à regarder, en particulier leurs paroles et leur fin. Compare leur
 attrait concret : qu'attend-on après la première action ou phrase ? Les échanges
 font-ils évoluer la situation, ou commentent-ils longtemps le même gag ? La chute
 récompense-t-elle cette attente ? Les personnages ont-ils des réponses propres,
-orales, surprenantes, ou des répliques génériques ? Juge selon le genre du brief.
+orales, surprenantes, ou des répliques génériques ? Lis l'échange à voix haute
+mentalement : entend-on quelqu'un qui tente quelque chose, ou un auteur qui
+explique l'intrigue ? Réécris les phrases interchangeables à partir de ce que
+ce personnage reproche précisément à l'autre. Juge selon le genre du brief.
 
 Retiens la piste la plus forte et réécris sa faiblesse principale. Tu peux
 réinventer une réponse ou une action pour améliorer cette piste, en conservant
@@ -775,11 +787,14 @@ Develop missing bible fields without contradicting existing canon. Translate
 the supplied immutable visual identities faithfully into render_canon; include
 all canon character/location entries plus any new ones. Locations and props
 are plain English strings, not objects. Character entries have name, appearance,
-voice. This is a projection of canon, not permission to redesign it.
+voice. Keep voice as stable vocal identity (timbre, register and accent). Describe
+the changing intention and emotional delivery in prompt and turn.action alongside
+the visible acting; a character trying to bluff, escape or plead should sound
+invested in that attempt. This is a projection of canon, not permission to redesign it.
 Respect directing_profile as realization preferences, overridden by explicit
 scene framing and the brief. Keep conversations intelligible, short and responsive.
-Native video has speech and quiet physical/location sounds; music and additional
-effects are added in editing. Soundscape contains nonverbal sounds only.
+Native video has speech and quiet physical/location sounds. Any music is a file
+imported by the user in editing, never composed here. Soundscape contains nonverbal sounds only.
 image_prompt describes a starting still, never future actions or revelations.
 Use the same reference_key only for the same identity, location and composition.
 Write summary/events as facts actually shown. editorial_review and narrative_outline
@@ -812,11 +827,11 @@ Return ONLY one JSON object following this schema (example keys are placeholders
  "action":"English visible event before speech","reaction":"English final event after all lines",
  "blocking":"English positions","framing":"English composition","camera":"English movement",
  "soundscape":"English nonverbal sound or N/A","screen_text":[]}]}],
-"audio":{"enabled":true,"music":"none","tempo":72,"music_gain_db":-12,"voice_gain_db":0,
+"audio":{"enabled":true,"music":"none","music_gain_db":-12,"voice_gain_db":0,
  "ducking":true,"ambience":"none","ambience_gain_db":-34,
  "sfx":[{"effect":"click","shot_index":0,"at_sec":0.2,"gain_db":-18}],"holds":[]}}
-Choose music, ambience and effects suited to the actual genre and series identity.
-Supported music: none, neutral, tension, warm, playful, energetic, horror.
+Keep music="none" and do not select a music asset. The user imports music separately.
+Choose ambience and effects suited to the actual genre and series identity.
 Supported ambience: none, room, wind, rain, cafe, night, city, forest.
 Supported effects: click, beep, impact, boom, whoosh, riser, door, footstep, pop,
 boing, scratch. Cue shot_index refers to narrative takes before software insertion.
@@ -943,6 +958,16 @@ belongs in the still and staging, not in an action that enacts it again.
 Choose duration from the actual spoken exchange and indispensable visible movement.
 A short line does not need a long listening pose to fill the episode's target time.
 For brisk dialogue, keep lead-in gestures brief and let the speaker react while speaking.
+Direct each line as an attempt to affect the interlocutor: its emotional delivery
+belongs with the visible acting in prompt and turn.action. The canon voice keeps
+the same timbre, register and accent; it does not freeze the character's emotion.
+For a brisk exchange, the reply picks up as the preceding words finish. A bluff
+can turn into a rushed excuse or an urgent plea as the character loses control;
+let the source scene decide this, rather than imposing one mood on every speaker.
+Across continuous takes, the last reaction launches the next action or reply,
+which is already underway at the next opening; do not restage the same pause.
+Keep any final physical action needed to understand the consequence. Choose an
+independent cut or ellipse when the source story changes place or moment.
 Declare all visible characters and conversational listeners. Declare every location.
 Keys are stable lowercase ASCII. Canon comes from the supplied bible and identities:
 translate faithfully, never redesign, revoice or change wardrobe. Develop only missing
@@ -1858,10 +1883,6 @@ def normalize_plan(result, context):
                 cue["effect"] = "beep"
     result["audio"] = AudioSettings.model_validate(raw_audio).model_dump()
     profile = directing_profile(context.get("directing_profile"))
-    if profile["music"] == "none":
-        result["audio"]["music"] = "none"
-    elif not result["audio"].get("music_asset_id"):
-        result["audio"]["music"] = profile["music_style"]
     result["audio"]["music_gain_db"] = profile["music_gain_db"]
     result["audio"]["ambience_gain_db"] = profile["ambience_gain_db"]
     result["display_values"] = display_values

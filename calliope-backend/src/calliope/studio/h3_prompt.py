@@ -16,7 +16,7 @@ class DirectingProfile(BaseModel):
     active_listening: bool = True
     continuity: bool = True
     silences: Literal["story_driven", "brief"] = "story_driven"
-    music: Literal["postproduction", "none"] = "postproduction"
+    music: Literal["postproduction", "none"] = "none"
     music_style: Literal["neutral", "tension", "warm", "playful", "energetic", "horror"] = "neutral"
     music_gain_db: float = Field(default=-12, ge=-60, le=0)
     ambience_gain_db: float = Field(default=-34, ge=-60, le=0)
@@ -43,7 +43,6 @@ class DirectingProfile(BaseModel):
                 "dialogue_density": "brisk",
                 "reactions": "immediate",
                 "silences": "brief",
-                "music_style": "tension",
             } | value
         return value
 
@@ -160,7 +159,8 @@ def _compile_native_prompt(shot, context, first_frame):
     if not shot.get("camera") and profile["camera"] in ("static", "subtle"):
         parts.append("The camera stays stable.")
     if dialogue and profile["dialogue_density"] == "brisk" and shot.get("purpose") != "midroll":
-        parts.append("Brisk, clearly articulated conversational delivery.")
+        parts.append("Brisk, clearly articulated conversational delivery. Each reply picks up "
+                     "as the previous line finishes, with gestures accompanying the words.")
     if dialogue and profile["active_listening"] and shot.get("purpose") != "midroll":
         parts.append("Listeners follow their interlocutor with responsive expressions and posture.")
     if shot.get("action"):
@@ -189,8 +189,12 @@ def _compile_native_prompt(shot, context, first_frame):
         parts.append("Keep the phrase continuous without pauses between the requests or before "
                      "the benefit. Finish immediately after the last word, without a held pose.")
     if dialogue and shot.get("purpose") != "midroll":
-        parts.append("After the last line, the scene continues through the described "
-                     "physical reactions and ambient sounds.")
+        if profile["silences"] == "brief":
+            parts.append("The final described reaction leads straight into the next beat, "
+                         "without settling into another waiting pose.")
+        else:
+            parts.append("After the last line, the scene continues through the described "
+                         "physical reactions and ambient sounds.")
     if labels:
         parts.append("Clean blank label surfaces for the exact text added in editing.")
     soundscape = "N/A" if shot.get("audio_mode") == "silent" or shot.get("purpose") == "midroll" else prose(

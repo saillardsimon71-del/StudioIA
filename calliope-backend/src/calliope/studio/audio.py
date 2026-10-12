@@ -9,13 +9,12 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from calliope.config import settings
 from calliope.studio import service
 from calliope.studio.pacing import quantize
 
-MUSIC = ("none", "neutral", "tension", "warm", "playful", "energetic", "horror")
 EFFECTS = (
     "click", "beep", "impact", "boom", "whoosh", "riser", "door", "footstep",
     "pop", "boing", "scratch",
@@ -52,7 +51,7 @@ class AudioSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
     music: Literal["none", "neutral", "tension", "warm", "playful", "energetic", "horror"] = (
-        "neutral"
+        "none"
     )
     music_gain_db: float = Field(default=-12, ge=-60, le=0)
     voice_gain_db: float = Field(default=-5, ge=-24, le=6)
@@ -65,6 +64,12 @@ class AudioSettings(BaseModel):
     music_asset_id: int | None = None
     sfx: list[Cue] = Field(default_factory=list, max_length=100)
     holds: list[Hold] = Field(default_factory=list, max_length=100)
+
+    @field_validator("music")
+    @classmethod
+    def imported_music_only(cls, value):
+        # Old saved presets remain readable but never generate music.
+        return "none"
 
 
 def get_audio(conn, project_id):
@@ -209,60 +214,6 @@ def render_stems(config, durations, directory):
     frames = math.ceil(total * rate)
     music = array.array("f", [0]) * frames
     effects = array.array("f", [0]) * frames
-    preset = config.get("music", "none")
-    if preset != "none" and not config.get("music_path"):
-        roots, intervals = {
-            "neutral": ([48, 53, 55, 48], [0, 7, 12]),
-            "tension": ([45, 45, 41, 44], [0, 7, 14]),
-            "warm": ([48, 53, 57, 55], [0, 4, 7]),
-            "playful": ([60, 65, 67, 60], [0, 4, 7]),
-            "energetic": ([48, 55, 57, 53], [0, 7, 12]),
-            "horror": ([40, 39, 40, 38], [0, 1, 7]),
-        }[preset]
-        beat = 60 / config.get("tempo", 72)
-        rhythm = preset in ("tension", "playful", "energetic")
-        percussion_rng = random.Random(31415)
-        for index in range(frames):
-            t = index / rate
-            chord_index = int(t / (beat * 4)) % 4
-            root = roots[chord_index]
-            phase = (t % (beat * 4)) / (beat * 4)
-            pad = (
-                sum(
-                    math.sin(2 * math.pi * (440 * 2 ** ((root + step - 69) / 12)) * t)
-                    for step in intervals
-                )
-                / 3
-            )
-            pulse_time = t % (beat / 2 if rhythm else beat)
-            note = root + intervals[int(t / (beat / 2 if rhythm else beat)) % 3] + 12
-            frequency = 440 * 2 ** ((note - 69) / 12)
-            pulse = (
-                math.sin(2 * math.pi * frequency * pulse_time)
-                + 0.25 * math.sin(4 * math.pi * frequency * pulse_time)
-            ) * math.exp(-pulse_time * 9) * min(1, pulse_time / 0.005)
-            percussion, bass = 0.0, 0.0
-            if rhythm:
-                beat_time = t % beat
-                bass_frequency = 440 * 2 ** ((root - 12 - 69) / 12)
-                bass = math.sin(2 * math.pi * bass_frequency * beat_time) * math.exp(
-                    -beat_time * 5
-                ) * min(1, beat_time / 0.005)
-                kick_time = t % (beat * 2 if preset == "tension" else beat)
-                kick = math.sin(2 * math.pi * (
-                    45 * kick_time + 1.5 * (1 - math.exp(-kick_time * 35))
-                )) * math.exp(-kick_time * 25)
-                noise = percussion_rng.uniform(-1, 1)
-                hat_time = t % (beat / 2)
-                hat = noise * math.exp(-hat_time * 90)
-                snare_time = (t - beat) % (beat * 2)
-                snare = noise * math.exp(-snare_time * 35)
-                percussion = kick * 0.065 + hat * 0.045 + snare * 0.04
-            envelope = min(1, t / 1.2, (total - t) / 1.5)
-            music[index] = (
-                pad * (0.035 + 0.01 * math.sin(phase * math.pi))
-                + pulse * 0.09 + bass * 0.06 + percussion
-            ) * max(0, envelope)
     rng = random.Random(2718)
     ambience = config.get("ambience", "none")
     gain = 10 ** (config.get("ambience_gain_db", -38) / 20)
@@ -391,13 +342,8 @@ def render_stems(config, durations, directory):
                 weight = 1 - (1 - floor) * (left / ramp)
             else:
                 weight = floor
-            music[index] *= weight
             effects[index] *= weight
     music_path, fx_path = Path(directory) / "music.wav", Path(directory) / "effects.wav"
-    rms = math.sqrt(sum(value * value for value in music) / max(1, len(music)))
-    if rms > 0:
-        gain = 10 ** (-14 / 20) / rms
-        music = array.array("f", (0.9 * math.tanh(value * gain / 0.9) for value in music))
     _write_wave(music_path, music, rate)
     _write_wave(fx_path, effects, rate)
     return music_path, fx_path
@@ -419,7 +365,7 @@ def preview(project_id):
     directory.mkdir(parents=True, exist_ok=True)
     music_path, fx_path = render_stems(config, durations, directory)
     return {
-        "music_url": service.media_url(config.get("music_path") or music_path),
+        "music_url": service.media_url(config["music_path"]) if config.get("music_path") else None,
         "effects_url": service.media_url(fx_path),
     }
 

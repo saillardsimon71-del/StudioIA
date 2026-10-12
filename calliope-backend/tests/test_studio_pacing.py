@@ -603,7 +603,7 @@ def test_every_ambience_preset_and_tension_cue_renders(tmp_path):
     assert early > 0 and late > early * 2  # la tension monte réellement
 
 
-def test_a_hold_cuts_music_and_bed_but_never_the_voices(tmp_path):
+def test_a_hold_cuts_the_added_bed_without_generating_music(tmp_path):
     from calliope.studio import audio
 
     config = audio.AudioSettings(
@@ -614,11 +614,7 @@ def test_a_hold_cuts_music_and_bed_but_never_the_voices(tmp_path):
         holds=[{"shot_index": 0, "at_sec": 0.5, "duration_sec": 1.0, "drop_db": -36}],
     ).model_dump()
     music_path, fx_path = audio.render_stems(config, [2.4], tmp_path)
-    before = stem_rms(music_path, 0.0, 0.4)
-    during = stem_rms(music_path, 0.55, 1.45)
-    after = stem_rms(music_path, 1.7, 2.3)
-    assert during < before * 0.15
-    assert after > during * 3
+    assert stem_rms(music_path, 0.0, 2.4) == 0
     fx_before = stem_rms(fx_path, 0.0, 0.4)
     fx_during = stem_rms(fx_path, 0.55, 1.45)
     assert fx_during < fx_before * 0.15
@@ -659,10 +655,16 @@ async def test_ducking_lowers_the_bed_under_voices(tmp_path):
         capture_output=True,
     )
 
+    music = tmp_path / "imported.wav"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+        "sine=frequency=220:duration=4", str(music),
+    ], check=True, capture_output=True)
+
     async def mixed(ducking):
         config = audio.AudioSettings(
             music="neutral", music_gain_db=-16, voice_gain_db=0, ducking=ducking
-        ).model_dump()
+        ).model_dump() | {"music_path": str(music)}
         ready = tmp_path / f"mix-{ducking}.mp4"
         base = ["ffmpeg", "-v", "error", "-nostdin", "-nostats", "-y"]
         command = await asyncio.to_thread(

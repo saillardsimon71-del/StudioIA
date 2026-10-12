@@ -413,7 +413,7 @@ export const studio = {
     }[],
   ) => request<Board>(`/projects/${id}/script`, "PATCH", { shots }),
   previewAudio: (id: number) =>
-    request<{ music_url: string; effects_url: string }>(
+    request<{ music_url: string | null; effects_url: string }>(
       `/projects/${id}/audio/preview`,
       "POST",
     ),

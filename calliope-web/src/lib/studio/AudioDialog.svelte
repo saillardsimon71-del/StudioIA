@@ -26,16 +26,7 @@
   let assets = $state<AudioAsset[]>(untrack(() => [...(initial.assets ?? [])]));
   let saving = $state(false);
   let error = $state("");
-  let preview = $state<{ music_url: string; effects_url: string } | null>(null);
-  const moods = [
-    ["none", "Sans musique"],
-    ["neutral", "Minimaliste"],
-    ["tension", "Tension"],
-    ["warm", "Chaleureuse"],
-    ["playful", "Légère et ludique"],
-    ["energetic", "Énergique"],
-    ["horror", "Inquiétante"],
-  ];
+  let preview = $state<{ music_url: string | null; effects_url: string } | null>(null);
   const effects = [
     ["click", "Clic"],
     ["beep", "Signal électronique"],
@@ -142,22 +133,14 @@
         ci-dessous s'appliquent au prochain export, sans nouveau rendu GPU.
       </p>
       <fieldset class="stack">
-        <legend>Musique de fond</legend><label
-          >Ambiance musicale<select
-            bind:value={draft.music}
-            onchange={() => (draft.music_asset_id = null)}
-            >{#each moods as [value, label]}<option {value}>{label}</option
-              >{/each}</select
-          ></label
-        >
+        <legend>Votre musique</legend>
         <p class="hint">
-          Fond instrumental synthétisé localement. Les styles ludique, tension
-          et énergique incluent un rythme. Vous
-          pouvez importer une autre musique.
+          Importez votre fichier pour le prochain export. Sans fichier sélectionné,
+          aucune musique n'est ajoutée.
         </p>
         <label
           >Musique importée<select bind:value={draft.music_asset_id}
-            ><option value={null}>Utiliser la composition du studio</option
+            ><option value={null}>Sans musique</option
             >{#each assets.filter((a) => a.kind === "music") as asset}<option
                 value={asset.id}>{asset.name}</option
               >{/each}</select
@@ -177,13 +160,6 @@
               min="-60"
               max="0"
               bind:value={draft.music_gain_db}
-            /></label
-          ><label
-            >Tempo<input
-              type="number"
-              min="40"
-              max="160"
-              bind:value={draft.tempo}
             /></label
           ><label
             >Volume voix (dB)<input
@@ -293,10 +269,10 @@
       <button type="button" disabled={saving} onclick={audition}
         >Enregistrer et écouter les pistes</button
       >{#if preview}<div class="stack">
-          <div class="stack">
+          {#if preview.music_url}<div class="stack">
             <p>Musique</p>
             <audio controls src={preview.music_url}></audio>
-          </div>
+          </div>{/if}
           <div class="stack">
             <p>Ambiance et bruitages du studio</p>
             <audio controls src={preview.effects_url}></audio>

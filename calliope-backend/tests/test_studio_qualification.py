@@ -213,15 +213,6 @@ def test_explicit_total_silence_remains_available():
     assert "overall_soundscape: N/A" in compiled
 
 
-def test_synthesized_music_has_measured_level_before_configured_gain(tmp_path):
-    path, _ = audio.render_stems({"music": "tension", "ambience": "none"}, [3], tmp_path)
-    with wave.open(str(path)) as stream:
-        import array
-        samples = array.array("h", stream.readframes(stream.getnframes()))
-    rms = math.sqrt(sum((s / 32768) ** 2 for s in samples) / len(samples))
-    assert -16 < 20 * math.log10(rms) < -10
-
-
 def test_turns_and_soundscape_survive_persistence(client, monkeypatch):
     from calliope.queue.manager import queue_manager
     from calliope.studio import production, series, service
@@ -270,12 +261,12 @@ def test_sound_cue_does_not_jump_to_another_shot_when_a_shot_is_deleted(client):
     assert frozen["sfx"][0]["shot_id"] == shots[1]["id"]
 
 
-def test_social_series_receives_music_unless_its_profile_requests_none():
+def test_social_series_does_not_add_music_automatically():
     shot = exchange()
     config = context() | {"directing_profile": {"preset": "fast_dialogue_social_fiction"}}
     plan = {"scenes": [{"shots": [shot]}], "audio": {"music": "none"}}
     result = series_planner.normalize_plan(copy.deepcopy(plan), config)
-    assert result["audio"]["music"] == "tension"
+    assert result["audio"]["music"] == "none"
     assert result["audio"]["music_gain_db"] == -12
     config["directing_profile"]["music"] = "none"
     assert series_planner.normalize_plan(plan, config)["audio"]["music"] == "none"

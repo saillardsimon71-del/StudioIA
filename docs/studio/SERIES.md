@@ -41,9 +41,18 @@ relecture : ils ne bloquent ni la production ni l'export et ne déclenchent pas
 de nouvelle prise. Une transcription non validée ne sert pas à couper la vidéo.
 Un fichier manquant ou une piste sonore native absente restent des erreurs techniques.
 
-Le mix ajoute musique très légère, ambiance de lieu, quelques effets, une
-montée de tension avant la révélation et, si le scénario le demande, un court
-silence volontaire ; la musique baisse automatiquement sous les voix.
+Le studio ne compose plus de musique. Dans "Musique et bruitages", importer
+un fichier puis le sélectionner pour le prochain export. Sans fichier sélectionné,
+aucune musique n'est ajoutée. Le volume, la baisse sous les voix, les ambiances
+et les bruitages restent réglables sans régénérer les clips.
+
+L'écriture cherche des accusations précises, des esquives et des détails vécus,
+avec une façon de parler propre à chaque personnage. La réalisation distingue
+le timbre permanent de la voix et le jeu de chaque réplique : assurance, bluff,
+panique ou supplication dépendent de la scène. Pour les échanges vifs, les gestes
+accompagnent les mots et la dernière réaction prépare la prise suivante.
+Ces indications concernent les nouvelles préparations et prises ; elles ne
+modifient pas le jeu des clips déjà rendus et ne garantissent pas leur qualité.
 
 Chaque nouvel épisode natif contient une seule incitation, à la coupe la plus
 proche du milieu du temps narratif. Un personnage de la série reste dans le lieu

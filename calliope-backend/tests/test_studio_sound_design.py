@@ -78,15 +78,33 @@ def test_comic_cues_are_timed_and_have_a_predictable_peak(tmp_path, effect):
     assert not any(values[int(1.9 * rate):])
 
 
-@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="FFmpeg required")
-def test_energetic_music_contains_rhythmic_percussion(tmp_path):
-    path, _ = audio.render_stems({"music": "energetic", "tempo": 110}, [8], tmp_path)
-    percussion = samples(path, 1.5, 4, "highpass=f=2500,highpass=f=2500")
-    assert rms(percussion) > 0.005
-    assert rms(samples(path, 1.5, 4)) > 0.1
+@pytest.mark.parametrize("preset", ["neutral", "tension", "warm", "playful", "energetic", "horror"])
+def test_previous_musical_presets_cannot_generate_music(tmp_path, preset):
+    path, _ = audio.render_stems({"music": preset, "tempo": 110}, [1], tmp_path)
+    with wave.open(str(path)) as stream:
+        values = array.array("h", stream.readframes(stream.getnframes()))
+    assert not any(values)
 
 
-def test_series_sound_identity_reaches_the_plan_without_overriding_explicit_levels():
+def test_old_project_presets_are_exposed_as_no_generated_music(client):
+    import json
+
+    from calliope.studio import service
+
+    project = service.create_project({"title": "Old music", "aspect_ratio": "9:16"})["id"]
+    with service.database() as conn:
+        conn.execute("INSERT INTO studio_audio(project_id,settings_json) VALUES(?,?)",
+                     (project, json.dumps({"music": "horror", "tempo": 110})))
+        conn.commit()
+    config = client.get(f"/api/studio/projects/{project}/audio").json()
+    assert config["music"] == "none"
+    assert config["music_asset_id"] is None
+    preview = client.post(f"/api/studio/projects/{project}/audio/preview").json()
+    assert preview["music_url"] is None
+    assert preview["effects_url"]
+
+
+def test_series_cannot_restore_generated_music_and_keeps_mix_levels():
     from calliope.studio import series_planner
     from tests.test_studio_qualification import context, exchange
 
@@ -95,5 +113,5 @@ def test_series_sound_identity_reaches_the_plan_without_overriding_explicit_leve
     }}
     plan = {"scenes": [{"shots": [exchange()]}], "audio": {"music": "tension"}}
     result = series_planner.normalize_plan(plan, config)
-    assert result["audio"]["music"] == "playful"
+    assert result["audio"]["music"] == "none"
     assert result["audio"]["music_gain_db"] == -11

@@ -251,7 +251,7 @@ def test_restart_replans_and_keeps_audio_preferences_without_old_shot_cues(clien
     assert fresh["project"]["title"] == "A newly directed exchange"
     fresh_shot = fresh["scenes"][0]["shots"][0]
     assert fresh_shot["id"] != board["scenes"][0]["shots"][0]["id"]
-    assert fresh["audio"]["music"] == "playful"
+    assert fresh["audio"]["music"] == "none"
     assert fresh["audio"]["music_gain_db"] == -31
     assert fresh["audio"]["music_asset_id"] == asset_id
     assert fresh["audio"]["sfx"][0]["shot_id"] == fresh_shot["id"]

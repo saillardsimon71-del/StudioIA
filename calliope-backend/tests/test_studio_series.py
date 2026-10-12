@@ -215,7 +215,8 @@ def test_audio_changes_invalidate_export_without_invalidating_selected_takes(cli
     )
     assert result.status_code == 200, result.text
     updated = client.get(f"/api/studio/projects/{project_id}").json()
-    assert updated["audio"]["music"] == "warm"
+    assert updated["audio"]["music"] == "none"
+    assert updated["audio"]["music_gain_db"] == -30
     assert updated["scenes"][0]["shots"][0]["selected_video_id"] == take["id"]
     assert updated["scenes"][0]["shots"][0]["approved"]
 
