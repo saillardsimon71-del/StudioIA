@@ -155,7 +155,28 @@
 		</nav>
 		<main class="board" inert={!!selected && compact}>
 			{#if board.production}<section class="production-panel stack" aria-label="Production automatique"><div class="between"><div><p class="hint">Épisode {board.episode?.number} - Production automatique</p><h2>{board.production.message}</h2></div><div class="row">{#if productionActive}<button disabled={!!board.production.pause_requested || !!busy} onclick={() => action('pause',async()=>{await studio.pauseProduction(projectId);})}>{board.production.pause_requested ? 'Pause demandée' : 'Mettre en pause'}</button>{:else if board.production.status === 'paused' || board.production.status === 'failed'}<button class="primary" disabled={productionActive || !!busy} onclick={() => action('resume',async()=>{await studio.resumeProduction(projectId);})}>{board.production.stage === 'review' ? 'Lancer les rendus' : 'Reprendre la production'}</button>{/if}{#if board.episode}<a href={'/studio/series/' + board.episode.series_id}>Retour à la série</a>{/if}</div></div><progress max="1" value={board.production.progress}></progress>{#if board.production.error}<p class="error">{board.production.error}</p>{/if}{#if productionActive}<p class="hint">Vous pouvez fermer cette page. La production et les prises sont conservées. La pause prend effet après l'opération en cours.</p>{:else}<p class="hint">Vous pouvez modifier le scénario, les plans, les prises et le son, puis réexporter.</p>{/if}</section>{/if}
-			{#if board.episode && board.production && ['paused', 'failed'].includes(board.production.status)}<div class="stack"><button disabled={!!busy || editorDirty} onclick={restartEpisode}>Recommencer cet épisode</button><p class="hint">Reconstruit le scénario et les plans depuis l'idée initiale. Conserve la série, ses réglages et ses références. Les anciens plans et prises sont archivés.</p></div>{/if}
+			{#if board.episode && board.production && ['paused', 'failed'].includes(board.production.status)}
+              <section class="stack production-panel" aria-label="Mode de génération des images">
+                <div class="between">
+                  <div>
+                    <strong>Images des plans</strong>
+                    <p class="hint">{board.episode.image_mode === "text_to_video" ? "Mode texte vers vidéo : aucun appel Codex pour les images." : "Mode normal : une image générée pour chaque plan indépendant."}</p>
+                  </div>
+                  {#if board.episode.image_mode !== "text_to_video"}
+                    <button disabled={!!busy || editorDirty} onclick={() => action('image-mode', async () => {
+                      await studio.setEpisodeImageMode(projectId, 'text_to_video');
+                      notice = 'Mode sans génération Codex activé. Cliquez maintenant sur Reprendre la production.';
+                    })}>Continuer sans images Codex</button>
+                  {:else}
+                    <button disabled={!!busy || editorDirty} onclick={() => action('image-mode', async () => {
+                      await studio.setEpisodeImageMode(projectId, 'generated');
+                      notice = 'Images de départ réactivées pour cet épisode.';
+                    })}>Rétablir les images de plans</button>
+                  {/if}
+                </div>
+                <p class="hint">Les images de référence des personnages et des décors restent enregistrées dans la série. Le moteur utilisera les descriptions des lieux et personnages, sans reproduire nécessairement leur apparence. Un GPU reste nécessaire pour la vidéo.</p>
+              </section>
+              <div class="stack"><button disabled={!!busy || editorDirty} onclick={restartEpisode}>Recommencer cet épisode</button><p class="hint">Reconstruit le scénario et les plans depuis l'idée initiale. Conserve la série, ses réglages et ses références. Les anciens plans et prises sont archivés.</p></div>{/if}
 			{#if board.episode?.editorial_review && Object.keys(board.episode.editorial_review).length}
 				<section class="stack production-panel" aria-label="Revue du scénario">
 					<h2>Revue du scénario</h2><p class="hint">Proposition de l'IA à vérifier avant les rendus.</p>

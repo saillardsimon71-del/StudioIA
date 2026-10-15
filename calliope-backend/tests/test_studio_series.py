@@ -608,3 +608,94 @@ def test_resume_preserves_a_legacy_english_midroll_after_language_change(client)
     )
     with service.database() as conn:
         assert service.shot_context(conn, ending_id)["shot"]["language"] == "en"
+
+
+def test_create_reference_entities_before_first_episode_and_upload(client):
+    from calliope.studio import service
+
+    item = series(client)
+    assert item["entities"] == []
+    first = client.post(f"/api/studio/series/{item['id']}/entities", json={
+        "name": "Rico", "kind": "character", "description": "A red fruit wearing a black cap.",
+    })
+    assert first.status_code == 200, first.text
+    rico = first.json()["entities"][0]
+    assert rico["key"] == "rico"
+    assert rico["identity"]["visual_description"] == "A red fruit wearing a black cap."
+    assert rico["url"] is None
+
+    second = client.post(f"/api/studio/series/{item['id']}/entities", json={
+        "name": "Le marché", "kind": "location", "description": "A fruit market at dawn.",
+    })
+    assert second.status_code == 200, second.text
+    location = next(e for e in second.json()["entities"] if e["kind"] == "location")
+    assert location["key"] == "le-marche"
+
+    upload = client.post(
+        f"/api/studio/series/{item['id']}/entities/{rico['id']}/reference",
+        files={"file": ("rico.png", png_bytes(), "image/png")},
+    )
+    assert upload.status_code == 200, upload.text
+    reference = next(e for e in upload.json()["entities"] if e["id"] == rico["id"])
+    assert reference["url"]
+    assert reference["identity"]["reference_approved"] is False
+    with service.database() as conn:
+        frozen = __import__("calliope.studio.series", fromlist=["context"]).context(conn, item["id"])
+    assert {e["key"] for e in frozen["entities"]} == {"rico", "le-marche"}
+
+
+def test_series_entity_creation_checks_name_and_series(client):
+    item = series(client)
+    path = f"/api/studio/series/{item['id']}/entities"
+    assert client.post(path, json={"name": " ", "kind": "character"}).status_code == 422
+    assert client.post(path, json={"name": "Rico", "kind": "unknown"}).status_code == 422
+    assert client.post("/api/studio/series/999999/entities", json={
+        "name": "Rico", "kind": "character",
+    }).status_code == 404
+    first = client.post(path, json={"name": "Rico"}).json()["entities"][0]
+    second = client.post(path, json={"name": "Rico"}).json()["entities"]
+    assert first["key"] == "rico"
+    assert {entity["key"] for entity in second} == {"rico", "rico-2"}
+
+
+def test_episode_image_mode_switch_for_failed_production(client):
+    from calliope.studio import service
+
+    item = series(client)
+    created = episode(client, item["id"])
+    assert created.status_code == 200, created.text
+    project_id = created.json()["project_id"]
+    url = f"/api/studio/projects/{project_id}/production/images"
+    assert client.patch(url, json={"mode": "text_to_video"}).status_code == 409
+    with service.database() as conn:
+        conn.execute(
+            "UPDATE studio_productions SET status='failed' WHERE project_id=?",
+            (project_id,),
+        )
+        conn.commit()
+    updated = client.patch(url, json={"mode": "text_to_video"})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["episode"]["image_mode"] == "text_to_video"
+    with service.database() as conn:
+        frozen = conn.execute(
+            "SELECT context_json FROM studio_episodes WHERE project_id=?",
+            (project_id,),
+        ).fetchone()[0]
+        assert json.loads(frozen)["image_mode"] == "text_to_video"
+    restored = client.patch(url, json={"mode": "generated"})
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["episode"]["image_mode"] == "generated"
+    assert client.patch(url, json={"mode": "unknown"}).status_code == 422
+
+
+def test_new_episode_accepts_text_to_video(client):
+    from calliope.studio import service
+
+    item = series(client)
+    created = client.post(
+        f"/api/studio/series/{item['id']}/episodes",
+        json={"idea": "The keeper crosses the hall.", "request_id": "t2v-episode",
+              "prepare_only": True, "image_mode": "text_to_video"},
+    )
+    assert created.status_code == 200, created.text
+    assert service.board(created.json()["project_id"])["episode"]["image_mode"] == "text_to_video"

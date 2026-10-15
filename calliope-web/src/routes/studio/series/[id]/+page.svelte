@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import ConfigDialog from "$lib/studio/ConfigDialog.svelte";
   import EntityIdentityEditor from "$lib/studio/EntityIdentityEditor.svelte";
+  import SeriesReferenceImporter from "$lib/studio/SeriesReferenceImporter.svelte";
   import SeriesActions from "$lib/studio/SeriesActions.svelte";
   import {
     studio,
@@ -19,6 +20,7 @@
   let idea = $state("");
   let objective = $state("");
   let prepareOnly = $state(true);
+  let imageMode = $state<"generated" | "text_to_video">("generated");
   let error = $state("");
   let notice = $state("");
   let busy = $state("");
@@ -81,7 +83,7 @@
     if (busy) return;
     busy = "episode";
     error = "";
-    const content = JSON.stringify([idea.trim(), objective.trim(), prepareOnly]);
+    const content = JSON.stringify([idea.trim(), objective.trim(), prepareOnly, imageMode]);
     if (content !== requestContent) {
       requestContent = content;
       requestId = newRequestId();
@@ -92,6 +94,7 @@
         objective: objective.trim(),
         request_id: requestId,
         prepare_only: prepareOnly,
+        image_mode: imageMode,
       });
       await goto("/studio/" + result.project_id);
     } catch (err) {
@@ -148,22 +151,6 @@
       cta_placement: profile?.cta_placement ?? "middle",
     };
   }
-  async function reference(event: Event, entityId: number) {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file || !item) return;
-    busy = "reference";
-    error = "";
-    try {
-      item = await studio.uploadSeriesReference(item.id, entityId, file);
-      notice = "Référence enregistrée pour les prochaines images.";
-    } catch (err) {
-      error = errorMessage(err);
-    } finally {
-      busy = "";
-      input.value = "";
-    }
-  }
   async function seriesChanged(deleted: boolean) {
     if (deleted) await goto("/studio");
     else await load(false);
@@ -202,6 +189,8 @@
       >
       </div>
     </div>
+    <SeriesReferenceImporter series={item} disabled={!!busy || active || item.archived}
+      onupdate={(updated) => item = updated} />
     {#if item.archived}<p class="notice">Cette série est archivée. Restaurez-la pour produire de nouveaux épisodes.</p>{/if}
     {#if !previousReady}<p class="notice">
         Terminez ou réexportez le dernier épisode pour poursuivre à partir de
@@ -225,6 +214,13 @@
           /></label
         >
         <label class="row"><input type="checkbox" bind:checked={prepareOnly} />Préparer et relire le scénario avant les rendus</label>
+        <label>Images de départ pour la vidéo
+          <select bind:value={imageMode}>
+            <option value="generated">Créer une image par plan (Codex / API images)</option>
+            <option value="text_to_video">Sans image par plan (texte vers vidéo, sans Codex)</option>
+          </select>
+        </label>
+        {#if imageMode === "text_to_video"}<p class="hint">Le moteur vidéo crée les plans depuis le scénario. Les descriptions des personnages et lieux sont utilisées, mais leurs images de référence ne sont pas transmises au modèle. La ressemblance peut être moins bonne.</p>{/if}
         <p class="hint">{prepareOnly
           ? "Le scénario et sa revue apparaissent sans générer de médias. Vous pourrez les corriger, puis lancer les rendus."
           : "Le studio prépare le scénario et les médias, puis exporte le MP4. Vous pourrez mettre la production en pause."}
@@ -387,39 +383,28 @@
         >
       </form>
     </details>
-    {#if item.entities.length}<section class="stack">
-        <h2>Références de la série</h2>
-        <p class="hint">
-          Ces images sont réutilisées pour conserver les identités et les lieux.
-          Elles appartiennent uniquement à cette série.
-        </p>
-        <div class="references">
-          {#each item.entities as entity (entity.id)}<article
-              class="reference stack"
-            >
-              {#if entity.url}<img
-                  src={entity.url}
-                  alt={entity.name}
-                  loading="lazy"
-                />{/if}
-              <h3>{entity.name}</h3>
-              <span class="hint"
-                >{entity.kind === "character" ? "Personnage" : "Lieu"}</span
-              >
-              <p class="hint">{entity.description}</p>
-              <EntityIdentityEditor seriesId={item.id} {entity} entities={item.entities}
-                disabled={!!busy || active} onupdate={(updated) => item = updated} />
-              <label
-                >Remplacer la référence<input
-                  type="file"
-                  accept="image/*"
-                  disabled={!!busy || active}
-                  onchange={(event) => reference(event, entity.id)}
-                /></label
-              >
-            </article>{/each}
+    {#if item.entities.length}
+      <details class="advanced-references">
+        <summary>Options avancées des références <span class="advanced-hint">Variantes, valeurs et approbations manuelles</span></summary>
+        <div class="advanced-inner">
+          <p class="hint">Ces réglages sont facultatifs pour une production automatique. Pour ajouter une image ou modifier une description, utilisez les cartes « Personnages & décors » plus haut.</p>
+          <div class="advanced-list">
+            {#each item.entities as entity (entity.id)}
+              <details class="advanced-entity">
+                <summary>
+                  <strong>{entity.name}</strong>
+                  <span class="hint">{entity.kind === "character" ? "Personnage" : "Décor"}</span>
+                </summary>
+                <div class="advanced-editor">
+                  <EntityIdentityEditor seriesId={item.id} {entity} entities={item.entities}
+                    disabled={!!busy || active} onupdate={(value) => item = value} />
+                </div>
+              </details>
+            {/each}
+          </div>
         </div>
-      </section>{/if}
+      </details>
+    {/if}
   {/if}
 </main>
 {#if configOpen}<ConfigDialog
@@ -443,8 +428,7 @@
   }
   .episode-form,
   .episode-card,
-  .bible,
-  .reference {
+  .bible {
     background: var(--white);
     border: 1px solid var(--line);
     border-radius: 5px;
@@ -465,20 +449,16 @@
   .bible form {
     padding-top: 24px;
   }
-  .references {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 16px;
-  }
-  .reference img {
-    width: 100%;
-    height: 240px;
-    object-fit: contain;
-    background: #17231e;
-  }
-  .reference {
-    padding: 18px;
-  }
+  .advanced-references { border: 1px solid var(--line); background: var(--white); border-radius: 9px; padding: 18px 22px; min-width: 0; }
+  .advanced-references > summary { cursor: pointer; font-weight: 650; color: #34483a; }
+  .advanced-hint { font-size: 12px; color: #79847c; font-weight: 400; margin-left: 8px; }
+  .advanced-inner { padding-top: 17px; display: grid; gap: 14px; min-width: 0; }
+  .advanced-list { display: grid; gap: 8px; min-width: 0; }
+  .advanced-entity { border: 1px solid #e2e7e0; border-radius: 8px; min-width: 0; overflow: hidden; }
+  .advanced-entity > summary { display: flex; gap: 12px; align-items: center; cursor: pointer; background: #f8faf7; padding: 13px 16px; }
+  .advanced-editor { padding: 16px; max-width: 660px; min-width: 0; }
+  .advanced-editor :global(textarea), .advanced-editor :global(input), .advanced-editor :global(select) { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+  .advanced-editor :global(.row) { flex-wrap: wrap; }
   .episode-card details p {
     margin-top: 12px;
   }
