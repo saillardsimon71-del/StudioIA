@@ -85,6 +85,45 @@ def invalidate_reference_dependents(conn, series_id, key):
         pending = [entity for entity in pending if entity not in affected]
 
 
+def create_entity(series_id, data):
+    """Declare a character/location before the first episode, for user-supplied reference art."""
+    import re
+    import unicodedata
+
+    name = data["name"].strip()
+    kind = data["kind"]
+    description = (data.get("description") or "").strip()
+    if kind not in ("character", "location") or not name:
+        raise HTTPException(422, "Nom ou type de référence invalide.")
+    normalized = unicodedata.normalize("NFKD", name)
+    stem = re.sub(r"[^a-z0-9]+", "-", normalized.encode("ascii", "ignore").decode().lower())
+    stem = stem.strip("-")[:65].rstrip("-") or ("personnage" if kind == "character" else "lieu")
+    with service.database() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        current = require_series(conn, series_id)
+        if current["archived"]:
+            raise HTTPException(409, "Restaurez la série avant de modifier ses références.")
+        require_references_editable(conn, series_id)
+        used = {row[0] for row in conn.execute(
+            "SELECT entity_key FROM studio_entities WHERE series_id=?", (series_id,)
+        )}
+        key, suffix = stem, 2
+        while key in used:
+            key = f"{stem}-{suffix}"
+            suffix += 1
+        conn.execute(
+            "INSERT INTO studio_entities(series_id,entity_key,kind,name,description,identity_json) "
+            "VALUES(?,?,?,?,?,?)",
+            (series_id, key, kind, name, description,
+             json.dumps({"visual_description": description} if description else {})),
+        )
+        conn.execute(
+            "UPDATE studio_series SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (series_id,)
+        )
+        conn.commit()
+    return get_series(series_id)
+
+
 def update_entity(series_id, entity_id, data):
     from calliope.studio.visual_identity import file_hash, ordered_entities
 

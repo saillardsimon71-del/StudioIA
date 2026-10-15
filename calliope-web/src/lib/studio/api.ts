@@ -377,6 +377,11 @@ export const studio = {
   saveSeries: (id: number, payload: Partial<Series>) =>
     request<Series>(`/series/${id}`, "PATCH", payload),
   deleteSeries: (id: number) => request<{ ok: boolean }>(`/series/${id}`, "DELETE"),
+  createSeriesEntity: (id: number, payload: {
+    name: string;
+    kind: "character" | "location";
+    description?: string;
+  }) => request<Series>(/`/series/${id}/entities`, "POST", payload),
   saveEntity: (id: number, entityId: number, payload: {
     identity?: Partial<Pick<SeriesEntity['identity'], 'visual_description' | 'variant_of' | 'attached_value' | 'label_key'>>;
     reference_approved?: boolean; reset_reference?: boolean;

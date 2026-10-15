@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import ConfigDialog from "$lib/studio/ConfigDialog.svelte";
   import EntityIdentityEditor from "$lib/studio/EntityIdentityEditor.svelte";
+  import SeriesReferenceImporter from "$lib/studio/SeriesReferenceImporter.svelte";
   import SeriesActions from "$lib/studio/SeriesActions.svelte";
   import {
     studio,
@@ -202,6 +203,8 @@
       >
       </div>
     </div>
+    <SeriesReferenceImporter series={item} disabled={!!busy || active || item.archived}
+      onupdate={(updated) => item = updated} />
     {#if item.archived}<p class="notice">Cette série est archivée. Restaurez-la pour produire de nouveaux épisodes.</p>{/if}
     {#if !previousReady}<p class="notice">
         Terminez ou réexportez le dernier épisode pour poursuivre à partir de
@@ -387,7 +390,8 @@
         >
       </form>
     </details>
-    {#if item.entities.length}<section class="stack">
+    {#if item.entities.length}<details class="stack advanced-references">
+        <summary>Réglages avancés des identités et références</summary>
         <h2>Références de la série</h2>
         <p class="hint">
           Ces images sont réutilisées pour conserver les identités et les lieux.
@@ -419,7 +423,7 @@
               >
             </article>{/each}
         </div>
-      </section>{/if}
+      </details>{/if}
   {/if}
 </main>
 {#if configOpen}<ConfigDialog
@@ -465,6 +469,8 @@
   .bible form {
     padding-top: 24px;
   }
+  .advanced-references { padding: 20px; background: var(--white); border: 1px solid var(--line); }
+  .advanced-references summary { cursor: pointer; font-weight: 650; margin-bottom: 14px; }
   .references {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

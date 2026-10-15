@@ -101,6 +101,21 @@ class ScriptEdit(BaseModel):
     shots: list[ScriptShot] = Field(min_length=1, max_length=1000)
 
 
+
+class EntityCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=100)
+    kind: Literal["character", "location"] = "character"
+    description: str = Field(default="", max_length=10000)
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, value):
+        if not value.strip():
+            raise ValueError("Saisissez un nom pour ce personnage ou ce lieu.")
+        return value.strip()
+
+
 class EntityIdentityPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     visual_description: str | None = Field(default=None, max_length=10000)
@@ -137,6 +152,11 @@ async def review_visuals(take_id: int, payload: VisualReview):
 @router.post("/projects/{project_id}/visual-contract")
 async def prepare_visual_contract(project_id: int):
     return series.refresh_visual_contract(project_id)
+
+
+@router.post("/series/{series_id}/entities")
+async def create_entity(series_id: int, payload: EntityCreate):
+    return series.create_entity(series_id, payload.model_dump())
 
 
 @router.patch("/series/{series_id}/entities/{entity_id}")
