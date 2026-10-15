@@ -381,7 +381,7 @@ export const studio = {
     name: string;
     kind: "character" | "location";
     description?: string;
-  }) => request<Series>(/`/series/${id}/entities`, "POST", payload),
+  }) => request<Series>(`/series/${id}/entities`, "POST", payload),
   saveEntity: (id: number, entityId: number, payload: {
     identity?: Partial<Pick<SeriesEntity['identity'], 'visual_description' | 'variant_of' | 'attached_value' | 'label_key'>>;
     reference_approved?: boolean; reset_reference?: boolean;

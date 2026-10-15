@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { studio, errorMessage, type Series, type SeriesEntity } from "./api";
+  import { studio, errorMessage, type Series } from "./api";
 
   type Kind = "character" | "location";
   type Entry = {
