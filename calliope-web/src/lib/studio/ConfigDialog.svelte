@@ -9,10 +9,22 @@
 	let error = $state('');
 	let saving = $state(false);
 	let useAgnes = $state(false);
+	let textProvider = $state<'deepseek' | 'custom'>('custom');
+	function selectTextProvider(provider: 'deepseek' | 'custom') {
+		textProvider = provider;
+		if (config && provider === 'deepseek') {
+			config.llm_base_url = 'https://api.deepseek.com';
+			if (!['deepseek-flash', 'deepseek-v4-pro'].includes(config.llm_model)) config.llm_model = 'deepseek-flash';
+			useAgnes = false;
+		}
+	}
 
 	onMount(() => {
 		dialog.showModal();
-		studio.config().then((value) => config = { ...value, image_provider: value.image_provider ?? 'api', video_profile: value.video_profile ?? 'fast' }).catch((err) => error = errorMessage(err));
+		studio.config().then((value) => {
+			config = { ...value, image_provider: value.image_provider ?? 'api', video_profile: value.video_profile ?? 'fast' };
+			textProvider = /^https:\/\/api\.deepseek\.com\/?(?:$|\?)/.test(value.llm_base_url) ? 'deepseek' : 'custom';
+		}).catch((err) => error = errorMessage(err));
 	});
 
 	async function save(event: SubmitEvent) {
@@ -22,7 +34,7 @@
 		error = '';
 		try {
 			const { llm_configured, image_configured, ...payload } = config;
-			await studio.saveConfig({ ...payload, use_agnes_for_text: config.image_provider === 'api' && useAgnes, ...(llmKey ? { llm_api_key: llmKey } : {}), ...(config.image_provider === 'api' && imageKey ? { image_api_key: imageKey } : {}) });
+			await studio.saveConfig({ ...payload, use_agnes_for_text: textProvider === 'custom' && config.image_provider === 'api' && useAgnes, ...(llmKey ? { llm_api_key: llmKey } : {}), ...(config.image_provider === 'api' && imageKey ? { image_api_key: imageKey } : {}) });
 			onsaved();
 			onclose();
 		} catch (err) { error = errorMessage(err); }
@@ -50,10 +62,27 @@
 					<p class="hint">Le compte Modal connecté sur cet ordinateur doit pouvoir appeler cette fonction.</p>
 				</fieldset>
 				<fieldset class="stack"><legend>Écriture des séries et épisodes</legend>
-					{#if config.image_provider === 'api'}<label class="check"><input type="checkbox" bind:checked={useAgnes} />Utiliser Agnes avec la même clé que les images</label>{/if}
-					<label>Adresse de l'API<input type="url" bind:value={config.llm_base_url} placeholder="https://api.openai.com/v1" /></label>
-					<div class="columns"><label>Modèle<input bind:value={config.llm_model} placeholder="Nom du modèle" /></label><label>Clé API<input type="password" autocomplete="new-password" bind:value={llmKey} placeholder={config.llm_configured ? 'Clé enregistrée, conserver si vide' : 'Clé si votre service en exige une'} /></label></div>
-					<p class="hint">API compatible OpenAI. Un script peut être découpé localement sans ce service.</p>
+					<label>IA chargée des scénarios, dialogues et prompts
+						<select value={textProvider} onchange={(event) => selectTextProvider(event.currentTarget.value as 'deepseek' | 'custom')}>
+							<option value="deepseek">DeepSeek</option>
+							<option value="custom">Autre API compatible OpenAI</option>
+						</select>
+					</label>
+					{#if config.image_provider === 'api' && textProvider === 'custom'}<label class="check"><input type="checkbox" bind:checked={useAgnes} />Utiliser Agnes avec la même clé que les images</label>{/if}
+					{#if textProvider === 'deepseek'}
+						<label>Modèle
+							<select bind:value={config.llm_model}>
+								<option value="deepseek-flash">DeepSeek Flash — recommandé, économique</option>
+								<option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
+							</select>
+						</label>
+						<p class="hint">API : https://api.deepseek.com. DeepSeek nécessite sa propre clé API, même si un ancien service était déjà configuré.</p>
+					{:else}
+						<label>Adresse de l'API<input type="url" bind:value={config.llm_base_url} placeholder="https://api.openai.com/v1" /></label>
+						<label>Modèle<input bind:value={config.llm_model} placeholder="Nom du modèle" /></label>
+					{/if}
+					<label>Clé API d'écriture<input type="password" autocomplete="new-password" bind:value={llmKey} placeholder={textProvider === 'deepseek' ? 'Coller votre clé DeepSeek ici' : config.llm_configured ? 'Clé existante, laisser vide pour conserver' : 'Clé API si nécessaire'} /></label>
+					<p class="hint">L'IA choisie rédige les histoires, les plans et les prompts vidéo. Le changement ne réécrit pas automatiquement un épisode terminé.</p>
 				</fieldset>
 				<fieldset class="stack"><legend>Images de référence</legend>
 					<label>Générateur d'images<select bind:value={config.image_provider}><option value="codex">Codex - abonnement ChatGPT</option><option value="api">Service API</option></select></label>

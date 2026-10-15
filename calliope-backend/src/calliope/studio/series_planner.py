@@ -6,7 +6,7 @@ import unicodedata
 import uuid
 from datetime import datetime, timezone
 
-from calliope.agent.llm import generate_structured
+from calliope.agent.llm import generate_structured as _generate_structured
 from calliope.config import settings
 from calliope.studio.audio import AudioSettings
 from calliope.studio.h3_prompt import (
@@ -18,6 +18,21 @@ from calliope.studio.h3_prompt import (
 from calliope.studio.series import BIBLE_FIELDS
 
 logger = logging.getLogger(__name__)
+
+
+async def generate_structured(messages, *, role=None, **options):
+    """Use the Studio writing service for every story/script/planning phase.
+
+    Agent role assignments are independent of the Studio's chosen writer and
+    should never silently override it.
+    """
+    deepseek = settings.llm_base_url.rstrip("/").endswith("api.deepseek.com")
+    return await _generate_structured(
+        messages, role=None,
+        extra_body={"thinking": {"type": "disabled"}} if deepseek else None,
+        **options,
+    )
+
 MIDROLL_SECONDS = 4.0
 FRENCH_MIDROLL = "Abonne-toi, copie le lien et commente GO si tu veux recevoir un guide pour faire des vidéos gratuitement."
 MIDROLL_DIALOGUES = {

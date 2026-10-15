@@ -857,6 +857,7 @@ async def generate_structured(
     required_keys=(),
     json_mode=False,
     role: str | None = None,
+    extra_body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     client = LLMClient.for_role(role) if role else LLMClient()
     try:
@@ -871,7 +872,7 @@ async def generate_structured(
             options = {"max_tokens": max_tokens} if max_tokens is not None else {}
             if json_mode:
                 options["response_format"] = {"type": "json_object"}
-            text = await client.chat(messages, temperature=temperature, **options)
+            text = await client.chat(messages, temperature=temperature, extra_body=extra_body, **options)
             result = extract_json(text)
             if any(key not in result for key in required_keys):
                 raise ValueError(f"Structured reply missing root fields: {', '.join(required_keys)}")
@@ -882,7 +883,7 @@ async def generate_structured(
             options.pop("response_format", None)
             text = await client.chat(
                 messages, temperature=temperature, response_format={"type": "json_object"},
-                **options,
+                extra_body=extra_body, **options,
             )
             result = extract_json(text)
             if any(key not in result for key in required_keys):
