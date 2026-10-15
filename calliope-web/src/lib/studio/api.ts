@@ -163,6 +163,7 @@ export interface Board {
     summary: string;
     ongoing_plot: string;
     production_mode: "automatic" | "manual";
+    image_mode: "generated" | "text_to_video";
     editorial_review?: Partial<Record<"hook" | "stakes" | "progression" | "payoff" | "next_episode" | "risks", string>>;
     editorial_stale?: boolean;
   } | null;
@@ -393,7 +394,7 @@ export const studio = {
     request<Board>(`/projects/${projectId}/visual-contract`, "POST"),
   createEpisode: (
     id: number,
-    payload: { idea: string; objective: string; request_id: string; prepare_only?: boolean },
+    payload: { idea: string; objective: string; request_id: string; prepare_only?: boolean; image_mode?: "generated" | "text_to_video" },
   ) =>
     request<{ project_id: number; job_id: number }>(
       `/series/${id}/episodes`,
@@ -404,6 +405,8 @@ export const studio = {
     request<Board>(`/projects/${id}/production/pause`, "POST"),
   resumeProduction: (id: number) =>
     request<Board>(`/projects/${id}/production/resume`, "POST"),
+  setEpisodeImageMode: (id: number, mode: "generated" | "text_to_video") =>
+    request<Board>(`/projects/${id}/production/images`, "PATCH", { mode }),
   retakeFrom: (id: number, shotId: number, requestId: string) =>
     request<Board>(`/projects/${id}/shots/${shotId}/retake`, "POST", { request_id: requestId }),
   prepareMidroll: (id: number) =>

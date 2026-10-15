@@ -20,6 +20,7 @@
   let idea = $state("");
   let objective = $state("");
   let prepareOnly = $state(true);
+  let imageMode = $state<"generated" | "text_to_video">("generated");
   let error = $state("");
   let notice = $state("");
   let busy = $state("");
@@ -82,7 +83,7 @@
     if (busy) return;
     busy = "episode";
     error = "";
-    const content = JSON.stringify([idea.trim(), objective.trim(), prepareOnly]);
+    const content = JSON.stringify([idea.trim(), objective.trim(), prepareOnly, imageMode]);
     if (content !== requestContent) {
       requestContent = content;
       requestId = newRequestId();
@@ -93,6 +94,7 @@
         objective: objective.trim(),
         request_id: requestId,
         prepare_only: prepareOnly,
+        image_mode: imageMode,
       });
       await goto("/studio/" + result.project_id);
     } catch (err) {
@@ -212,6 +214,13 @@
           /></label
         >
         <label class="row"><input type="checkbox" bind:checked={prepareOnly} />Préparer et relire le scénario avant les rendus</label>
+        <label>Images de départ pour la vidéo
+          <select bind:value={imageMode}>
+            <option value="generated">Créer une image par plan (Codex / API images)</option>
+            <option value="text_to_video">Sans image par plan (texte vers vidéo, sans Codex)</option>
+          </select>
+        </label>
+        {#if imageMode === "text_to_video"}<p class="hint">Le moteur vidéo crée les plans depuis le scénario. Les descriptions des personnages et lieux sont utilisées, mais leurs images de référence ne sont pas transmises au modèle. La ressemblance peut être moins bonne.</p>{/if}
         <p class="hint">{prepareOnly
           ? "Le scénario et sa revue apparaissent sans générer de médias. Vous pourrez les corriger, puis lancer les rendus."
           : "Le studio prépare le scénario et les médias, puis exporte le MP4. Vous pourrez mettre la production en pause."}
