@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from calliope.config import settings
 from calliope.queue.manager import queue_manager
 from calliope.routers.studio_series import router as series_router
-from calliope.studio import series, service
+from calliope.studio import runtime, series, service
 from calliope.studio.planner import parse_script, plan_with_llm
 from calliope.studio.screen_text import ScreenText
 
@@ -122,10 +122,12 @@ class ConfigUpdate(BaseModel):
     use_agnes_for_text: bool = False
     modal_app: str | None = Field(default=None, min_length=1, max_length=200)
     modal_function: str | None = Field(default=None, min_length=1, max_length=200)
+    video_profile: Literal["fast", "quality", "ltx"] | None = None
     llm_base_url: str | None = None
     llm_model: str | None = Field(default=None, min_length=1, max_length=200)
     llm_api_key: str | None = None
     image_base_url: str | None = None
+    image_provider: Literal["api", "codex"] | None = None
     image_model: str | None = Field(default=None, min_length=1, max_length=200)
     image_api_key: str | None = None
 
@@ -148,13 +150,17 @@ async def get_config():
     return {
         "modal_app": settings.studio_modal_app,
         "modal_function": settings.studio_modal_function,
+        "video_profile": settings.studio_video_profile,
         "llm_base_url": settings.llm_base_url,
         "llm_model": settings.llm_model,
         "llm_configured": bool(settings.llm_api_key),
         "image_base_url": settings.studio_image_base_url,
+        "image_provider": settings.studio_image_provider,
         "image_model": settings.studio_image_model,
         "image_configured": bool(settings.studio_image_api_key),
         "dry_run": settings.dry_run,
+        "pipeline_revision": runtime.LOADED_REVISION,
+        "restart_required": runtime.source_revision() != runtime.LOADED_REVISION,
     }
 
 
@@ -171,7 +177,9 @@ async def update_config(payload: ConfigUpdate):
     mapping = {
         "modal_app": "studio_modal_app",
         "modal_function": "studio_modal_function",
+        "video_profile": "studio_video_profile",
         "image_base_url": "studio_image_base_url",
+        "image_provider": "studio_image_provider",
         "image_model": "studio_image_model",
         "image_api_key": "studio_image_api_key",
     }
@@ -207,21 +215,27 @@ async def _endpoint_check(base_url, api_key, label):
 @router.get("/preflight")
 async def preflight():
     from calliope.engines.modal_h3 import ModalH3Engine
+    from calliope.engines.h3_graph import h3_profile
 
     engine = ModalH3Engine(settings.studio_modal_app, settings.studio_modal_function)
+    if settings.studio_image_provider == "codex":
+        from calliope.studio.codex_image import check_available
+        image_check = asyncio.to_thread(check_available)
+    else:
+        image_check = _endpoint_check(
+            settings.studio_image_base_url, settings.studio_image_api_key, "Service images"
+        )
     modal, llm, image = await asyncio.gather(
         asyncio.to_thread(engine.check_available),
         _endpoint_check(settings.llm_base_url, settings.llm_api_key, "Service texte"),
-        _endpoint_check(
-            settings.studio_image_base_url, settings.studio_image_api_key, "Service images"
-        ),
+        image_check,
     )
     binaries = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
     return {
         "modal": modal,
         "llm": llm,
         "image": image,
-        "engine": "FastH3 8-Step V2 / MiniMax H3",
+        "engine": h3_profile(settings.studio_video_profile)["label"],
         "ffmpeg": {
             "ok": binaries,
             "message": "Assemblage disponible." if binaries else "Installez FFmpeg et ffprobe.",

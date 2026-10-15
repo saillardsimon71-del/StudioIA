@@ -2,13 +2,15 @@ import asyncio
 import hashlib
 import json
 import re
+import uuid
 from pathlib import Path
 
 from calliope.config import settings
 from calliope.events.bus import event_bus
 from calliope.queue.manager import queue_manager
 from calliope.studio import audio, series, service
-from calliope.studio.series_planner import insert_midroll, normalize_plan, plan_episode, prepare_native_states
+from calliope.studio.h3_prompt import directing_profile
+from calliope.studio.series_planner import _midroll_spec, insert_midroll, normalize_plan, plan_episode, prepare_native_states
 from calliope.studio.visual_identity import (
     compile_image_request,
     file_hash,
@@ -59,8 +61,10 @@ async def checkpoint(job, stage, progress, message, should_stop):
     )
 
 
-async def run_child(job_id, should_stop):
+async def run_child(job_id, should_stop, *, video_preparation=None):
     job = queue_manager.get_job(job_id)
+    if video_preparation:
+        job['video_preparation'] = video_preparation
     if job["status"] == "done":
         return json.loads(job.get("output_paths_json") or "[]")
     if job["error"] == "cancelled":
@@ -219,7 +223,7 @@ def ensure_midroll(project_id):
         if plan.get("prompt_contract_version", 1) == 1 and any(
             shot.get("purpose") == "midroll"
             for scene in plan.get("scenes", []) for shot in scene.get("shots", [])
-        ):
+        ) and directing_profile(context.get("directing_profile"))["cta_placement"] != "end":
             return
         if "editorial_script" not in plan:
             plan["editorial_script"] = [
@@ -259,6 +263,19 @@ def ensure_midroll(project_id):
             raise ValueError(
                 "Plusieurs incitations existent : conservez un seul plan d'incitation."
             )
+        profile = directing_profile(context.get("directing_profile"))
+        if plan.get("prompt_contract_version") == 2 and promotions:
+            prepared = promotions[0]
+            spec = _midroll_spec(context)
+            if (profile["cta_placement"] == "end" and profile["camera"] == "static"
+                and prepared is old_shots[-1] and prepared.get("purpose") == "midroll"
+                and prepared.get("continue_from_previous")
+                and prepared.get("dialogue") == spec["dialogue"]
+                and prepared.get("dialogue_turns") == [{"speaker": prepared.get("speaker"), "text": spec["dialogue"]}]
+                and prepared.get("speaker") in by_key
+                and prepared.get("speaker") in prepared.get("character_keys", [])
+                and float(prepared["duration_sec"]) >= spec["duration_sec"]):
+                return
         insert_midroll(plan, context)
         shots = [shot for scene in plan["scenes"] for shot in scene["shots"]]
         index = next(i for i, shot in enumerate(shots) if shot.get("purpose") == "midroll")
@@ -338,20 +355,23 @@ def generation_id(job, shot, kind, attempt=0):
         settings.studio_image_model,
         settings.studio_modal_app,
         settings.studio_modal_function,
+        settings.studio_video_profile if kind == "video" else None,
     ]
     if kind == "image":
+        inputs.append(settings.studio_image_provider)
         with service.database() as conn:
             inputs.append(compile_image_request(shot, service.shot_context(conn, shot["id"])))
     else:
-        from calliope.studio.h3_prompt import compile_h3_prompt
+        from calliope.studio.h3_prompt import compile_video_prompt
 
         with service.database() as conn:
             context = service.shot_context(conn, shot["id"])
             inputs.append(
-                compile_h3_prompt(
+                compile_video_prompt(
                     shot | context.get("shot", {}),
                     context,
                     first_frame=bool(shot["selected_image_id"] or shot["continue_from_previous"]),
+                    video_profile=settings.studio_video_profile,
                 )
             )
             inputs.append(service.visual_review_contract(context, shot))
@@ -402,22 +422,48 @@ async def generate_take(job, shot, kind, should_stop, attempt=0):
             conn.commit()
         previous = None
     if previous and (attempt or not previous["request_id"].endswith("-r1")):
-        await run_child(previous["job_id"], should_stop)
+        await run_child(previous["job_id"], should_stop, **(
+            {'video_preparation': job['video_preparation']} if job.get('video_preparation') else {}
+        ))
         return service.select_take(previous["id"])
     request = {
         "kind": kind,
         "request_id": request_id,
         "n_takes": 1,
         "parent_job_id": job["id"],
+        "video_batch_last": kind == 'video' and job.get('video_batch_last', False),
     }
     queued = service.enqueue_takes(shot["id"], request)
     take = queued["takes"][0]
-    await run_child(take["job_id"], should_stop)
+    await run_child(take["job_id"], should_stop, **(
+        {'video_preparation': job['video_preparation']} if job.get('video_preparation') else {}
+    ))
     return service.select_take(take["id"])
 
 
 def selected_video(shot):
     return next((t for t in shot["takes"] if t["id"] == shot["selected_video_id"]), None)
+
+
+def reusable_video(shot):
+    from calliope.studio.h3_prompt import compile_video_prompt
+
+    chosen = selected_video(shot)
+    if chosen and not shot["approved"] and chosen["engine"] != "import":
+        with service.database() as conn:
+            context = service.shot_context(conn, shot["id"])
+        expected = compile_video_prompt(
+            shot | context.get("shot", {}), context,
+            first_frame=bool(shot["selected_image_id"] or shot["continue_from_previous"]),
+            video_profile=settings.studio_video_profile,
+        )
+        legacy = shot["prompt"] + (
+            "\n<d>" + shot["dialogue"].strip() + "</d>"
+            if shot["dialogue"].strip() and shot["audio_mode"] == "native" else ""
+        )
+        if chosen["prompt"] not in (expected, legacy):
+            return None
+    return chosen
 
 
 async def assess_take(shot):
@@ -558,17 +604,14 @@ def trim_take(shot, voice=None, end_limit=None):
         return
     if shot["audio_mode"] == "native" and shot["dialogue"].strip() and not voice:
         return
-    turns = shot.get("dialogue_turns") or []
-    final_reaction = shot.get("reaction") or (turns[-1].get("reaction") if turns else "")
-    opening_action = shot.get("action") or (turns[0].get("action") if turns else "")
-    preserve_end = probe if shot.get("prompt_contract_version") == 2 and final_reaction else None
-    if shot.get("prompt_contract_version") == 2 and shot.get("purpose") == "midroll" and voice:
-        start, end = pacing.speech_window(probe, voice, pacing.ASIDE_POST_ROLL_SEC,
-                                         pre_roll_sec=pacing.ASIDE_PRE_ROLL_SEC)
+    if shot.get("prompt_contract_version") == 2 and shot["dialogue"].strip() and voice:
+        aside = shot.get("purpose") == "midroll"
+        start, end = pacing.speech_window(
+            probe, voice, pacing.ASIDE_POST_ROLL_SEC if aside else pacing.POST_ROLL_SEC,
+            pre_roll_sec=pacing.ASIDE_PRE_ROLL_SEC if aside else pacing.PRE_ROLL_SEC,
+        )
     else:
-        start, end = pacing.useful_window(shot["duration_sec"], probe, voice, preserve_end_sec=preserve_end)
-    if shot.get("prompt_contract_version") == 2 and opening_action and shot.get("purpose") != "midroll":
-        start = 0
+        start, end = pacing.useful_window(shot["duration_sec"], probe, voice)
     if end_limit is not None:
         end = min(end, pacing.floor_grid(end_limit))
     if start <= 1e-9 and end >= pacing.floor_grid(probe) - 1e-9:
@@ -674,7 +717,7 @@ async def ensure_entities(job, should_stop):
                 continue
         directory = settings.assets_dir / "series" / str(episode["series_id"]) / "references"
         directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"entity-{entity['id']}.png"
+        path = directory / f"entity-{entity['id']}-{uuid.uuid4().hex}.png"
         try:
             compiled = compile_image_request({}, context, canonical_entity=entity)
         except ValueError:
@@ -684,8 +727,10 @@ async def ensure_entities(job, should_stop):
             continue
         request = compiled | {
             "aspect_ratio": frozen["aspect_ratio"],
+            "image_provider": settings.studio_image_provider,
             "image_base_url": settings.studio_image_base_url,
-            "image_model": settings.studio_image_model,
+            "image_model": "codex-imagegen" if settings.studio_image_provider == "codex"
+            else settings.studio_image_model,
         }
         with service.database() as conn:
             conn.execute(
@@ -731,29 +776,12 @@ def load_shot(shot_id):
 
 
 async def render_shot(job, initial, should_stop):
-    from calliope.studio.h3_prompt import compile_h3_prompt
-
     if should_stop():
         raise asyncio.CancelledError()
     if queue_manager.is_cancelled(job["id"]):
         raise ProductionPausedError()
     shot = load_shot(initial["id"])
-    chosen = selected_video(shot)
-    if chosen and not shot["approved"] and chosen["engine"] != "import":
-        with service.database() as conn:
-            context = service.shot_context(conn, shot["id"])
-        expected = compile_h3_prompt(
-            shot | context.get("shot", {}),
-            context,
-            first_frame=bool(shot["selected_image_id"] or shot["continue_from_previous"]),
-        )
-        legacy = shot["prompt"] + (
-            "\n<d>" + shot["dialogue"].strip() + "</d>"
-            if shot["dialogue"].strip() and shot["audio_mode"] == "native"
-            else ""
-        )
-        if chosen["prompt"] not in (expected, legacy):
-            chosen = None
+    chosen = reusable_video(shot)
     if not chosen:
         try:
             shot = await generate_take(job, shot, "video", should_stop)
@@ -767,6 +795,8 @@ async def render_shot(job, initial, should_stop):
                 )
                 conn.commit()
             raise ProductionPausedError() from None
+    if job.get('video_ready'):
+        job['video_ready']()
     verdict = await assess_take(shot)
     if not verdict or verdict["status"] == "ok":
         trim_take(shot, (verdict or {}).get("voice"), (verdict or {}).get("trim_end_limit_sec"))
@@ -788,42 +818,107 @@ async def render_shot(job, initial, should_stop):
         raise ProductionPausedError() from None
 
 
+async def prepare_local_audio():
+    if settings.dry_run or not settings.studio_asr_checkpoint:
+        return
+    from calliope.studio.transcription import warm_transcriber
+    try:
+        await asyncio.to_thread(warm_transcriber, settings.studio_asr_checkpoint)
+    except Exception:
+        # ASR remains advisory when its local checkpoint cannot be loaded.
+        pass
+
+
 async def render_videos(job, shots, should_stop):
-    semaphore = asyncio.Semaphore(settings.studio_video_concurrency)
+    from calliope.studio.video_preparation import prepare_video_batch
+
+    if should_stop():
+        raise asyncio.CancelledError()
+    concurrency = settings.studio_video_concurrency
+    semaphore = asyncio.Semaphore(concurrency)
     aborted = asyncio.Event()
+    failure = None
     tasks = []
+    ready = [asyncio.Event() for _ in shots]
 
     async def render(index, shot):
-        if shot["continue_from_previous"] and index:
-            previous = next((i for i in range(index - 1, -1, -1)
-                             if shots[i].get("purpose") not in ("midroll", "outro")), None)
-            if previous is not None:
-                await tasks[previous]
-        async with semaphore:
+        nonlocal failure
+        acquired = released = False
+
+        def video_ready():
+            nonlocal released
+            if acquired and not released:
+                released = True
+                semaphore.release()
+            ready[index].set()
+
+        try:
+            if shot["continue_from_previous"] and index:
+                previous = next((i for i in range(index - 1, -1, -1)
+                                 if shots[i].get("purpose") not in ("midroll", "outro")), None)
+                if previous is not None:
+                    await tasks[previous]
+            await semaphore.acquire()
+            acquired = True
             if aborted.is_set():
                 return
-            try:
-                await checkpoint(
-                    job,
-                    "video",
-                    0.33 + index / len(shots) * 0.55,
-                    f"FastH3 : plan {index + 1}/{len(shots)}",
-                    should_stop,
-                )
-                await render_shot(job, shot, should_stop)
-            except BaseException:
-                aborted.set()
-                raise
+            await checkpoint(
+                job,
+                "video",
+                0.33 + index / len(shots) * 0.55,
+                f"{settings.studio_video_profile} : plan {index + 1}/{len(shots)}",
+                should_stop,
+            )
+            await render_shot(job | {
+                'video_batch_last': index == len(shots) - 1 and concurrency == 1,
+                'video_preparation': preparation,
+                'video_ready': video_ready,
+            }, shot, should_stop)
+        except BaseException as exc:
+            if not aborted.is_set():
+                failure = exc
+            aborted.set()
+            for signal in ready:
+                signal.set()
+            raise
+        finally:
+            video_ready()
 
-    for index, shot in enumerate(shots):
-        tasks.append(asyncio.create_task(render(index, shot)))
+    await checkpoint(job, 'images', 0.32, 'Préparation des rendus avant allocation GPU', should_stop)
+    await prepare_local_audio()
+    preparation = await prepare_video_batch(shots, should_stop)
+    if preparation:
+        preparation['concurrency'] = concurrency
+    if should_stop():
+        raise asyncio.CancelledError()
+    control = {
+        'engine':preparation['engine'], 'app_name':preparation['modal_app'],
+        'function_name':preparation['modal_function'],
+    } if preparation else {}
+    if preparation:
+        await service.video_idle_window(60, job_id=job['id'], **control)
     try:
+        for index, shot in enumerate(shots):
+            tasks.append(asyncio.create_task(render(index, shot)))
+            if concurrency == 1:
+                await ready[index].wait()
+                if aborted.is_set():
+                    raise failure
+                if tasks[-1].done():
+                    await tasks[-1]
         await asyncio.gather(*tasks)
-    except BaseException:
+    except asyncio.CancelledError:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
+    except Exception:
+        aborted.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+    finally:
+        if preparation and not preparation.get('gpu_released'):
+            await service.video_idle_window(2, job_id=job['id'], **control)
 
 
 async def run_production(job, payload, should_stop):

@@ -2,6 +2,7 @@ import copy
 import json
 import logging
 import re
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 
@@ -47,18 +48,25 @@ MIDROLL_LABELS = {
 }
 
 
+def _native_key(value):
+    if not isinstance(value, str):
+        return value
+    return "".join(c for c in unicodedata.normalize("NFKD", value.strip().casefold())
+                   if not unicodedata.combining(c))
+
+
 def _normalize_native_keys(draft):
     result = copy.deepcopy(draft)
 
     def key(value):
-        return value.casefold() if isinstance(value, str) else value
+        return _native_key(value)
 
     def keyed(value, path):
         if not isinstance(value, dict):
             return value
         normalized = {key(k): v for k, v in value.items()}
         if len(normalized) != len(value):
-            raise ValueError(f"{path}: collision entre identifiants après normalisation des majuscules.")
+            raise ValueError(f"{path}: collision entre identifiants après normalisation.")
         return normalized
 
     entities = result.get("entities")
@@ -216,8 +224,11 @@ La menace vient d'un fait immédiatement compréhensible, pas du mot "mystérieu
 
 Cherche tes propres situations. Aucun accessoire, effet ou retournement de ces
 fragments n'est imposé. Aucun gag ni cliffhanger obligatoire. Ne commente pas la
-qualité de tes scènes, joue-les. Environ 100 mots par scène, actions et paroles
-comprises ; le temps indiqué est celui du récit sans l'incitation ajoutée ailleurs.
+qualité de tes scènes, joue-les. Chaque piste est un épisode complet adapté au
+target_seconds fourni, avec ses échanges réellement prononcés et sa fin jouée.
+Ce n'est pas un petit gag que le rédacteur devra étirer ensuite. Le temps indiqué
+est celui du récit sans l'incitation ajoutée ailleurs. N'allonge pas les pauses
+pour remplir : développe ce que les personnages tentent et ce qui leur arrive.
 Retourne uniquement un JSON {"candidates":[{"id":"A","title":"...","scene":"..."},
 {"id":"B","title":"...","scene":"..."},{"id":"C","title":"...","scene":"..."}]}.
 Actions en français. Paroles dans la langue de la série. Pas de caméra ni de prompt
@@ -295,7 +306,7 @@ Les décisions ont des conséquences visibles, l'embrouille évolue et aboutit �
 une vraie chute ou récompense. Celle-ci peut ouvrir un problème précis pour la
 suite. Garde les actions utiles à cette idée, faciles à suivre.
 Une scène courte et forte vaut mieux qu'une idée mince étirée pour remplir.
-Le logiciel ajoute l'incitation centrale ; le temps indiqué est celui du récit.
+Le logiciel ajoute l'incitation séparément ; le temps indiqué est celui du récit.
 
 Retourne uniquement un objet JSON. Écris d'abord title et beats, la scène jouée :
 beats:[{action,dialogue_turns:[{speaker,text}],consequence}]. Un beat est un
@@ -399,7 +410,7 @@ raison concrète du choix et faiblesse traitée dans la scène finale. Ces notes
                     if not isinstance(turn, dict) or any(not isinstance(turn.get(k), str) or not turn[k].strip()
                                                        for k in ("speaker", "text")):
                         raise ValueError(f"creative_story.beats[{index}]: réplique attribuée requise.")
-                    turn["speaker"] = turn["speaker"].casefold()
+                    turn["speaker"] = _native_key(turn["speaker"])
                     if not re.fullmatch(r"[a-z0-9_-]{1,80}", turn["speaker"]):
                         raise ValueError(f"creative_story.beats[{index}]: clé de locuteur invalide.")
                     if re.match(r"\s*[\[(]", turn["text"]):
@@ -917,7 +928,7 @@ the immutable design of every character and location. References are reviewed be
         prompt = """REALIZATION ONLY. Translate creative_story into the studio's native
 filmable plan. The story and supplied identities are authoritative. Preserve every
 useful action, cause, reward and consequence. Preserve EVERY exact spoken line,
-its speaker and order. Do not write a new story or the software's central promotion.
+its speaker and order. Do not write a new story or the software's promotion.
 
 LANGUAGES: every image/video direction, visual canon, voice description and state
 is natural ENGLISH. Only exact speech retains its language. French source actions
@@ -925,11 +936,15 @@ must be translated, never copied as render directions. Operator titles and revie
 are French. No H3 tags or stage directions inside speech.
 
 Cut the story freely into useful 1-15 second takes, durations to one decimal, total
-near target_seconds. At least two narrative takes allow the central aside. Speaker
+near target_seconds. At least two narrative takes; software places the promotion. Speaker
 changes do not require cuts. Respect the brief's wide framing and depth when asked,
 and its geography, visible participants, eyelines and responsive performances.
-image_prompt describes ONE frozen instant before the take's first action, never
-an action sequence or future outcome. Preserve the source's physical event order:
+image_prompt is the SINGLE complete initial composition: name who is where,
+what each person is doing at t=0, their eyelines, the relevant objects' visible
+states, the framing and the environment visible from this viewpoint. This field
+alone carries the staging to the image service; blocking, framing and state tables
+are not appended to it. Describe ONE frozen instant, never an action sequence
+or future outcome. Preserve the source's physical event order:
 an exit precedes closing the door; a reaction follows its cause. Do not enact an
 already-established starting condition again. Do not duplicate physical events
 across action and dialogue_turns. Keep appliances in their source power state.
@@ -948,8 +963,10 @@ Do not copy action prose into state_changes. Do not invent an action to justify 
 Track only plot-relevant objects/states; keep static furniture in the location canon.
 Declare appliances/furniture as props when their doors, ownership or power change.
 
-The still image is t=0, never a future event. prompt gives current visible context;
-blocking/framing/camera own composition and movement. action starts the visible
+The still image is t=0, never a future event. prompt gives the performance and
+current dramatic context without restating positions or imposing a new framing
+on that image. blocking/framing document the same composition for the operator;
+camera describes movement from it. action starts the visible
 event; speech can begin with that action rather than wait for it to finish. Each
 turn action accompanies that line, its reaction follows, and shot reaction ends the take.
 Assign each physical event to exactly one action field. Do not summarize the whole
@@ -966,12 +983,27 @@ can turn into a rushed excuse or an urgent plea as the character loses control;
 let the source scene decide this, rather than imposing one mood on every speaker.
 Across continuous takes, the last reaction launches the next action or reply,
 which is already underway at the next opening; do not restage the same pause.
-Keep any final physical action needed to understand the consequence. Choose an
+Dialogue takes are edited around actual speech with a brief margin: play gestures
+and reactions WITH the exchange. If a physical event needs its own silent time
+to be understood, give it a silent take of its actual useful duration, rather than
+hiding a plot-critical event before or after a spoken take. A silent take is not
+needed for every gesture. Keep any final physical action needed to understand
+the consequence. Choose an
 independent cut or ellipse when the source story changes place or moment.
 Declare all visible characters and conversational listeners. Declare every location.
 Keys are stable lowercase ASCII. Canon comes from the supplied bible and identities:
 translate faithfully, never redesign, revoice or change wardrobe. Develop only missing
 canon. entities contains characters and locations; props belong in render_canon.props.
+Location canon describes the unoccupied architecture and furnishings; occupants,
+seating assignments and temporary poses belong in image_prompt. Make ambiguous
+visual nouns physically explicit, faithful to the supplied identity and reference.
+For a requested dense, deep environment, turn that intent into concrete set dressing
+and spatial layers in the location canon AND the initial composition: foreground,
+playing area and readable background, materials, light, furnishings and signs of use
+suited to this world. "Wide", "dense" and "deep" alone do not build a set. Preserve
+specified landmarks and geography; invent compatible missing dressing, not extra
+plot restrictions such as an empty site or inactive equipment unless requested.
+Other visual styles remain governed by their own brief.
 Native soundscape is quiet nonverbal physical/location sound; no music or hidden speech.
 
 Return ONLY this JSON structure, with complete fields and freely chosen scene/take count:
@@ -993,17 +1025,32 @@ Return ONLY this JSON structure, with complete fields and freely chosen scene/ta
 "reference_key":"composition-key","duration_sec":5.0,"audio_mode":"native","speaker":"",
 "dialogue":"","dialogue_turns":[{"speaker":"character_key","text":"Exact source words",
 "action":"English action during this line","reaction":"English reaction after this line"}],
-"action":"English event before speech","reaction":"English final event",
+"action":"English action accompanying the opening exchange or silent beat","reaction":"English final event",
 "blocking":"English positions","framing":"English composition","camera":"English movement",
 "soundscape":"English nonverbal sounds","screen_text":[]}]}],"audio":{"music":"none"}}
 
 Use audio_mode=silent, no speaker and no dialogue for silent takes. For exact labels
 use screen_text with software-rendered text/value and normalized coordinates; leave
-blank surfaces in image/video directions. Numeric values are integers with explicit
-change events. Preserve attached values, variants and reference approvals in the
+blank surfaces in image/video directions. Each label needs key, x and y, plus text
+for literal words OR value as an integer for a number; never put words in value.
+Minimal literal label: {"key":"material","text":"POLYSTYRÈNE","x":0.5,"y":0.8,
+"anchor":"screen","event":"reveal"}. A screen anchor is a fixed overlay, not an
+object tracker: target_prop_key and placement are unsupported. For character
+tracking use anchor="character", entity_key and a normalized anchor_box [x,y,w,h].
+Numeric changes use event="change" and changes:[{"at_sec":1.2,"value":2}].
+Preserve attached values, variants and reference approvals in the
 directing_profile. Do not bake labels or digits into images. No decorative text.
 """
     estimated_shots = max(8, round(episode_target / 3))
+    if native and settings.studio_video_profile == 'ltx':
+        prompt += """\nLTX REALIZATION: give each technical take one active speaking character.
+Consecutive lines by that same character may share a take. Keep all conversational
+participants in the established shared composition. A reply by another character
+continues from the preceding final frame with continue_from_previous=true, the same
+camera, eyelines and ongoing action. This is a technical continuation, not a reverse
+angle, new scene, pause or visible edit. Describe only the current take's acting.
+Keep exact source words, voices, roles and useful actions. Never add dialogue to fill time.
+"""
     messages = [
         {"role": "system", "content": prompt},
         {
@@ -1016,6 +1063,10 @@ directing_profile. Do not bake labels or digits into images. No decorative text.
                     **({"creative_story": creative_story} if native else {}),
                     "target_seconds": target,
                     "ending": (
+                        "The software appends the spoken promotion AFTER the complete story. "
+                        "Do not write that promotion or interrupt the story for it. Keep the "
+                        "story ending for the payoff and the next episode's consequence."
+                        if public_context["directing_profile"]["cta_placement"] == "end" else
                         "The software inserts a brief spoken aside near the middle, using "
                         "a story character. Do not write that promotion. Keep the ending "
                         "for the local payoff and the next episode's consequence."
@@ -1083,7 +1134,13 @@ directing_profile. Do not bake labels or digits into images. No decorative text.
                 for field in ("title", "summary", "events", "ongoing_plot", "narrative_outline"):
                     if field in creative_story:
                         plan[field] = copy.deepcopy(creative_story[field])
-                plan["_states_prepared"] = states_prepared
+                plan["_states_prepared"] = True
+            if native and settings.studio_video_profile == 'ltx':
+                from calliope.studio.ltx_realization import prepare_ltx_plan
+                plan = prepare_ltx_plan(plan)
+                _resolve_native_states(plan)
+                _validate_native_contract(plan, list({e['key']: e for e in
+                    context.get('entities', []) + plan.get('entities', [])}.values()))
             return insert_midroll(plan, context)
         except ValueError as exc:
             validation_error = str(exc)
@@ -1345,12 +1402,16 @@ def insert_midroll(plan, context):
         raise ValueError(
             "Prévoir au moins deux plans narratifs pour intégrer l'incitation au milieu."
         )
-    elapsed, boundaries = 0.0, []
-    for index, shot in enumerate(story[:-1], 1):
-        elapsed += float(shot["duration_sec"])
-        boundaries.append((index, elapsed))
-    middle = sum(float(shot["duration_sec"]) for shot in story) / 2
-    insertion = min(boundaries, key=lambda item: abs(item[1] - middle))[0]
+    at_end = directing_profile(context.get("directing_profile"))["cta_placement"] == "end"
+    if at_end:
+        insertion = len(story)
+    else:
+        elapsed, boundaries = 0.0, []
+        for index, shot in enumerate(story[:-1], 1):
+            elapsed += float(shot["duration_sec"])
+            boundaries.append((index, elapsed))
+        middle = sum(float(shot["duration_sec"]) for shot in story) / 2
+        insertion = min(boundaries, key=lambda item: abs(item[1] - middle))[0]
     preceding = story[insertion - 1]
     entities = {e["key"]: e for e in context.get("entities", []) + plan.get("entities", [])}
     characters = [e for e in entities.values()
@@ -1419,6 +1480,10 @@ def insert_midroll(plan, context):
             reaction="", soundscape="N/A", screen_text=[], prop_keys=[],
             start_state={}, end_state={}, cut_reason="Parenthèse centrale, puis retour à l'action narrative."
         )
+    if at_end:
+        shot["description"] = "Incitation brève après la chute de l'histoire."
+        shot["reaction"] = ""
+        shot["cut_reason"] = "L'histoire est terminée ; incitation finale sans interruption du récit."
     identity = entities[speaker].get("identity") or {}
     if identity.get("attached_value") is not None:
         value = identity["attached_value"]
@@ -1751,14 +1816,22 @@ def normalize_plan(result, context):
             labels = shot.get("screen_text") or []
             if not isinstance(labels, list) or len(labels) > 12:
                 raise ValueError("Liste de textes à l'écran invalide.")
-            shot["screen_text"] = [
-                ScreenText.model_validate(
-                    label | {"number_format": profile["number_format"]}
-                    if isinstance(label, dict) and label.get("value") is not None
-                    else label
-                ).model_dump()
-                for label in labels
-            ]
+            try:
+                shot["screen_text"] = [
+                    ScreenText.model_validate(
+                        label | {"number_format": profile["number_format"]}
+                        if isinstance(label, dict) and label.get("value") is not None
+                        else label
+                    ).model_dump()
+                    for label in labels
+                ]
+            except ValueError as exc:
+                if version == 2:
+                    raise _NativeValidationError(
+                        f"scenes[{scene_index}].shots[{shot_index}].screen_text: {exc}",
+                        [["scenes", scene_index, "shots", shot_index, "screen_text"]],
+                    ) from exc
+                raise
             for label in shot["screen_text"]:
                 label["entity_key"] = canonical_key(label["entity_key"], all_entities, "character")
             if attached_required:

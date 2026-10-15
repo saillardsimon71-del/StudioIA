@@ -7,7 +7,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -188,6 +188,8 @@ class Settings(BaseSettings):
     comfyui_base_url: str = "http://127.0.0.1:8188"
     studio_modal_app: str = "studio-ia-h3"
     studio_modal_function: str = "render_clip"
+    studio_video_profile: Literal["fast", "quality", "ltx"] = "fast"
+    studio_image_provider: Literal["api", "codex"] = "api"
     studio_image_base_url: str = "https://apihub.agnes-ai.com/v1"
     studio_image_model: str = "agnes-image-2.5-flash"
     studio_image_api_key: str | None = None
@@ -537,6 +539,8 @@ class Settings(BaseSettings):
             "comfyui_base_url": self.comfyui_base_url,
             "queue_concurrency": self.queue_concurrency,
             "studio_video_concurrency": self.studio_video_concurrency,
+            "studio_video_profile": self.studio_video_profile,
+            "studio_image_provider": self.studio_image_provider,
             "studio_render_timeout_sec": self.studio_render_timeout_sec,
             "studio_asr_checkpoint": self.studio_asr_checkpoint,
             "queue_poll_interval_sec": self.queue_poll_interval_sec,
@@ -647,6 +651,8 @@ class Settings(BaseSettings):
             "comfyui_base_url": self.comfyui_base_url,
             "studio_modal_app": self.studio_modal_app,
             "studio_modal_function": self.studio_modal_function,
+            "studio_video_profile": self.studio_video_profile,
+            "studio_image_provider": self.studio_image_provider,
             "studio_image_base_url": self.studio_image_base_url,
             "studio_image_model": self.studio_image_model,
             "studio_image_api_key": self.studio_image_api_key,

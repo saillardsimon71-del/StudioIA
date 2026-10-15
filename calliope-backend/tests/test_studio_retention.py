@@ -131,7 +131,7 @@ async def test_automatic_dialogue_diagnostic_preserves_the_completed_take(
     monkeypatch.setattr(production, "trim_take", lambda *args: None)
     monkeypatch.setattr(queue_manager, "is_cancelled", lambda _: False)
     from calliope.studio import h3_prompt
-    monkeypatch.setattr(h3_prompt, "compile_h3_prompt", lambda *args, **kwargs: "")
+    monkeypatch.setattr(h3_prompt, "compile_video_prompt", lambda *args, **kwargs: "")
     retries, approved = [], []
 
     async def assess(_):

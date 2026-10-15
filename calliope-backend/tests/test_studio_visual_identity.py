@@ -54,6 +54,29 @@ def test_image_compilation_binds_every_reference_in_order_and_preserves_identity
         compile_image_request({"image_prompt": "Everyone reacts."}, context)
 
 
+def test_native_image_uses_one_initial_composition_without_old_position_overrides():
+    from calliope.studio.visual_identity import compile_image_request
+    from tests.test_studio_native_contract import native_plan
+
+    context = native_plan()
+    shot = context["scenes"][0]["shots"][0] | {
+        "image_prompt": "Wide view: Keeper on the left, closed brass case on the desk at right. "
+                        "Shelves in front, staircase behind, distant windows in focus.",
+        "blocking": "Keeper on the right.", "framing": "Extreme close-up.",
+        "start_state": {"case": "Open on the floor."},
+    }
+    context["shot"] = shot
+    original = json.dumps(context)
+    request = compile_image_request(shot, context)
+    assert shot["image_prompt"] in request["prompt"]
+    assert "Keeper on the right" not in request["prompt"]
+    assert "Extreme close-up" not in request["prompt"]
+    assert "Open on the floor" not in request["prompt"]
+    assert "yellow-coated keeper" in request["prompt"]
+    assert "round lighthouse room" in request["prompt"]
+    assert json.dumps(context) == original
+
+
 def test_exact_visual_typography_is_removed_without_erasing_story_or_spoken_value():
     from calliope.studio.visual_identity import strip_generated_text
 
@@ -159,6 +182,62 @@ def test_canonical_variant_uses_approved_base_and_persists_actual_request(client
         ).fetchall()
     assert json.loads(rows[1][0])["prompt"] == requests[1]["prompt"]
     assert json.loads(rows[1][0])["input_hashes"]["identity_contract"]
+
+
+def test_regenerated_reference_preserves_the_image_used_by_previous_episodes(client, monkeypatch):
+    from pathlib import Path
+
+    created = series(client)
+    project = episode(client, created["id"]).json()["project_id"]
+    production.save_episode_plan(project, planned_episode({}))
+
+    async def image(request, *, check_cancel=None):
+        return service.normalized_image(png_bytes())
+
+    monkeypatch.setattr(service, "_generate_image", image)
+    with service.database() as conn:
+        job = dict(conn.execute("SELECT * FROM jobs WHERE project_id=?", (project,)).fetchone())
+    asyncio.run(production.ensure_entities(job, lambda: False))
+    with service.database() as conn:
+        original = dict(conn.execute("SELECT * FROM studio_entities WHERE series_id=? ORDER BY id LIMIT 1", (created["id"],)).fetchone())
+        conn.execute("UPDATE studio_entities SET reference_path=NULL WHERE id=?", (original["id"],))
+        conn.commit()
+    original_bytes = Path(original["reference_path"]).read_bytes()
+    asyncio.run(production.ensure_entities(job, lambda: False))
+    with service.database() as conn:
+        replacement = conn.execute("SELECT reference_path FROM studio_entities WHERE id=?", (original["id"],)).fetchone()[0]
+    assert replacement != original["reference_path"]
+    assert Path(original["reference_path"]).read_bytes() == original_bytes
+    assert Path(replacement).is_file()
+
+
+@pytest.mark.parametrize("approved", [True, False])
+def test_shot_context_pairs_approved_live_identity_with_its_live_reference(client, tmp_path, approved):
+    from tests.test_studio_native_contract import native_plan
+
+    created = series(client)
+    project = episode(client, created["id"]).json()["project_id"]
+    production.save_episode_plan(project, native_plan())
+    shot = service.board(project)["scenes"][0]["shots"][0]
+    reference = tmp_path / "updated-keeper.png"
+    reference.write_bytes(png_bytes())
+    appearance = "Orange keeper with round eyes and a blue coat."
+    with service.database() as conn:
+        plan_before = conn.execute("SELECT plan_json FROM studio_episodes WHERE project_id=?", (project,)).fetchone()[0]
+        row = conn.execute("SELECT id,identity_json FROM studio_entities WHERE series_id=? AND entity_key='keeper'", (created["id"],)).fetchone()
+        identity = json.loads(row["identity_json"]) | {
+            "visual_description": appearance, "reference_approved": approved,
+            "reference_sha256": hashlib.sha256(reference.read_bytes()).hexdigest(),
+        }
+        conn.execute("UPDATE studio_entities SET identity_json=?,reference_path=? WHERE id=?",
+                     (json.dumps(identity), str(reference), row["id"]))
+        conn.commit()
+        context = service.shot_context(conn, shot["id"])
+        original = json.loads(plan_before)["render_canon"]["characters"]["keeper"]
+        character = context["render_canon"]["characters"]["keeper"]
+        assert character["appearance"] == (appearance if approved else original["appearance"])
+        assert character["voice"] == original["voice"]
+        assert conn.execute("SELECT plan_json FROM studio_episodes WHERE project_id=?", (project,)).fetchone()[0] == plan_before
 
 
 def test_character_anchor_is_reviewed_on_exact_source_before_video_request(client):

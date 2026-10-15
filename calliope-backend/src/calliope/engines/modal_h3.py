@@ -15,9 +15,8 @@ from PIL import Image, UnidentifiedImageError
 from calliope.engines.h3_graph import (
     H3_FPS,
     H3_PROGRESS_TIMEOUT_SEC,
-    H3_SIZES,
-    H3_STEPS,
     frames_for_duration,
+    h3_profile,
     validate_request,
 )
 
@@ -100,13 +99,15 @@ def build_request(
     previous_video_path: Path | None = None,
     trace_id: str | None = None,
     previous_video_time: float | None = None,
+    video_profile: str = "fast",
 ) -> dict:
-    if aspect_ratio not in H3_SIZES:
+    profile = h3_profile(video_profile)
+    if aspect_ratio not in profile["sizes"]:
         raise ValueError("Le format doit être 16:9, 9:16 ou 1:1.")
     if image_path is not None and previous_video_path is not None:
         raise ValueError("Choisissez une image ou la vidéo précédente comme référence.")
-    frames = frames_for_duration(duration_sec)
-    width, height = H3_SIZES[aspect_ratio]
+    frames = frames_for_duration(duration_sec, video_profile)
+    width, height = profile["sizes"][aspect_ratio]
     payload = {
         "contract_version": 1,
         "prompt": prompt.strip() if isinstance(prompt, str) else prompt,
@@ -117,7 +118,8 @@ def build_request(
         "height": height,
         "fps": H3_FPS,
         "frames": frames,
-        "steps": H3_STEPS,
+        "steps": profile["steps"],
+        "video_profile": video_profile,
         "seed": seed,
         "audio_mode": audio_mode,
         "continuity_mode": "none",
@@ -143,10 +145,12 @@ class ModalH3Engine:
         self.function_name = function_name
         self._results = {}
         self.remote_terminal = False
+        self._function_handle = None
 
     def _function(self):
-        modal = _load_modal()
-        return modal.Function.from_name(self.app_name, self.function_name)
+        if self._function_handle is None:
+            self._function_handle = _load_modal().Function.from_name(self.app_name, self.function_name)
+        return self._function_handle
 
     def check_available(self) -> dict:
         try:
@@ -160,12 +164,15 @@ class ModalH3Engine:
             }
         return {
             "ok": True,
-            "message": "Déploiement H3 accessible. GPU alloué uniquement à la génération.",
+            "message": "Déploiement vidéo accessible. GPU alloué uniquement à la génération.",
         }
 
     def spawn(self, payload: dict) -> str:
         validate_request(payload)
         return self._function().spawn(payload).object_id
+
+    def set_idle_window(self, seconds):
+        self._function().update_autoscaler(scaledown_window=seconds)
 
     def poll(self, call_id: str) -> dict | None:
         self.remote_terminal = call_id in self._results
@@ -191,7 +198,7 @@ class ModalH3Engine:
             or not result.get("video_base64")
             or not isinstance(result.get("metadata"), dict)
         ):
-            raise RuntimeError("Le worker H3 a renvoyé un résultat invalide.")
+            raise RuntimeError("Le worker vidéo a renvoyé un résultat invalide.")
         self._results[call_id] = result
         return result
 
@@ -202,7 +209,7 @@ class ModalH3Engine:
 
     def progress(self, trace_id: str) -> dict | None:
         try:
-            store = _load_modal().Dict.from_name("studio-ia-h3-progress")
+            store = _load_modal().Dict.from_name(f"{self.app_name}-progress")
             snapshot = asyncio.run(asyncio.wait_for(
                 store.get.aio(trace_id), timeout=H3_PROGRESS_TIMEOUT_SEC,
             ))

@@ -24,9 +24,11 @@ import modal
 from calliope.engines.h3_graph import (
     H3_COMFYUI_REVISION,
     H3_MODEL_FILES,
+    H3_QUALITY_MODEL_FILE,
     H3_PROGRESS_TIMEOUT_SEC,
     H3_VOLUME_NAME,
     build_h3_graph,
+    h3_profile,
     validate_request,
 )
 from PIL import Image
@@ -182,6 +184,8 @@ def _mount_volume_models() -> None:
         ("vae", H3_MODEL_FILES["video_vae"]),
         ("vae", H3_MODEL_FILES["audio_vae"]),
     ]
+    if (MODELS_ROOT / "diffusion_models" / H3_QUALITY_MODEL_FILE).is_file():
+        locations.append(("diffusion_models", H3_QUALITY_MODEL_FILE))
     for category, filename in locations:
         source = MODELS_ROOT / category / filename
         if not source.is_file():
@@ -339,6 +343,7 @@ def _probe_video(path: Path) -> dict:
     )
     probe = json.loads(completed.stdout)
     video = next((stream for stream in probe["streams"] if stream["codec_type"] == "video"), None)
+    audio = next((stream for stream in probe["streams"] if stream["codec_type"] == "audio"), None)
     if video is None:
         raise RuntimeError("Le fichier H3 ne contient pas de vidéo.")
     fps = float(Fraction(video["avg_frame_rate"]))
@@ -351,9 +356,29 @@ def _probe_video(path: Path) -> dict:
         "fps": fps,
         "frames": frames,
         "duration_sec": frames / fps,
-        "has_audio": any(stream["codec_type"] == "audio" for stream in probe["streams"]),
+        "has_audio": audio is not None,
         "video_codec": video.get("codec_name"),
+        "pixel_format": video.get("pix_fmt"),
+        "audio_codec": audio.get("codec_name") if audio else None,
     }
+
+
+def _prepare_video(source, target, audio_mode):
+    info = _probe_video(source)
+    copy_video = info.get("video_codec") == "h264" and info.get("pixel_format") == "yuv420p"
+    copy_audio = info.get("audio_codec") == "aac"
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
+               "-map", "0:v:0", "-map_metadata", "-1"]
+    command.extend(["-c:v", "copy"] if copy_video else
+                   ["-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p"])
+    if audio_mode == "native":
+        command.extend(["-map", "0:a:0"])
+        command.extend(["-c:a", "copy"] if copy_audio else ["-c:a", "aac", "-b:a", "192k"])
+    else:
+        command.append("-an")
+    command.extend(["-movflags", "+faststart", str(target)])
+    subprocess.run(command, check=True, capture_output=True, timeout=300)
+    return "stream_copy" if copy_video and (audio_mode != "native" or copy_audio) else "transcode"
 
 
 def _run_clip(payload: dict) -> dict:
@@ -386,7 +411,10 @@ def _render_clip(payload, progress, generation_start):
             "LOADING_MODEL",
             "Starting/checking ComfyUI and preparing model; loading vs cache unknown",
         )
+        startup_started = time.perf_counter()
+        process_reused = _COMFY_PROCESS is not None and _COMFY_PROCESS.poll() is None
         process, log_path = _ensure_comfyui()
+        startup_seconds = time.perf_counter() - startup_started
         client_id = uuid.uuid4().hex
         events = _ComfyEvents(client_id)
         events.start()
@@ -395,6 +423,7 @@ def _render_clip(payload, progress, generation_start):
         requested_prompt_id = str(uuid.uuid4())
         progress.snapshot["comfy_prompt_id"] = requested_prompt_id
         progress.publish()
+        execution_started = time.perf_counter()
         queued = _http_json("/prompt", {
             "prompt": graph, "client_id": client_id, "prompt_id": requested_prompt_id,
         })
@@ -405,31 +434,11 @@ def _render_clip(payload, progress, generation_start):
             raise RuntimeError("ComfyUI a renvoyé un identifiant de graphe inattendu.")
         source = _wait_for_video(str(prompt_id), prefix, process, log_path, events, progress)
         events.drain(progress)
+        execution_seconds = time.perf_counter() - execution_started
+        postprocess_started = time.perf_counter()
         with tempfile.TemporaryDirectory(prefix="studio-h3-output-") as directory:
             video_path = Path(directory) / "clip.mp4"
-            command = [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-i",
-                str(source),
-                "-map",
-                "0:v:0",
-                "-c:v",
-                "libx264",
-                "-crf",
-                "18",
-                "-pix_fmt",
-                "yuv420p",
-            ]
-            if payload["audio_mode"] == "native":
-                command.extend(["-map", "0:a:0", "-c:a", "aac", "-b:a", "192k"])
-            else:
-                command.append("-an")
-            command.extend(["-movflags", "+faststart", str(video_path)])
-            subprocess.run(command, check=True, capture_output=True, timeout=300)
+            output_method = _prepare_video(source, video_path, payload["audio_mode"])
             metadata = _probe_video(video_path)
             if (metadata["width"], metadata["height"], metadata["frames"]) != (
                 payload["width"],
@@ -442,14 +451,21 @@ def _render_clip(payload, progress, generation_start):
             metadata.update(
                 {
                     "generation_seconds": round(time.perf_counter() - generation_start, 3),
-                    "engine": "MiniMax H3 / FastH3 V2",
+                    "comfy_startup_seconds": round(startup_seconds, 3),
+                    "comfy_execution_seconds": round(execution_seconds, 3),
+                    "postprocess_seconds": round(time.perf_counter() - postprocess_started, 3),
+                    "output_method": output_method,
+                    "comfy_process_reused": process_reused,
+                    "engine": h3_profile(payload.get("video_profile", "fast"))["label"],
+                    "model_file": h3_profile(payload.get("video_profile", "fast"))["model_file"],
+                    "video_profile": payload.get("video_profile", "fast"),
                     "steps": payload["steps"],
                     "seed": payload["seed"],
                     "audio_mode": payload["audio_mode"],
                     "requested_duration_sec": payload["requested_duration_sec"],
                     "continuity_mode": payload["continuity_mode"],
                     "comfyui_revision": H3_COMFYUI_REVISION,
-                    "reference_mode_experimental": image_name is not None,
+                    "reference_mode_experimental": image_name is not None and payload.get("video_profile", "fast") == "fast",
                 }
             )
             video_base64 = base64.b64encode(video_path.read_bytes()).decode("ascii")

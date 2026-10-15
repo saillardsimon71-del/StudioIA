@@ -52,6 +52,52 @@ def test_native_identifier_case_collision_is_rejected():
         series_planner.normalize_plan(plan, {"entities": []})
 
 
+def test_native_accented_identifier_is_consistent_without_changing_dialogue():
+    plan = native_plan()
+    plan = json.loads(json.dumps(plan).replace('"keeper"', '"CÉLESTIN"'))
+    plan["scenes"][0]["shots"][0]["dialogue"] = "Célestin, réponds !"
+    result = series_planner.normalize_plan(plan, {"entities": []})
+    assert set(result["render_canon"]["characters"]) == {"celestin"}
+    assert result["scenes"][0]["shots"][0]["speaker"] == "celestin"
+    assert result["scenes"][0]["shots"][0]["dialogue"] == "Célestin, réponds !"
+
+
+def test_native_accent_normalization_does_not_merge_distinct_canon_entries():
+    plan = native_plan()
+    plan["render_canon"]["props"].update({"clé": "A brass key.", "cle": "A different key."})
+    with pytest.raises(ValueError, match="collision"):
+        series_planner.normalize_plan(plan, {"entities": []})
+
+
+@pytest.mark.asyncio
+async def test_invalid_literal_label_is_repaired_without_rewriting_the_story(monkeypatch):
+    calls = []
+    label = {"key": "material", "text": "POLYSTYRÈNE", "x": 0.5, "y": 0.8, "event": "reveal"}
+
+    async def generate(messages, **options):
+        calls.append(copy.deepcopy(messages))
+        if len(calls) == 1:
+            plan = realization_plan()
+            plan["scenes"][0]["shots"][0]["screen_text"] = [{
+                "text": "POLYSTYRÈNE", "value": "POLYSTYRÈNE",
+                "target_prop_key": "case", "placement": "On the case.", "x": 0.5, "y": 0.8,
+            }]
+            return plan
+        return {"values": {"field_1": [label]}}
+
+    monkeypatch.setattr(series_planner, "generate_structured", generate)
+    result = await series_planner.plan_episode(
+        {"entities": [], "prompt_contract_version": 2, "target_seconds": 32.5, "language": "fr"},
+        "Une matière inattendue.", "",
+    )
+    assert len(calls) == 2
+    requested = json.loads(calls[1][-1]["content"])["repair_fields"]
+    assert [field["path"] for field in requested] == [["scenes", 0, "shots", 0, "screen_text"]]
+    assert result["scenes"][0]["shots"][0]["screen_text"][0]["text"] == "POLYSTYRÈNE"
+    assert [shot["dialogue"] for shot in result["scenes"][0]["shots"]
+            if shot.get("purpose") != "midroll"] == [f"Line {index}." for index in range(6)]
+
+
 @pytest.mark.asyncio
 async def test_native_repair_can_replace_a_malformed_scene_list(monkeypatch):
     calls = []
@@ -402,17 +448,19 @@ def test_useful_window_preserves_a_measured_silent_payoff():
     assert start <= 0.5 and 6.5 <= end <= 8
 
 
-def test_native_export_keeps_unreviewed_action_before_and_after_speech():
+def test_native_export_keeps_speech_without_a_full_take_for_each_gesture():
     from calliope.studio.export import _window_for
     clip = {"prompt_contract_version": 2, "beat_sec": 3, "audio_mode": "native",
             "dialogue": "Pose la mallette.", "action": "Keeper lifts the case.",
             "reaction": "A fish jumps out.", "transcript": {"status": "ok", "speech_intervals": [[2, 2.5]], "segments": [
                 {"words": [{"word": "Pose", "start": 2, "end": 2.5}]}]}}
     start, end = _window_for(clip, {"duration_sec": 8})
-    assert start == 0 and end == 8
+    assert start == pytest.approx(1.7916667)
+    assert end == pytest.approx(2.875)
 
 
 def test_prompt_preview_is_read_only_and_checks_project_ownership(client, monkeypatch):
+    monkeypatch.setattr(service.settings, "studio_video_profile", "fast")
     project = persisted_episode(client, monkeypatch, native_plan())
     shot = service.board(project)["scenes"][0]["shots"][0]
     with service.database() as conn:
@@ -431,6 +479,7 @@ def test_prompt_preview_is_read_only_and_checks_project_ownership(client, monkey
 
 
 def test_native_edit_can_make_a_silent_character_speak(client, monkeypatch):
+    monkeypatch.setattr(service.settings, "studio_video_profile", "fast")
     plan = native_plan()
     plan["entities"].append({"key": "extra", "kind": "character", "name": "Extra", "description": "A visitor."})
     plan["render_canon"]["characters"]["extra"] = {
@@ -448,6 +497,7 @@ def test_native_edit_can_make_a_silent_character_speak(client, monkeypatch):
 
 
 def test_native_raw_dialogue_edit_keeps_a_speaker_id(client, monkeypatch):
+    monkeypatch.setattr(service.settings, "studio_video_profile", "fast")
     project = persisted_episode(client, monkeypatch, native_plan())
     shot = service.board(project)["scenes"][0]["shots"][0]
     service.update_shot(project, shot["id"], {"dialogue_turns": [], "dialogue": "Stop."})
@@ -485,17 +535,62 @@ def test_native_first_frame_prompt_does_not_repeat_internal_scene_inventory():
     assert context["render_canon"]["locations"]["tower"] not in prompt
     assert context["render_canon"]["props"]["case"] not in prompt
     assert shot["prompt"] in prompt and "Keeper (S1)" in prompt
-    assert "After the last line" in prompt
     assert shot == original
 
 
-def test_native_trim_preserves_first_and_last_turn_gestures():
+def test_native_first_frame_keeps_action_and_camera_without_recomposing_the_still():
+    from calliope.studio.h3_prompt import compile_h3_prompt
+
+    context = native_plan()
+    shot = context["scenes"][0]["shots"][0] | {
+        "blocking": "Keeper sits on the right.", "framing": "Extreme close-up of Keeper.",
+        "camera": "Slow sideways tracking movement.", "action": "Keeper opens the brass case.",
+    }
+    prompt = compile_h3_prompt(shot, context, first_frame=True)
+    assert "Keeper sits on the right" not in prompt
+    assert "Extreme close-up of Keeper" not in prompt
+    assert "Slow sideways tracking movement" in prompt
+    assert "Keeper opens the brass case" in prompt
+    assert "<d>[English] Line 0.</d>" in prompt
+    independent = compile_h3_prompt(shot, context)
+    assert "Keeper sits on the right" in independent
+
+
+def test_native_dialogue_gestures_do_not_disable_speech_trimming():
     from calliope.studio.export import _window_for
     clip = {"prompt_contract_version": 2, "beat_sec": 3, "audio_mode": "native", "dialogue": "Stop.",
             "dialogue_turns": [{"speaker": "keeper", "text": "Stop.", "action": "Keeper lifts the case.",
                                 "reaction": "A fish jumps out."}],
             "transcript": {"status": "ok", "speech_intervals": [[2, 2.5]]}}
-    assert _window_for(clip, {"duration_sec": 8}) == (0, 8)
+    start, end = _window_for(clip, {"duration_sec": 8})
+    assert start == pytest.approx(1.7916667)
+    assert end == pytest.approx(2.875)
+
+
+@pytest.mark.parametrize("audio_mode,dialogue,voice,duration,expected", [
+    ("native", "Stop.", [(2, 2.5)], 3, (1.7916667, 2.875)),
+    ("native", "Stop.", [(0.5, 2)], 5, (0.2916667, 2.375)),
+    ("native", "Stop.", None, 3, (0, 8)),
+    ("silent", "", None, 6, (0, 6)),
+])
+def test_native_production_and_export_choose_the_same_window(
+    client, monkeypatch, audio_mode, dialogue, voice, duration, expected
+):
+    from calliope.studio.export import _window_for
+
+    shot = {"id": 700, "prompt_contract_version": 2, "duration_sec": duration,
+            "audio_mode": audio_mode, "dialogue": dialogue,
+            "action": "Keeper raises a finger.", "reaction": "Keeper frowns."}
+    monkeypatch.setattr(production, "selected_video", lambda _: {"metadata": {"duration_sec": 8}})
+    cuts = []
+    monkeypatch.setattr(service, "save_trim", lambda conn, identifier, start, end:
+                        cuts.append((start, end)) or True)
+    production.trim_take(shot, voice)
+    clip = shot | {"beat_sec": duration, "transcript": {
+        "status": "ok" if voice else "unknown", "speech_intervals": voice}}
+    exported = _window_for(clip, {"duration_sec": 8})
+    assert exported == pytest.approx(expected)
+    assert (cuts[0] if cuts else (0, 8)) == pytest.approx(expected)
 
 
 def test_native_cta_ends_after_its_actual_speech_without_a_held_silence():
@@ -539,7 +634,7 @@ def test_native_full_take_does_not_store_a_rounded_trim(client, monkeypatch):
     monkeypatch.setattr(production, "selected_video", lambda current: {"metadata": {"duration_sec": 5.166667}})
     saved = []
     monkeypatch.setattr(service, "save_trim", lambda *args: saved.append(args) or False)
-    production.trim_take(shot, [(0.5, 2.0)])
+    production.trim_take(shot, [(0, 5.166667)])
     assert not saved
 
 

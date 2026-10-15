@@ -20,6 +20,7 @@
 	let notice = $state('');
 	let busy = $state('');
 	let restartRequestId = '';
+	const retakeRequests = new Map<number, string>();
 	let selectedId = $state<number | null>(null);
 	let editorDirty = $state(false);
 	let plannerOpen = $state(false);
@@ -123,6 +124,16 @@
 		if (shot.takes.some((take) => isActive(take.status))) return 'Rendu en cours';
 		return 'À préparer';
 	}
+	function retakeFrom(shot: Shot) {
+		if (active || busy || editorDirty) return;
+		if (!retakeRequests.has(shot.id)) retakeRequests.set(shot.id, newRequestId());
+		action('retake', async () => {
+			await studio.retakeFrom(projectId, shot.id, retakeRequests.get(shot.id)!);
+			retakeRequests.delete(shot.id);
+			selectedId = null; editorDirty = false;
+			notice = 'Nouvelle prise lancée. Les raccords dépendants seront refaits, les autres plans conservés.';
+		});
+	}
 	function exportFilm() {
 		if (editorDirty) { error = 'Enregistrez les changements du plan ouvert avant de lancer l\'export.'; return; }
 		action('export', async () => { await studio.export(projectId, newRequestId()); notice = 'Assemblage lancé. Le MP4 sera disponible ci-dessous.'; });
@@ -160,7 +171,7 @@
 				<button disabled={productionActive || !!busy || editorDirty} onclick={() => action('midroll', async () => { await studio.prepareMidroll(projectId); notice = "Incitation intégrée préparée. Ouvrez ce plan pour générer et valider sa nouvelle prise, puis réexportez."; })}>Intégrer l'incitation au milieu</button>
 				<p class="hint">Conserve les anciens plans et prises. Prépare le remplacement de l'outro sans lancer de rendu.</p>
 			{/if}
-			{#if board.episode}<label>Production<select value={board.episode.production_mode} disabled={active || !!busy || editorDirty} onchange={(event) => action('mode', async () => { await studio.setProductionMode(projectId, event.currentTarget.value as 'automatic' | 'manual'); notice = 'Mode appliqué à cet épisode et aux prochains. Vos prises sont conservées.'; })}><option value="automatic">Automatique jusqu'au MP4</option><option value="manual">Validation manuelle</option></select></label><p class="hint">Le mode automatique conserve le contrôle audio et une relance maximum. Il s'arrête si un défaut persiste ou si un ancrage de texte exige une vérification.</p>{/if}
+			{#if board.episode}<label>Production<select value={board.episode.production_mode} disabled={active || !!busy || editorDirty} onchange={(event) => action('mode', async () => { await studio.setProductionMode(projectId, event.currentTarget.value as 'automatic' | 'manual'); notice = 'Mode appliqué à cet épisode et aux prochains. Vos prises sont conservées.'; })}><option value="automatic">Automatique jusqu'au MP4</option><option value="manual">Validation manuelle</option></select></label><p class="hint">Le diagnostic de parole aide à relire les prises sans les rejeter automatiquement. Une piste audio absente ou un ancrage de texte non vérifié peut encore interrompre la production.</p>{/if}
 			{#if board.episode && board.production && ['paused', 'failed'].includes(board.production.status)}<div class="stack"><button disabled={!!busy || editorDirty || !shots.length} onclick={() => action('visual-contract', async () => { await studio.refreshVisualContract(projectId); notice = 'Contrat visuel préparé sans génération. Vérifiez les références et les zones avant de reprendre.'; })}>Préparer le contrat visuel depuis la série</button><p class="hint">Applique les identités et options actuelles à cet épisode, conserve ses prises et demande leur vérification. Les valeurs manquantes doivent être renseignées dans les plans.</p></div>{/if}
 			<div class="between board-heading"><div class="stack title-stack"><h1>{board.project.title}</h1>{#if board.project.idea}<p class="muted project-idea">{board.project.idea}</p>{/if}</div><div class="row"><button class="small" disabled={productionActive || !!board.scenes.length || !!busy} onclick={() => plannerOpen = true}>Préparer les scènes</button><button class="small subtle" onclick={() => refresh()}>Actualiser</button></div></div>
 			{#if dryRun}<p class="error">Simulation active: aucun média réel ne sera généré. Désactivez-la dans les services.</p>{/if}
@@ -180,7 +191,10 @@
 								{#if video?.url}<!-- svelte-ignore a11y_media_has_caption (Les prises importées ou générées n'ont pas de sous-titres.) --><video src={video.url} poster={video.poster_url ?? undefined} muted={shot.audio_mode === 'silent'} controls playsinline preload="metadata"></video>{:else if image?.url}<img src={image.url} alt={`Référence du plan ${sceneIndex + 1}.${shotIndex + 1}`} loading="lazy" />{:else}<span class="media-empty">{shot.takes.some((take) => take.kind === 'video' && take.url) ? 'Une prise est prête à choisir' : 'Aucune vidéo choisie'}</span>{/if}
 							</div>
 							<div class="shot-copy"><div class="row"><span class="shot-number">Plan {sceneIndex + 1}.{shotIndex + 1}</span><span class:approved={shot.approved} class:pending={!shot.approved && !!shot.selected_video_id} class="badge">{shotStatus(shot)}</span></div><h3>{shot.description || 'Plan sans titre'}</h3><p class="shot-prompt muted">{shot.prompt || 'Décrivez ce plan dans l\'éditeur.'}</p><p class="hint">{shot.duration_sec} s - {shot.audio_mode === 'silent' ? 'Sans son' : 'Son natif'} - {shot.takes.filter((take) => take.kind === 'video').length} prises vidéo{#if video} - Prise {video.id} choisie{/if}</p><button class:primary={selectedId !== shot.id} disabled={productionActive} onclick={() => openShot(shot)}>{selectedId === shot.id ? 'Plan ouvert' : 'Ouvrir le plan'}</button></div>
-							<div class="shot-order"><button class="small subtle" aria-label={`Monter le plan ${sceneIndex + 1}.${shotIndex + 1}`} disabled={productionActive || !!busy || shotIndex === 0} onclick={() => moveShot(scene, shot.id, -1)}>Monter</button><button class="small subtle" aria-label={`Descendre le plan ${sceneIndex + 1}.${shotIndex + 1}`} disabled={productionActive || !!busy || shotIndex === scene.shots.length - 1} onclick={() => moveShot(scene, shot.id, 1)}>Descendre</button><button class="small subtle danger" disabled={productionActive || !!busy || scene.shots.length <= 1} onclick={() => deleteShot(shot)}>Supprimer</button></div>
+							<div class="shot-order">
+								{#if board.episode && shot.takes.some((take) => take.kind === 'video' && take.url)}<button disabled={active || !!busy || editorDirty} onclick={() => retakeFrom(shot)} title="Refait ce plan et les prises qui continuent son image finale. Les anciennes prises sont conservées.">Refaire ce plan et les raccords</button>{/if}
+								<button class="small subtle" aria-label={`Monter le plan ${sceneIndex + 1}.${shotIndex + 1}`} disabled={productionActive || !!busy || shotIndex === 0} onclick={() => moveShot(scene, shot.id, -1)}>Monter</button><button class="small subtle" aria-label={`Descendre le plan ${sceneIndex + 1}.${shotIndex + 1}`} disabled={productionActive || !!busy || shotIndex === scene.shots.length - 1} onclick={() => moveShot(scene, shot.id, 1)}>Descendre</button><button class="small subtle danger" disabled={productionActive || !!busy || scene.shots.length <= 1} onclick={() => deleteShot(shot)}>Supprimer</button>
+							</div>
 						</article>
 					{/each}</div>
 					<button class="small add-shot" disabled={productionActive || !!busy} onclick={() => addShot(scene)}>Ajouter un plan à cette scène</button>

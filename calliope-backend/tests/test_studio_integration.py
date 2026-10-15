@@ -236,7 +236,7 @@ async def test_failed_parent_does_not_launch_dependent_and_drains_running_tasks(
     from calliope.studio import production
 
     monkeypatch.setattr(settings, "studio_video_concurrency", 2)
-    started, cancelled = [], []
+    started, completed = [], []
 
     async def checkpoint(*args):
         pass
@@ -246,11 +246,8 @@ async def test_failed_parent_does_not_launch_dependent_and_drains_running_tasks(
         if shot["id"] == 1:
             await asyncio.sleep(0.01)
             raise ValueError("QC failure")
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            cancelled.append(shot["id"])
-            raise
+        await asyncio.sleep(0.02)
+        completed.append(shot["id"])
 
     monkeypatch.setattr(production, "checkpoint", checkpoint)
     monkeypatch.setattr(production, "render_shot", render)
@@ -264,7 +261,7 @@ async def test_failed_parent_does_not_launch_dependent_and_drains_running_tasks(
             ],
             lambda: False,
         )
-    assert started == [1, 3] and cancelled == [3]
+    assert started == [1, 3] and completed == [3]
 
 
 def test_parent_owned_children_are_not_claimed_and_cancel_propagates(client, monkeypatch):

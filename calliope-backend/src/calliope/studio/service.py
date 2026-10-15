@@ -3,6 +3,7 @@ import base64
 import hashlib
 import io
 import json
+import logging
 import math
 import secrets
 import subprocess
@@ -20,6 +21,8 @@ from calliope.config import settings
 from calliope.db import ensure_default_clip, get_db
 from calliope.events.bus import event_bus
 from calliope.queue.manager import modal_call_unfinished, queue_manager
+
+logger = logging.getLogger(__name__)
 
 
 class StudioCancelledError(RuntimeError):
@@ -71,6 +74,20 @@ def shot_context(conn, shot_id):
     context["shot"] = json.loads(row["shot_json"] or "{}") if row else {}
     context["prompt_contract_version"] = plan.get("prompt_contract_version", 1)
     context["render_canon"] = plan.get("render_canon", {})
+    if context["prompt_contract_version"] == 2:
+        for entity in context["entities"]:
+            identity = entity.get("identity") or {}
+            description = str(identity.get("visual_description") or "").strip()
+            if not identity.get("reference_approved") or not entity.get("reference_path") or not description:
+                continue
+            canon = context["render_canon"].get(
+                "characters" if entity["kind"] == "character" else "locations", {}
+            )
+            if entity["key"] in canon:
+                if entity["kind"] == "character":
+                    canon[entity["key"]]["appearance"] = description
+                else:
+                    canon[entity["key"]] = description
     context["speaker_ids"] = (plan.get("speaker_ids") or {}) if context["prompt_contract_version"] == 2 else (
         (plan.get("speaker_ids") or {}) | (context.get("speaker_ids") or {})
     )
@@ -78,7 +95,7 @@ def shot_context(conn, shot_id):
 
 
 def preview_prompts(project_id, shot_id):
-    from calliope.studio.h3_prompt import compile_h3_prompt
+    from calliope.studio.h3_prompt import compile_video_prompt
     from calliope.studio.visual_identity import compile_image_request
 
     with database() as conn:
@@ -97,8 +114,8 @@ def preview_prompts(project_id, shot_id):
         try:
             return {
                 "image_prompt": compile_image_request(shot, context)["prompt"],
-                "video_prompt": compile_h3_prompt(shot | context["shot"], context,
-                                                  first_frame=source_status != "pending_source"),
+                "video_prompt": compile_video_prompt(shot | context["shot"], context,
+                    first_frame=source_status != "pending_source", video_profile=settings.studio_video_profile),
                 "prompt_contract_version": context["prompt_contract_version"],
                 "source_status": source_status,
             }
@@ -1028,10 +1045,11 @@ def enqueue_takes(shot_id, data):
                 raise HTTPException(422, str(exc)) from None
             prompt = image_inputs["prompt"]
         if kind == "video":
-            from calliope.studio.h3_prompt import compile_h3_prompt, spoken_dialogue
+            from calliope.studio.h3_prompt import compile_video_prompt, spoken_dialogue
 
-            prompt = compile_h3_prompt(
-                shot | context.get("shot", {}), context, first_frame=bool(source)
+            prompt = compile_video_prompt(
+                shot | context.get("shot", {}), context, first_frame=bool(source),
+                video_profile=settings.studio_video_profile,
             )
         parameters = {
             "prompt": prompt,
@@ -1049,6 +1067,7 @@ def enqueue_takes(shot_id, data):
         }
         if kind == "video":
             parameters.update(
+                video_profile=settings.studio_video_profile,
                 context=context,
                 expected_dialogue=spoken_dialogue(shot | context.get("shot", {}), context),
             )
@@ -1082,6 +1101,9 @@ def enqueue_takes(shot_id, data):
                     parameters["source_frame_sha256"] = review["source_frame_sha256"]
         if image_inputs:
             parameters.update(image_inputs)
+            parameters["image_provider"] = settings.studio_image_provider
+            if settings.studio_image_provider == "codex":
+                parameters["image_model"] = "codex-imagegen"
         fingerprint = hashlib.sha256(
             json.dumps(
                 {"parameters": parameters, "n_takes": data["n_takes"], "seed": data.get("seed")},
@@ -1173,6 +1195,7 @@ def enqueue_takes(shot_id, data):
                     seed,
                     "FastH3 8-Step V2 / MiniMax H3"
                     if kind == "video"
+                    else "Codex imagegen" if settings.studio_image_provider == "codex"
                     else settings.studio_image_model,
                     source["id"] if source else None,
                     data["request_id"],
@@ -1192,6 +1215,7 @@ def enqueue_takes(shot_id, data):
                     json.dumps(
                         {
                             "studio_take_id": take_id,
+                            "video_batch_last": bool(data.get('video_batch_last')),
                             **(
                                 {"parent_job_id": data["parent_job_id"]}
                                 if data.get("parent_job_id")
@@ -1238,15 +1262,21 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
             'SELECT c.id FROM clips c JOIN scenes s ON s.id=c.scene_id WHERE c.project_id=? '
             'ORDER BY s.order_index,s.id,c.order_index,c.id', (project_id,),
         ).fetchall()]
-        if conn.execute(
-            "SELECT 1 FROM studio_episodes WHERE project_id=?", (project_id,)
-        ).fetchone():
+        episode = conn.execute(
+            "SELECT context_json FROM studio_episodes WHERE project_id=?", (project_id,)
+        ).fetchone()
+        if episode:
+            at_end = json.loads(episode["context_json"]).get("directing_profile", {}).get("cta_placement") == "end"
             promotions = [i for i, shot in enumerate(shots) if shot.get("purpose") == "midroll"]
-            if len(promotions) != 1 or promotions[0] in (0, len(shots) - 1) or any(
+            valid_position = len(promotions) == 1 and (
+                promotions[0] == len(shots) - 1 if at_end else 0 < promotions[0] < len(shots) - 1
+            )
+            if not valid_position or any(
                 shot.get("purpose") == "outro" for shot in shots
             ):
+                position = "à la fin du récit" if at_end else "au milieu du récit"
                 raise HTTPException(
-                    409, "L'épisode doit contenir une seule incitation au milieu du récit. "
+                    409, f"L'épisode doit contenir une seule incitation {position}. "
                     "Préparez l'incitation intégrée avant d'exporter.",
                 )
     evaluated = {}
@@ -1358,6 +1388,13 @@ async def _generate_image(request, *, check_cancel=None):
     from calliope.studio.visual_identity import verify_reference_inputs
 
     verify_reference_inputs(request)
+    if request.get("image_provider", "api") != settings.studio_image_provider:
+        raise ValueError("Le générateur d'images a changé. Créez une nouvelle prise avec les réglages actuels.")
+    if request.get("image_provider") == "codex":
+        from calliope.studio.codex_image import generate
+        content, metadata = await generate(request, check_cancel=check_cancel)
+        content, dimensions = normalized_image(content)
+        return content, metadata | dimensions
     if request["image_base_url"].rstrip("/") != settings.studio_image_base_url.rstrip("/"):
         raise ValueError(
             "Le service d'images a changé depuis cette demande. "
@@ -1377,7 +1414,7 @@ async def _generate_image(request, *, check_cancel=None):
         else {}
     )
     size = {"16:9": "1792x1024", "9:16": "1024x1792", "1:1": "1024x1024"}[request["aspect_ratio"]]
-    async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(180, read=600), follow_redirects=True) as client:
         payload = {
             "model": request["image_model"], "prompt": request["prompt"], "size": size, "n": 1,
         }
@@ -1395,16 +1432,29 @@ async def _generate_image(request, *, check_cancel=None):
             for attempt in range(4):
                 if check_cancel:
                     await check_cancel()
-                response = await client.post(
-                    request["image_base_url"].rstrip("/") + "/images/generations",
-                    headers=headers, json=payload,
-                )
-                if (
-                    response.status_code != 503
-                    or "image queue is full" not in response.text.lower()
-                    or attempt == 3
-                ):
-                    break
+                try:
+                    response = await client.post(
+                        request["image_base_url"].rstrip("/") + "/images/generations",
+                        headers=headers, json=payload,
+                    )
+                except httpx.ReadTimeout as exc:
+                    raise ValueError(
+                        "Le service d'images est resté sans réponse pendant dix minutes. "
+                        "Reprenez la production pour réessayer."
+                    ) from exc
+                except httpx.ReadError as exc:
+                    if attempt == 3:
+                        raise ValueError(
+                            "Connexion au service d'images interrompue après quatre tentatives. "
+                            "Reprenez la production pour réessayer."
+                        ) from exc
+                else:
+                    if (
+                        response.status_code != 503
+                        or "image queue is full" not in response.text.lower()
+                        or attempt == 3
+                    ):
+                        break
                 for _ in range(10 * 2 ** attempt):
                     await asyncio.sleep(1)
                     if check_cancel:
@@ -1448,6 +1498,37 @@ async def _generate_image(request, *, check_cancel=None):
     return normalized_image(content)
 
 
+async def video_idle_window(seconds, *, job_id=-1, app_name=None, function_name=None, engine=None):
+    if settings.dry_run or settings.studio_video_profile != 'ltx':
+        return False
+    app_name = app_name or settings.studio_modal_app
+    function_name = function_name or settings.studio_modal_function
+    try:
+        if seconds == 2:
+            with database() as conn:
+                pending = conn.execute(
+                    "SELECT 1 FROM studio_takes t JOIN jobs j ON j.id=t.job_id "
+                    "WHERE t.kind='video' AND j.status IN ('pending','running') "
+                    "AND j.id<>? AND COALESCE(json_extract(j.payload_json,'$.parent_job_id'),-1)<>? "
+                    "AND json_extract(t.request_json,'$.modal_app')=? "
+                    "AND json_extract(t.request_json,'$.modal_function')=? LIMIT 1",
+                    (job_id, job_id, app_name, function_name),
+                ).fetchone()
+                other_batch = conn.execute(
+                    "SELECT 1 FROM studio_productions WHERE status='running' AND stage='video' "
+                    "AND job_id<>? LIMIT 1", (job_id,),
+                ).fetchone()
+            if pending or other_batch:
+                return False
+        from calliope.engines.modal_h3 import ModalH3Engine
+        engine = engine or ModalH3Engine(app_name, function_name)
+        await asyncio.wait_for(asyncio.to_thread(engine.set_idle_window, seconds), timeout=5)
+        return True
+    except Exception:
+        logger.warning('Unable to adjust Modal idle window to %ss', seconds, exc_info=True)
+        return False
+
+
 async def run_studio_job(job, payload, should_stop):
     if payload.get("studio_export_id"):
         return await _run_export(job, payload, should_stop)
@@ -1464,7 +1545,14 @@ async def run_studio_job(job, payload, should_stop):
         conn.commit()
     directory = settings.assets_dir / str(take["project_id"]) / "studio" / "takes" / str(take_id)
     directory.mkdir(parents=True, exist_ok=True)
+    standalone_video = take['kind'] == 'video' and not payload.get('parent_job_id')
+    telemetry = None
+    control_engine = None
+    gpu_released = False
     try:
+        if standalone_video:
+            await video_idle_window(60, job_id=job['id'], app_name=request['modal_app'],
+                                    function_name=request['modal_function'])
         if not take["modal_call_id"]:
             from calliope.studio.visual_identity import (
                 compile_image_request,
@@ -1546,11 +1634,20 @@ async def run_studio_job(job, payload, should_stop):
             from calliope.engines.modal_h3 import ModalH3Engine, build_request
             from calliope.studio.export import inspect_media
 
-            engine = ModalH3Engine(request["modal_app"], request["modal_function"])
+            batch = job.get('video_preparation')
+            if batch and (batch['modal_app'], batch['modal_function']) != (
+                request['modal_app'], request['modal_function'],
+            ):
+                raise ValueError('Le moteur vidéo a changé après la préparation.')
+            engine = batch['engine'] if batch and batch.get('concurrency', settings.studio_video_concurrency) == 1 else (
+                ModalH3Engine(request["modal_app"], request["modal_function"])
+            )
+            control_engine = engine
             call_id = take["modal_call_id"]
             state = json.loads(take["render_state_json"] or "{}")
             if "identity" not in state and hasattr(engine, "identity"):
-                render_event(take_id, identity=await asyncio.to_thread(engine.identity))
+                render_event(take_id, identity=batch['identity'] if batch else
+                             await asyncio.to_thread(engine.identity))
             started_at = state.get("resume_started_at") or state.get("started_at") or utc_now()
             render_event(
                 take_id,
@@ -1565,20 +1662,30 @@ async def run_studio_job(job, payload, should_stop):
                         "Soumission Modal interrompue avant sa confirmation. "
                         "Vérifiez les appels Modal avant de relancer ce plan."
                     )
-                prepared = await asyncio.to_thread(
-                    build_request,
-                    prompt=request["prompt"],
-                    duration_sec=request["duration_sec"],
-                    aspect_ratio=request["aspect_ratio"],
-                    seed=request["seed"],
-                    image_path=Path(request["image_path"]) if request["image_path"] else None,
-                    previous_video_path=Path(request["previous_video_path"])
-                    if request["previous_video_path"]
-                    else None,
-                    audio_mode=request["audio_mode"],
-                    trace_id=request.get("trace_id"),
-                    previous_video_time=request.get("previous_video_time"),
-                )
+                if batch:
+                    from calliope.studio.video_preparation import prepared_request
+
+                    prepared = await asyncio.to_thread(
+                        prepared_request, request, batch['shots'][take['clip_id']],
+                    )
+                    render_event(take_id, inputs_prepared_before_gpu=True,
+                                 batch_preparation_seconds=batch['preparation_seconds'])
+                else:
+                    prepared = await asyncio.to_thread(
+                        build_request,
+                        prompt=request["prompt"],
+                        duration_sec=request["duration_sec"],
+                        aspect_ratio=request["aspect_ratio"],
+                        seed=request["seed"],
+                        image_path=Path(request["image_path"]) if request["image_path"] else None,
+                        previous_video_path=Path(request["previous_video_path"])
+                        if request["previous_video_path"]
+                        else None,
+                        audio_mode=request["audio_mode"],
+                        trace_id=request.get("trace_id"),
+                        previous_video_time=request.get("previous_video_time"),
+                        video_profile=request.get("video_profile", "fast"),
+                    )
                 if should_stop():
                     raise asyncio.CancelledError()
                 if queue_manager.is_cancelled(job["id"]):
@@ -1625,16 +1732,18 @@ async def run_studio_job(job, payload, should_stop):
                 "WAITING_FOR_GPU",
                 "Appel soumis; allocation et démarrage non distingués",
             )
+
+            async def fetch_progress():
+                snapshot = await asyncio.to_thread(engine.progress, request['trace_id'])
+                if snapshot and not getattr(engine, 'remote_terminal', False):
+                    render_event(take_id, snapshot=snapshot)
+
             while True:
                 if queue_manager.is_cancelled(job["id"]):
                     await cancel_modal_take(take_id)
                     raise StudioCancelledError()
                 if should_stop():
                     raise asyncio.CancelledError()
-                if request.get("trace_id") and hasattr(engine, "progress"):
-                    snapshot = await asyncio.to_thread(engine.progress, request["trace_id"])
-                    if snapshot:
-                        render_event(take_id, snapshot=snapshot)
                 elapsed = (
                     datetime.now(timezone.utc) - datetime.fromisoformat(started_at)
                 ).total_seconds()
@@ -1665,7 +1774,21 @@ async def run_studio_job(job, payload, should_stop):
                         remote_terminal=True,
                         remote_terminal_reason="result_received",
                     )
+                    if payload.get('video_batch_last') or standalone_video:
+                        gpu_released = await video_idle_window(
+                            2, job_id=payload.get('parent_job_id') or job['id'],
+                            app_name=request['modal_app'], function_name=request['modal_function'],
+                            engine=engine,
+                        )
+                        if batch:
+                            batch['gpu_released'] = gpu_released
                     break
+                if request.get("trace_id") and hasattr(engine, "progress"):
+                    if telemetry and telemetry.done():
+                        telemetry.result()
+                        telemetry = None
+                    if telemetry is None:
+                        telemetry = asyncio.create_task(fetch_progress())
                 await event_bus.publish(
                     "job.progress",
                     {
@@ -1742,6 +1865,13 @@ async def run_studio_job(job, payload, should_stop):
             )
             conn.commit()
         raise RuntimeError(safe_error(exc)) from None
+    finally:
+        if telemetry:
+            telemetry.cancel()
+            await asyncio.gather(telemetry, return_exceptions=True)
+        if standalone_video and not gpu_released:
+            await video_idle_window(2, job_id=job['id'], app_name=request['modal_app'],
+                                    function_name=request['modal_function'], engine=control_engine)
 
 
 async def _run_export(job, payload, should_stop):

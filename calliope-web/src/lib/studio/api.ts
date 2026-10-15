@@ -279,15 +279,20 @@ export interface DirectingProfile {
   require_reference_approval: boolean;
   production_mode: "automatic" | "manual";
   transitions: "cuts" | "scene_fades";
+  cta_placement: "middle" | "end";
 }
 
 export interface StudioConfig {
+  pipeline_revision?: string;
+  restart_required?: boolean;
   modal_app: string;
   modal_function: string;
+  video_profile: 'fast' | 'quality' | 'ltx';
   llm_base_url: string;
   llm_model: string;
   llm_configured: boolean;
   image_base_url: string;
+  image_provider: 'api' | 'codex';
   image_model: string;
   image_configured: boolean;
   dry_run: boolean;
@@ -394,6 +399,8 @@ export const studio = {
     request<Board>(`/projects/${id}/production/pause`, "POST"),
   resumeProduction: (id: number) =>
     request<Board>(`/projects/${id}/production/resume`, "POST"),
+  retakeFrom: (id: number, shotId: number, requestId: string) =>
+    request<Board>(`/projects/${id}/shots/${shotId}/retake`, "POST", { request_id: requestId }),
   prepareMidroll: (id: number) =>
     request<Board>(`/projects/${id}/midroll`, "POST"),
   setProductionMode: (id: number, mode: "automatic" | "manual") =>

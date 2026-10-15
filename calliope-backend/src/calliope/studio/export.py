@@ -108,10 +108,6 @@ def _window_for(clip, probe):
     if beat <= 0:
         return 0.0, probe_sec
     native = clip.get("prompt_contract_version") == 2
-    turns = clip.get("dialogue_turns") or []
-    final_reaction = clip.get("reaction") or (turns[-1].get("reaction") if turns else "")
-    opening_action = clip.get("action") or (turns[0].get("action") if turns else "")
-    preserve_end = probe_sec if native and final_reaction else None
     if (
         clip.get("audio_mode") == "native"
         and str(clip.get("dialogue") or "").strip()
@@ -119,7 +115,7 @@ def _window_for(clip, probe):
         transcript = clip.get("transcript") or {}
         if transcript.get("status") != "ok" or not transcript.get("speech_intervals"):
             return 0.0, probe_sec
-        if clip.get("trim_to_speech") or (native and clip.get("purpose") == "midroll"):
+        if clip.get("trim_to_speech") or native:
             aside = native and clip.get("purpose") == "midroll"
             start, end = pacing.speech_window(
                 probe_sec, transcript["speech_intervals"],
@@ -127,10 +123,10 @@ def _window_for(clip, probe):
                 pre_roll_sec=pacing.ASIDE_PRE_ROLL_SEC if aside else pacing.PRE_ROLL_SEC,
             )
         else:
-            start, end = pacing.useful_window(beat, probe_sec, transcript["speech_intervals"], preserve_end_sec=preserve_end)
+            start, end = pacing.useful_window(beat, probe_sec, transcript["speech_intervals"])
     else:
-        start, end = pacing.useful_window(beat, probe_sec, None, preserve_end_sec=preserve_end)
-    return (0 if native and opening_action and clip.get("purpose") != "midroll" else start), end
+        start, end = pacing.useful_window(beat, probe_sec)
+    return start, end
 
 
 def _check_target(duration, target, stage):

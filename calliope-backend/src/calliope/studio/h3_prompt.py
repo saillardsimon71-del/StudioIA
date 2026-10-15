@@ -25,6 +25,7 @@ class DirectingProfile(BaseModel):
     require_reference_approval: bool = False
     production_mode: Literal["automatic", "manual"] = "automatic"
     transitions: Literal["cuts", "scene_fades"] = "scene_fades"
+    cta_placement: Literal["middle", "end"] = "middle"
 
     @model_validator(mode="before")
     @classmethod
@@ -151,10 +152,11 @@ def _compile_native_prompt(shot, context, first_frame):
             parts.append(prose(canon["props"][key]))
         for key, state in shot.get("start_state", {}).items():
             parts.append(f"At the start, {key}: {prose(state)}")
-    for field in ("prompt", "blocking", "framing", "camera"):
+    fields = ("prompt", "camera") if first_frame else ("prompt", "blocking", "framing", "camera")
+    for field in fields:
         if shot.get(field):
             parts.append(prose(shot[field]))
-    if not shot.get("framing") and profile["framing"] == "close_preferred":
+    if not first_frame and not shot.get("framing") and profile["framing"] == "close_preferred":
         parts.append("A shared composition with readable faces and the useful scene action.")
     if not shot.get("camera") and profile["camera"] in ("static", "subtle"):
         parts.append("The camera stays stable.")
@@ -188,13 +190,9 @@ def _compile_native_prompt(shot, context, first_frame):
     if dialogue and shot.get("purpose") == "midroll":
         parts.append("Keep the phrase continuous without pauses between the requests or before "
                      "the benefit. Finish immediately after the last word, without a held pose.")
-    if dialogue and shot.get("purpose") != "midroll":
-        if profile["silences"] == "brief":
-            parts.append("The final described reaction leads straight into the next beat, "
-                         "without settling into another waiting pose.")
-        else:
-            parts.append("After the last line, the scene continues through the described "
-                         "physical reactions and ambient sounds.")
+    if dialogue and shot.get("purpose") != "midroll" and profile["silences"] == "brief":
+        parts.append("The final described reaction leads straight into the next beat, "
+                     "without settling into another waiting pose.")
     if labels:
         parts.append("Clean blank label surfaces for the exact text added in editing.")
     soundscape = "N/A" if shot.get("audio_mode") == "silent" or shot.get("purpose") == "midroll" else prose(
@@ -206,6 +204,13 @@ def _compile_native_prompt(shot, context, first_frame):
         result = ("For the target video, at 0.00 seconds into the target video, "
                   "<Picture 1> (from [Shot 1]) is fully referenced.\n\n" + result)
     return result
+
+
+def compile_video_prompt(shot, context=None, first_frame=False, video_profile="fast"):
+    if video_profile == "ltx":
+        from calliope.studio.ltx_prompt import compile_ltx_prompt
+        return compile_ltx_prompt(shot, context or {}, first_frame)
+    return compile_h3_prompt(shot, context, first_frame)
 
 
 def compile_h3_prompt(shot, context=None, first_frame=False) -> str:

@@ -194,13 +194,16 @@ async def test_realization_cannot_silently_drop_or_reassign_a_line(monkeypatch):
     assert result["scenes"][0]["shots"][0]["dialogue"] == "Line 0."
 
 
-def test_computed_start_state_reaches_image_and_video_requests():
+def test_initial_composition_and_state_inventory_have_separate_render_roles():
     plan = series_planner.normalize_plan(technical_plan(), {"entities": []})
     shot = plan["scenes"][0]["shots"][1]
     context = plan | {"language": "fr", "shot": shot}
-    for prompt in (compile_image_request(shot, context)["prompt"], compile_h3_prompt(shot, context)):
-        assert "case: Closed on the desk." in prompt
-        assert prompt.count("case: Closed on the desk.") == 1
+    image = compile_image_request(shot, context)["prompt"]
+    assert shot["image_prompt"] in image
+    assert "case: Closed on the desk." not in image
+    video = compile_h3_prompt(shot, context)
+    assert video.count("case: Closed on the desk.") == 1
+    assert "case: Closed on the desk." not in compile_h3_prompt(shot, context, first_frame=True)
 
 
 @pytest.mark.asyncio

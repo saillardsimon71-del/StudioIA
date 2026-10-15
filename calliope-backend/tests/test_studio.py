@@ -33,6 +33,8 @@ def mock_studio_telemetry(monkeypatch):
 
     monkeypatch.setattr(ModalH3Engine, "progress", lambda *args: None)
     monkeypatch.setattr(ModalH3Engine, "identity", lambda *args: {"workspace": None})
+    monkeypatch.setattr(ModalH3Engine, "check_available", lambda *args: {"ok": True})
+    monkeypatch.setattr(ModalH3Engine, "set_idle_window", lambda *args: None)
 
 
 def new_board(client):
@@ -117,9 +119,11 @@ def test_script_becomes_persistent_scenes_and_shots(client):
 
 
 @pytest.mark.parametrize("audio_mode", ["native", "silent"])
-def test_video_request_preserves_dialogue_without_spoken_instructions(client, audio_mode):
+@pytest.mark.parametrize("video_profile", ["fast", "ltx"])
+def test_video_request_preserves_dialogue_without_spoken_instructions(client, monkeypatch, audio_mode, video_profile):
     import json
 
+    monkeypatch.setattr(settings, "studio_video_profile", video_profile)
     project_id, board = new_board(client)
     shot_id = board["scenes"][0]["shots"][0]["id"]
     visual_prompt = "A pear in a dark interrogation room."
@@ -137,7 +141,11 @@ def test_video_request_preserves_dialogue_without_spoken_instructions(client, au
     assert visual_prompt in prompt
     assert "say exactly" not in prompt
     assert "Spoken dialogue" not in prompt
-    assert (f"<d>[English] {dialogue}</d>" in prompt) is (audio_mode == "native")
+    if video_profile == "fast":
+        assert (f"<d>[English] {dialogue}</d>" in prompt) is (audio_mode == "native")
+    else:
+        assert (dialogue in prompt) is (audio_mode == "native")
+        assert "<d>" not in prompt
     with closing(get_db(settings.db_path)) as conn:
         saved = conn.execute(
             "SELECT request_json FROM studio_takes WHERE id=?", (take["id"],)
@@ -251,6 +259,23 @@ def test_config_never_returns_credentials(client):
     assert "text-test-secret" not in response.text
     assert "image-test-secret" not in response.text
     assert response.json()["llm_configured"] is True
+
+
+def test_config_identifies_code_changed_since_the_server_started(client, monkeypatch, tmp_path):
+    from calliope.studio import runtime
+
+    source = tmp_path / "prompt.py"
+    source.write_text("delivery = 'natural'", encoding="utf-8")
+    monkeypatch.setattr(runtime, "SOURCE_ROOT", tmp_path)
+    monkeypatch.setattr(runtime, "LOADED_REVISION", runtime.source_revision())
+    baseline = client.get("/api/studio/config").json()
+    assert baseline["restart_required"] is False
+    source.write_text("delivery = 'brisk'", encoding="utf-8")
+    changed = client.get("/api/studio/config").json()
+    assert changed["restart_required"] is True
+    assert changed["pipeline_revision"] == baseline["pipeline_revision"]
+    source.write_text("delivery = 'natural'", encoding="utf-8")
+    assert client.get("/api/studio/config").json()["restart_required"] is False
 
 
 def test_malformed_video_is_rejected_without_a_take(client):

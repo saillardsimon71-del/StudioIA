@@ -350,7 +350,8 @@ def test_turn_edits_and_exact_labels_reach_the_export_snapshot(client, monkeypat
     monkeypatch.setattr(series, "require_services", lambda: None)
     monkeypatch.setattr(queue_manager, "paused", True)
     created = client.post(
-        "/api/studio/series", json={"title": "Labels", "concept": "A reversal."}
+        "/api/studio/series", json={"title": "Labels", "concept": "A reversal.",
+                                   "directing_profile": {"cta_placement": "middle"}}
     ).json()
     project = client.post(f"/api/studio/series/{created['id']}/episodes",
                           json={"idea": "A reversal", "request_id": "one"}).json()["project_id"]

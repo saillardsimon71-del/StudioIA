@@ -59,7 +59,8 @@ def persisted_episode(client, monkeypatch, plan=None):
     monkeypatch.setattr(settings, "dry_run", False)
     monkeypatch.setattr(series, "require_services", lambda **kwargs: None)
     identifier = client.post(
-        "/api/studio/series", json={"title": "Tower", "concept": "A keeper."}
+        "/api/studio/series", json={"title": "Tower", "concept": "A keeper.",
+                                   "directing_profile":{"cta_placement":"middle"}}
     ).json()["id"]
     project = series.create_episode(identifier, {"idea": "A warning.", "request_id": "saved"})[
         "project_id"

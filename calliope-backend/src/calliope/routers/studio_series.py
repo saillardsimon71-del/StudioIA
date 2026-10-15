@@ -33,7 +33,12 @@ class SeriesCreate(BaseModel):
     language: str = Field(default="en", min_length=1, max_length=40)
     target_seconds: int = Field(default=65, ge=10, le=120)
     bible: BiblePatch = Field(default_factory=BiblePatch)
-    directing_profile: DirectingProfile = Field(default_factory=DirectingProfile)
+    directing_profile: DirectingProfile = Field(default_factory=lambda: DirectingProfile(cta_placement='end'))
+
+    @field_validator('directing_profile', mode='before')
+    @classmethod
+    def new_series_profile(cls, value):
+        return {'cta_placement':'end'} | value if isinstance(value, dict) else value
 
     @field_validator("title", "concept", "language")
     @classmethod
@@ -272,6 +277,11 @@ async def production_mode(project_id: int, payload: ProductionMode):
 @router.post("/projects/{project_id}/production/resume")
 async def resume(project_id: int):
     return series.resume(project_id)
+
+
+@router.post('/projects/{project_id}/shots/{shot_id}/retake')
+async def retake_shot(project_id: int, shot_id: int, payload: EpisodeRestart):
+    return series.retake_from(project_id, shot_id, payload.request_id)
 
 
 @router.post("/projects/{project_id}/production/restart")

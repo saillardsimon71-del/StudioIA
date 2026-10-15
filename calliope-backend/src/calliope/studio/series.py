@@ -439,7 +439,7 @@ def require_services(preparation_only=False):
         ("texte", settings.llm_base_url, settings.llm_api_key),
         ("images", settings.studio_image_base_url, settings.studio_image_api_key),
     ):
-        if preparation_only and label == "images":
+        if label == "images" and (preparation_only or settings.studio_image_provider == "codex"):
             continue
         if urlsplit(url).hostname not in ("localhost", "127.0.0.1", "::1") and not key:
             missing.append(label)
@@ -630,6 +630,78 @@ def set_production_mode(project_id, mode):
                      (json.dumps(frozen), project_id))
         conn.execute("UPDATE studio_series SET directing_profile_json=? WHERE id=?",
                      (json.dumps(profile), episode["series_id"]))
+        conn.commit()
+    return service.board(project_id)
+
+
+def retake_from(project_id, shot_id, request_id):
+    with service.database() as conn:
+        old = conn.execute(
+            "SELECT payload_json FROM jobs WHERE project_id=? AND "
+            "json_extract(payload_json,'$.retake_request_id')=?",
+            (project_id, request_id),
+        ).fetchone()
+        if old:
+            if json.loads(old[0])['retake_from'] != shot_id:
+                raise HTTPException(409, "Cette demande correspond à un autre plan.")
+            return service.board(project_id)
+    require_editable(project_id)
+    require_services()
+    with service.database() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        require_active_project(conn, project_id)
+        production = conn.execute(
+            "SELECT * FROM studio_productions WHERE project_id=?", (project_id,),
+        ).fetchone()
+        if not production:
+            raise HTTPException(404, "Production de série introuvable.")
+        if production['status'] in ('pending', 'running') or conn.execute(
+                "SELECT 1 FROM jobs WHERE project_id=? AND status IN ('pending','running') LIMIT 1",
+                (project_id,)).fetchone():
+            raise HTTPException(409, "Attendez la fin des opérations en cours avant de refaire un plan.")
+        rows = conn.execute(
+            "SELECT c.id,ss.continue_from_previous,sc.context_json FROM clips c "
+            "JOIN scenes s ON s.id=c.scene_id JOIN studio_shots ss ON ss.clip_id=c.id "
+            "LEFT JOIN studio_shot_context sc ON sc.clip_id=c.id WHERE c.project_id=? "
+            "ORDER BY s.order_index,s.id,c.order_index,c.id", (project_id,),
+        ).fetchall()
+        if shot_id not in [row['id'] for row in rows]:
+            raise HTTPException(404, "Plan introuvable dans cet épisode.")
+        affected, started = [], False
+        for row in rows:
+            if row['id'] == shot_id:
+                affected.append(row['id'])
+                started = True
+                if json.loads(row['context_json'] or '{}').get('purpose') in ('midroll', 'outro'):
+                    break
+            elif started:
+                if json.loads(row['context_json'] or '{}').get('purpose') in ('midroll', 'outro'):
+                    continue
+                if not row['continue_from_previous']:
+                    break
+                affected.append(row['id'])
+        for clip_id in affected:
+            takes = conn.execute("SELECT * FROM studio_takes WHERE clip_id=? AND kind='video'", (clip_id,)).fetchall()
+            if any(service.modal_call_unfinished(take) for take in takes):
+                raise HTTPException(409, "Un appel vidéo reste à récupérer. Reprenez-le avant de créer une nouvelle prise.")
+        for clip_id in affected:
+            conn.execute(
+                "UPDATE studio_shots SET selected_video_id=NULL,approved=0,trim_start_sec=NULL,"
+                "trim_end_sec=NULL WHERE clip_id=?", (clip_id,),
+            )
+            conn.execute("UPDATE clips SET clip_path=NULL WHERE id=?", (clip_id,))
+        payload = {'studio_production_id':project_id, 'retake_from':shot_id,
+                   'retake_request_id':request_id}
+        job_id = conn.execute(
+            "INSERT INTO jobs(project_id,kind,payload_json) VALUES(?,?,?)",
+            (project_id, 'production', json.dumps(payload)),
+        ).lastrowid
+        conn.execute(
+            "UPDATE studio_productions SET job_id=?,status='pending',stage='video',progress=0.33,"
+            "pause_requested=0,error=NULL,message=? WHERE project_id=?",
+            (job_id, "Nouvelle prise et raccords demandés.", project_id),
+        )
+        service.touch(conn, project_id)
         conn.commit()
     return service.board(project_id)
 

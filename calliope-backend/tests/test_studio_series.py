@@ -23,7 +23,8 @@ def isolated_production(monkeypatch, client):
 
 
 def series(client, title="The lighthouse", concept="A keeper hears tomorrow's radio."):
-    response = client.post("/api/studio/series", json={"title": title, "concept": concept})
+    response = client.post("/api/studio/series", json={"title": title, "concept": concept,
+                                                     "directing_profile":{"cta_placement":"middle"}})
     assert response.status_code == 200, response.text
     return response.json()
 

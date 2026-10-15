@@ -145,6 +145,7 @@
       require_reference_approval: profile?.require_reference_approval ?? false,
       production_mode: profile?.production_mode ?? "automatic",
       transitions: profile?.transitions ?? "scene_fades",
+      cta_placement: profile?.cta_placement ?? "middle",
     };
   }
   async function reference(event: Event, entityId: number) {
@@ -227,7 +228,9 @@
         <p class="hint">{prepareOnly
           ? "Le scénario et sa revue apparaissent sans générer de médias. Vous pourrez les corriger, puis lancer les rendus."
           : "Le studio prépare le scénario et les médias, puis exporte le MP4. Vous pourrez mettre la production en pause."}
-          Chaque épisode inclut une incitation de 4 secondes au milieu. La fin reste consacrée à l'histoire et à la suite.
+          {item.directing_profile.cta_placement === "end"
+            ? "L'incitation est ajoutée à la fin, après la chute de l'histoire."
+            : "Chaque épisode inclut une courte incitation au milieu. La fin reste consacrée à l'histoire et à la suite."}
         </p>
         <div class="row">
           <button class="primary" disabled={!!busy || !idea.trim()}
@@ -370,6 +373,7 @@
             <label>Production<select bind:value={profile.production_mode} onchange={() => { if (profile) profile.require_reference_approval = profile.production_mode === 'manual'; }}><option value="automatic">Automatique jusqu'au MP4</option><option value="manual">Validation manuelle des références et des plans</option></select></label>
             <p class="hint">En automatique, les plans indépendants peuvent avancer sans attendre votre approbation. Les échecs audio ont une seule relance ; un défaut persistant bloque l'export.</p>
             <label>Transitions<select bind:value={profile.transitions}><option value="scene_fades">Fondu court aux changements de scène</option><option value="cuts">Coupes franches</option></select></label>
+            <label>Incitation spectateur<select bind:value={profile.cta_placement}><option value="end">À la fin, après l'histoire</option><option value="middle">Au milieu</option></select></label>
             <label><input type="checkbox" bind:checked={profile.attached_values} /> Afficher les valeurs exactes définies pour les personnages</label>
           </fieldset>
         {/if}

@@ -10,6 +10,24 @@ _model = None
 _checkpoint = None
 
 
+def _load_transcriber(checkpoint):
+    global _model, _checkpoint
+    import whisper
+
+    if _model is None or _checkpoint != str(checkpoint):
+        _model = whisper.load_model(str(checkpoint), device='cpu')
+        _checkpoint = str(checkpoint)
+
+
+def warm_transcriber(checkpoint_path):
+    if not checkpoint_path:
+        return
+    checkpoint = Path(checkpoint_path).expanduser().resolve()
+    if checkpoint.is_file():
+        with _lock:
+            _load_transcriber(checkpoint)
+
+
 def transcribe_dialogue(path, checkpoint_path, language):
     global _model, _checkpoint
     result = {
@@ -27,11 +45,7 @@ def transcribe_dialogue(path, checkpoint_path, language):
         return result
     try:
         with _lock:
-            import whisper
-
-            if _model is None or _checkpoint != str(checkpoint):
-                _model = whisper.load_model(str(checkpoint), device="cpu")
-                _checkpoint = str(checkpoint)
+            _load_transcriber(checkpoint)
             raw = _model.transcribe(
                 str(path), fp16=False, word_timestamps=True, language=language,
             )

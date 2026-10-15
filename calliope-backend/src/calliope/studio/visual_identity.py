@@ -327,11 +327,6 @@ def compile_image_request(shot, context, *, canonical_entity=None):
         if not canonical_entity:
             for key in info.get("prop_keys", []):
                 parts.append(strip_generated_text(context["render_canon"]["props"][key], labels))
-            for key, state in info.get("start_state", {}).items():
-                parts.append(f"At the start, {key}: {strip_generated_text(state, labels)}")
-            for key in ("blocking", "framing"):
-                if info.get(key):
-                    parts.append(strip_generated_text(info[key], labels))
     elif canonical_entity:
         if context.get("bible", {}).get("world_rules"):
             parts.append(f"World rules: {context['bible']['world_rules']}")
@@ -340,8 +335,8 @@ def compile_image_request(shot, context, *, canonical_entity=None):
     for binding in bindings:
         parts.append(
             f"Reference image {binding['index']}: {binding['entity_key']} ({binding['kind']}). "
-            + ("Preserve this environment's architecture, furniture and spatial layout; "
-               "use the requested camera angle."
+            + ("Preserve this environment's architecture and recurring landmarks; "
+               "use the initial composition's camera angle, depth and set dressing."
                if binding["kind"] == "location"
                else "Use this image only for this entity's visual identity.")
         )

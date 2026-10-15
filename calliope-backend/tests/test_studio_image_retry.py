@@ -97,9 +97,61 @@ async def test_image_timeout_does_not_repeat_ambiguous_submission(image_service)
         raise httpx.ReadTimeout("Response lost", request=outgoing)
 
     install(receive)
-    with pytest.raises(httpx.ReadTimeout):
+    with pytest.raises(ValueError, match="images.*dix minutes"):
         await service._generate_image(request)
     assert len(calls) == 1 and not waits
+    assert calls[0].extensions["timeout"]["read"] == 600
+
+
+@pytest.mark.asyncio
+async def test_image_read_error_recovers_with_identical_request(image_service):
+    request, install, calls, waits = image_service
+
+    def receive(outgoing):
+        if len(calls) == 1:
+            return busy()
+        if len(calls) == 2:
+            raise httpx.ReadError("Connection closed", request=outgoing)
+        return httpx.Response(200, json={
+            "data": [{"b64_json": base64.b64encode(png_bytes()).decode()}],
+        })
+
+    install(receive)
+    content, _ = await service._generate_image(request)
+    assert content.startswith(b"\x89PNG")
+    assert len(calls) == 3 and sum(waits) == 30
+    assert all(call.content == calls[0].content for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_image_read_errors_stop_after_existing_attempt_limit(image_service):
+    request, install, calls, waits = image_service
+
+    def receive(outgoing):
+        raise httpx.ReadError("Connection closed", request=outgoing)
+
+    install(receive)
+    with pytest.raises(ValueError, match="Connexion.*images.*interrompue"):
+        await service._generate_image(request)
+    assert len(calls) == 4 and sum(waits) == 70
+
+
+@pytest.mark.asyncio
+async def test_image_cancel_after_read_error_prevents_another_submission(image_service):
+    request, install, calls, waits = image_service
+
+    def receive(outgoing):
+        raise httpx.ReadError("Connection closed", request=outgoing)
+
+    install(receive)
+
+    async def check_cancel():
+        if waits:
+            raise service.StudioCancelledError()
+
+    with pytest.raises(service.StudioCancelledError):
+        await service._generate_image(request, check_cancel=check_cancel)
+    assert len(calls) == 1 and sum(waits) == 1
 
 
 @pytest.mark.asyncio

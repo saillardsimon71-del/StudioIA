@@ -150,7 +150,7 @@ def test_continuation_uses_actual_last_frame_only(tmp_path):
     with Image.open(io.BytesIO(base64.b64decode(payload["image_base64"]))) as image:
         red, green, blue = image.getpixel((32, 32))
         assert blue > 240 and red < 10 and green < 10
-    assert not any("video" in key or "audio_base64" in key for key in payload)
+    assert not any(key in {"video_base64", "video_url", "audio_base64"} for key in payload)
 
 
 def test_continuation_rejects_missing_video(tmp_path):

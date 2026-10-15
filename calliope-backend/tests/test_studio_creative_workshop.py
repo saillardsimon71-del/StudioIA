@@ -1,5 +1,6 @@
 import copy
 import json
+import time
 
 import pytest
 
@@ -21,6 +22,56 @@ def selected_story(candidate_id='B'):
         'reason': 'La cliente transforme le piège du gardien en humiliation compréhensible.',
         'revision': 'Rendre la demande de remboursement plus orale et montrer immédiatement le gardien dans le coffre.',
     }}
+
+
+def test_normal_preparation_does_not_rewrite_already_validated_states(client, monkeypatch):
+    roles = []
+    replies = iter([{'candidates': candidates()}, selected_story(), technical_plan()])
+
+    async def generate(messages, **options):
+        roles.append(options.get('role'))
+        return copy.deepcopy(next(replies))
+
+    monkeypatch.setattr(series_planner, 'generate_structured', generate)
+    monkeypatch.setattr(series_planner.settings, 'dry_run', False)
+    monkeypatch.setattr(series_planner.settings, 'llm_base_url', 'http://localhost:9001/v1')
+    series = client.post('/api/studio/series', json={
+        'title': 'Le coffre', 'concept': 'Le gardien trouve un poisson dans le coffre.',
+        'language': 'fr', 'target_seconds': 32,
+    }).json()
+    response = client.post(f"/api/studio/series/{series['id']}/episodes", json={
+        'idea': 'Une scène au coffre.', 'request_id': 'validated-states', 'prepare_only': True,
+    })
+    assert response.status_code == 200, response.text
+    project_id = response.json()['project_id']
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        board = client.get(f'/api/studio/projects/{project_id}').json()
+        if board['production']['status'] in ('paused', 'failed'):
+            break
+        time.sleep(0.05)
+    assert roles == ['story', 'script', 'planner']
+    assert board['production']['stage'] == 'review', board['production']
+    assert sum(len(scene['shots']) for scene in board['scenes']) == 7
+    assert not any(shot['takes'] for scene in board['scenes'] for shot in scene['shots'])
+
+
+@pytest.mark.asyncio
+async def test_accented_speaker_is_converted_without_requesting_a_story_rewrite(monkeypatch):
+    original = creative_story()
+    original['beats'][0]['dialogue_turns'][0] = {'speaker': 'LÉOPARD', 'text': 'Même le déjeuner ?'}
+    requests = []
+
+    async def generate(messages, **options):
+        requests.append(copy.deepcopy(messages))
+        return copy.deepcopy(original)
+
+    monkeypatch.setattr(series_planner, 'generate_structured', generate)
+    result = await series_planner._write_creative_story({'entities': []}, 'Une scène.', '')
+    assert len(requests) == 1
+    assert result['beats'][0]['dialogue_turns'][0] == {
+        'speaker': 'leopard', 'text': 'Même le déjeuner ?'}
+    assert original['beats'][0]['dialogue_turns'][0]['speaker'] == 'LÉOPARD'
 
 
 @pytest.mark.asyncio

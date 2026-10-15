@@ -135,6 +135,10 @@ def test_listener_is_included_in_still_and_character_references():
 
 
 def test_pause_prevents_the_next_shot_from_overwriting_paused_state(client, monkeypatch):
+    from calliope.studio import video_preparation
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(video_preparation, 'prepare_video_batch', AsyncMock(return_value=None))
     previous = queue_manager.paused
     queue_manager.paused = True
     monkeypatch.setattr(settings, 'dry_run', False)

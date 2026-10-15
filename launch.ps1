@@ -56,6 +56,9 @@ try {
     $existing = Invoke-RestMethod "http://127.0.0.1:$Port/api/studio/config" -TimeoutSec 2
 } catch { $existing = $null }
 if ($existing -and $existing.modal_app) {
+    if (-not $existing.pipeline_revision -or $existing.restart_required) {
+        throw 'Le studio ouvert utilise une ancienne version. Attendez la fin des productions, fermez le studio puis relancez launch.cmd.'
+    }
     Write-Host "Studio déjà ouvert: $studioUrl"
     if (-not $NoBrowser) { Start-Process $studioUrl }
     exit 0

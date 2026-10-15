@@ -15,14 +15,35 @@ H3_MODEL_FILES = {
 H3_SIZES = {"16:9": (832, 480), "9:16": (480, 832), "1:1": (640, 640)}
 H3_FPS = 24
 H3_STEPS = 8
+H3_QUALITY_MODEL_FILE = "minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+H3_PROFILES = {
+    "fast": {"label": "MiniMax H3 / FastH3 V2", "model_file": H3_MODEL_FILES["unet"],
+             "steps": H3_STEPS, "sizes": H3_SIZES},
+    "quality": {"label": "MiniMax H3 / H3-Base FL2VA", "model_file": H3_QUALITY_MODEL_FILE,
+                "steps": 25, "sizes": {"16:9": (1344, 768), "9:16": (768, 1344), "1:1": (992, 992)}},
+    "ltx": {"label": "LTX-2.5 Distilled", "model_file": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+            "steps": 8, "sizes": {"16:9": (1344, 768), "9:16": (768, 1344), "1:1": (1024, 1024)}},
+}
 H3_PROGRESS_TIMEOUT_SEC = 3
 H3_MIN_FRAMES = 124
 H3_MAX_FRAMES = 362
 
 
-def frames_for_duration(seconds: float) -> int:
+def h3_profile(name="fast"):
+    if name not in H3_PROFILES:
+        raise ValueError("Mode vidéo H3 invalide.")
+    return H3_PROFILES[name]
+
+
+def frames_for_duration(seconds: float, video_profile="fast") -> int:
     if type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds <= 0:
         raise ValueError("La durée H3 doit être positive et finie.")
+    if video_profile == "ltx":
+        requested = max(25, math.ceil(seconds * H3_FPS))
+        frames = requested + (1 - requested) % 8
+        if frames > 361:
+            raise ValueError("La durée LTX dépasse la plage prise en charge (15,041 s).")
+        return frames
     requested = max(H3_MIN_FRAMES, math.ceil(seconds * H3_FPS))
     frames = requested + (5 - requested) % 17
     if frames > H3_MAX_FRAMES:
@@ -48,7 +69,7 @@ def validate_request(payload: dict) -> None:
     }
     if not isinstance(payload, dict) or not required <= payload.keys():
         raise ValueError("Requête H3 incomplète.")
-    if payload.keys() - required - {"image_base64", "trace_id"}:
+    if payload.keys() - required - {"image_base64", "trace_id", "video_profile"}:
         raise ValueError("La requête H3 contient des paramètres inconnus.")
     if "trace_id" in payload and (
         not isinstance(payload["trace_id"], str)
@@ -59,14 +80,15 @@ def validate_request(payload: dict) -> None:
         raise ValueError("Version du contrat H3 invalide.")
     if not isinstance(payload["prompt"], str) or not payload["prompt"].strip():
         raise ValueError("Le prompt H3 est vide.")
+    profile = h3_profile(payload.get("video_profile", "fast"))
     aspect = payload["aspect_ratio"]
-    if aspect not in H3_SIZES or (payload["width"], payload["height"]) != H3_SIZES[aspect]:
+    if aspect not in profile["sizes"] or (payload["width"], payload["height"]) != profile["sizes"][aspect]:
         raise ValueError("Format H3 invalide.")
-    if payload["fps"] != H3_FPS or payload["steps"] != H3_STEPS:
-        raise ValueError("FastH3 requiert 24 fps et 8 étapes.")
+    if payload["fps"] != H3_FPS or payload["steps"] != profile["steps"]:
+        raise ValueError("Les étapes et la cadence ne correspondent pas au modèle H3 choisi.")
     frames = payload["frames"]
-    if type(frames) is not int or frames != frames_for_duration(payload["requested_duration_sec"]):
-        raise ValueError("Frames H3 invalides: grille 17k+5, plage 124 à 362.")
+    if type(frames) is not int or frames != frames_for_duration(payload["requested_duration_sec"], payload.get("video_profile", "fast")):
+        raise ValueError("Frames invalides pour le modèle vidéo choisi.")
     duration = payload["duration_sec"]
     if type(duration) not in (int, float) or not math.isclose(
         duration, frames / H3_FPS, rel_tol=0, abs_tol=1e-6
@@ -95,6 +117,9 @@ def validate_request(payload: dict) -> None:
 
 def build_h3_graph(payload: dict, *, output_prefix: str, uploaded_image: str | None = None) -> dict:
     validate_request(payload)
+    if payload.get("video_profile") == "ltx":
+        raise ValueError("Cette requête nécessite le worker LTX.")
+    profile = h3_profile(payload.get("video_profile", "fast"))
     if not output_prefix or output_prefix.startswith("/") or ".." in output_prefix.split("/"):
         raise ValueError("Préfixe de sortie H3 invalide.")
     if bool(payload.get("image_base64")) != bool(uploaded_image):
@@ -102,7 +127,7 @@ def build_h3_graph(payload: dict, *, output_prefix: str, uploaded_image: str | N
     graph = {
         "6": {
             "class_type": "UNETLoader",
-            "inputs": {"unet_name": H3_MODEL_FILES["unet"], "weight_dtype": "default"},
+            "inputs": {"unet_name": profile["model_file"], "weight_dtype": "default"},
         },
         "13": {
             "class_type": "CLIPLoader",
@@ -148,7 +173,7 @@ def build_h3_graph(payload: dict, *, output_prefix: str, uploaded_image: str | N
             "inputs": {
                 "model": ["127", 0],
                 "scheduler": "simple",
-                "steps": H3_STEPS,
+                "steps": profile["steps"],
                 "denoise": 1.0,
             },
         },
@@ -189,6 +214,11 @@ def build_h3_graph(payload: dict, *, output_prefix: str, uploaded_image: str | N
             },
         },
     }
+    if payload.get("video_profile") == "quality":
+        for key in ("143", "128", "127"):
+            graph.pop(key)
+        graph["9"]["inputs"]["model"] = ["6", 0]
+        graph["16"]["inputs"]["model"] = ["6", 0]
     if uploaded_image:
         graph["1"] = {"class_type": "LoadImage", "inputs": {"image": uploaded_image}}
         graph["104"]["inputs"]["first_frame"] = ["1", 0]
