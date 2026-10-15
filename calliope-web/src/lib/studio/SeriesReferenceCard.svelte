@@ -69,7 +69,7 @@
 </script>
 
 <article class="visual-card">
-  <div class="artwork" class:empty={!entity.url}>
+  <div class="artwork" class:missing-artwork={!entity.url}>
     {#if entity.url}
       <img src={entity.url} alt={"Référence visuelle : " + entity.name} loading="lazy" />
     {:else}
@@ -116,7 +116,7 @@
     {/if}
 
     {#if error}<p class="error" role="alert">{error}</p>{/if}
-    {#if notice}<p class="notice" role="status">{notice}</p>{/if}
+    {#if notice}<p class="card-success" role="status">{notice}</p>{/if}
 
     <div class="actions">
       <input bind:this={picker} type="file" accept="image/*" hidden
@@ -137,7 +137,7 @@
   .visual-card { min-width: 0; overflow: hidden; border: 1px solid #dedfd9; border-radius: 12px; background: #fff; display: flex; flex-direction: column; transition: border-color .15s, box-shadow .15s; }
   .visual-card:hover { border-color: #aabbb1; box-shadow: 0 5px 16px #17281e0d; }
   .artwork { height: 205px; position: relative; display: grid; place-items: center; overflow: hidden; background: #18241e; }
-  .artwork.empty { background: linear-gradient(145deg, #ebf0e9, #e3e9e3); }
+  .artwork.missing-artwork { background: linear-gradient(145deg, #ebf0e9, #e3e9e3); }
   .artwork img { display: block; width: 100%; height: 100%; object-fit: contain; }
   .no-image { color: #798a80; text-align: center; display: grid; justify-items: center; gap: 5px; font-size: 12px; }
   .placeholder-icon { font-size: 32px; line-height: 1; opacity: .5; }
@@ -158,7 +158,7 @@
   .edit-form { display: grid; gap: 8px; }
   .edit-form label { display: block; color: #344439; font-weight: 650; font-size: 12px; }
   .edit-form textarea { box-sizing: border-box; display: block; width: 100%; min-width: 0; line-height: 1.45; font-size: 13px; resize: vertical; }
-  .error, .notice { font-size: 12px; overflow-wrap: anywhere; }
+  .error, .card-success { font-size: 12px; overflow-wrap: anywhere; }
   .error { color: #a22e2e; }
-  .notice { color: #23613c; }
+  .card-success { color: #23613c; }
 </style>
