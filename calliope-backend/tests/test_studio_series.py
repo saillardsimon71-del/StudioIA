@@ -656,3 +656,46 @@ def test_series_entity_creation_checks_name_and_series(client):
     second = client.post(path, json={"name": "Rico"}).json()["entities"]
     assert first["key"] == "rico"
     assert {entity["key"] for entity in second} == {"rico", "rico-2"}
+
+
+def test_episode_image_mode_switch_for_failed_production(client):
+    from calliope.studio import service
+
+    item = series(client)
+    created = episode(client, item["id"])
+    assert created.status_code == 200, created.text
+    project_id = created.json()["project_id"]
+    url = f"/api/studio/projects/{project_id}/production/images"
+    assert client.patch(url, json={"mode": "text_to_video"}).status_code == 409
+    with service.database() as conn:
+        conn.execute(
+            "UPDATE studio_productions SET status='failed' WHERE project_id=?",
+            (project_id,),
+        )
+        conn.commit()
+    updated = client.patch(url, json={"mode": "text_to_video"})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["episode"]["image_mode"] == "text_to_video"
+    with service.database() as conn:
+        frozen = conn.execute(
+            "SELECT context_json FROM studio_episodes WHERE project_id=?",
+            (project_id,),
+        ).fetchone()[0]
+        assert json.loads(frozen)["image_mode"] == "text_to_video"
+    restored = client.patch(url, json={"mode": "generated"})
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["episode"]["image_mode"] == "generated"
+    assert client.patch(url, json={"mode": "unknown"}).status_code == 422
+
+
+def test_new_episode_accepts_text_to_video(client):
+    from calliope.studio import service
+
+    item = series(client)
+    created = client.post(
+        f"/api/studio/series/{item['id']}/episodes",
+        json={"idea": "The keeper crosses the hall.", "request_id": "t2v-episode",
+              "prepare_only": True, "image_mode": "text_to_video"},
+    )
+    assert created.status_code == 200, created.text
+    assert service.board(created.json()["project_id"])["episode"]["image_mode"] == "text_to_video"

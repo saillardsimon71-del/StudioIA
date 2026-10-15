@@ -73,6 +73,7 @@ class EpisodeCreate(BaseModel):
     objective: str = Field(default="", max_length=10000)
     request_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
     prepare_only: bool = False
+    image_mode: Literal["generated", "text_to_video"] = "generated"
 
     @field_validator("idea")
     @classmethod
@@ -292,6 +293,16 @@ class ProductionMode(BaseModel):
 @router.patch("/projects/{project_id}/production/mode")
 async def production_mode(project_id: int, payload: ProductionMode):
     return series.set_production_mode(project_id, payload.mode)
+
+
+class EpisodeImageMode(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["generated", "text_to_video"]
+
+
+@router.patch("/projects/{project_id}/production/images")
+async def change_image_mode(project_id: int, payload: EpisodeImageMode):
+    return series.set_image_mode(project_id, payload.mode)
 
 
 @router.post("/projects/{project_id}/production/resume")

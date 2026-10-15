@@ -586,6 +586,7 @@ def create_episode(series_id, data):
         ).fetchone()[0]
         frozen = context(conn, series_id)
         frozen["prepare_only"] = bool(data.get("prepare_only"))
+        frozen["image_mode"] = data.get("image_mode", "generated")
         cur = conn.execute(
             "INSERT INTO projects(title,idea) VALUES(?,?)",
             (f"{current['title']} - Épisode {number}", data["idea"].strip()),
@@ -669,6 +670,46 @@ def set_production_mode(project_id, mode):
                      (json.dumps(frozen), project_id))
         conn.execute("UPDATE studio_series SET directing_profile_json=? WHERE id=?",
                      (json.dumps(profile), episode["series_id"]))
+        conn.commit()
+    return service.board(project_id)
+
+
+def set_image_mode(project_id, mode):
+    """Choose whether an existing episode needs generated first-frame images."""
+    if mode not in ("generated", "text_to_video"):
+        raise HTTPException(422, "Mode de création d'images inconnu.")
+    require_editable(project_id)
+    with service.database() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT series_id,context_json FROM studio_episodes WHERE project_id=?",
+            (project_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Épisode de série introuvable.")
+        require_active_project(conn, project_id)
+        frozen = json.loads(row["context_json"])
+        if mode == "text_to_video":
+            if directing_profile(frozen.get("directing_profile"))["require_reference_approval"]:
+                raise HTTPException(
+                    422, "Passez en production automatique avant de choisir le mode sans images.",
+                )
+            for shot in conn.execute(
+                "SELECT sc.context_json FROM studio_shot_context sc JOIN clips c ON c.id=sc.clip_id "
+                "WHERE c.project_id=?",
+                (project_id,),
+            ):
+                info = json.loads(shot[0] or "{}")
+                if any(value.get("anchor") == "character" for value in info.get("screen_text", [])):
+                    raise HTTPException(
+                        422, "Cet épisode utilise du texte attaché aux personnages : "
+                             "il exige des images de départ pour vérifier les ancrages.",
+                    )
+        frozen["image_mode"] = mode
+        conn.execute(
+            "UPDATE studio_episodes SET context_json=? WHERE project_id=?",
+            (json.dumps(frozen), project_id),
+        )
         conn.commit()
     return service.board(project_id)
 
@@ -949,4 +990,5 @@ def episode_meta(conn, project_id):
     result["production_mode"] = directing_profile(
         frozen.get("directing_profile")
     )["production_mode"]
+    result["image_mode"] = frozen.get("image_mode", "generated")
     return result

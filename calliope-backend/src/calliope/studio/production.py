@@ -982,7 +982,15 @@ async def run_production(job, payload, should_stop):
                     )
                     conn.commit()
                     raise ProductionPausedError() from None
-        await ensure_entities(job, should_stop)
+        image_mode = json.loads(episode["context_json"]).get("image_mode", "generated")
+        if image_mode == "generated":
+            await ensure_entities(job, should_stop)
+        else:
+            await checkpoint(
+                job, "images", 0.18,
+                "Mode texte vers vidéo : aucune image n'est générée avec Codex",
+                should_stop,
+            )
         board = service.board(project_id)
         shots = [s for scene in board["scenes"] for s in scene["shots"]]
         for index, initial in enumerate(shots):
@@ -990,12 +998,13 @@ async def run_production(job, payload, should_stop):
                 job,
                 "images",
                 0.2 + index / len(shots) * 0.12,
-                f"Image du plan {index + 1}/{len(shots)}",
+                (f"Image du plan {index + 1}/{len(shots)}" if image_mode == "generated"
+                 else f"Préparation du plan {index + 1}/{len(shots)} sans image Codex"),
                 should_stop,
             )
             with service.database() as conn:
                 shot = service.public_shot(conn, initial["id"])
-            if not shot["selected_image_id"] and not shot["continue_from_previous"]:
+            if image_mode == "generated" and not shot["selected_image_id"] and not shot["continue_from_previous"]:
                 if not reuse_reference(project_id, shot):
                     shot = await generate_take(job, shot, "image", should_stop)
         with service.database() as conn:
@@ -1006,6 +1015,18 @@ async def run_production(job, payload, should_stop):
                 source = conn.execute(
                     "SELECT * FROM studio_takes WHERE id=?", (shot["selected_image_id"],)
                 ).fetchone()
+                if image_mode == "text_to_video" and source is None:
+                    context = service.shot_context(conn, shot["id"])
+                    if context.get("directing_profile", {}).get("require_reference_approval") or any(
+                        label.get("anchor") == "character" for label in shot.get("screen_text", [])
+                    ):
+                        conn.execute(
+                            "UPDATE studio_productions SET status='paused',message=? WHERE project_id=?",
+                            ("Ce plan exige une image de départ validée : utilisez le mode avec images "
+                             "ou retirez l'ancrage de texte sur les personnages.", project_id),
+                        )
+                        conn.commit()
+                        raise ProductionPausedError()
                 try:
                     service.require_source_visual_review(
                         source, shot, service.shot_context(conn, shot["id"])
