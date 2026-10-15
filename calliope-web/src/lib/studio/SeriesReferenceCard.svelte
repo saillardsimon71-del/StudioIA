@@ -69,7 +69,7 @@
 </script>
 
 <article class="visual-card">
-  <div class="artwork" class:missing-artwork={!entity.url}>
+  <div class="artwork" class:missing={!entity.url}>
     {#if entity.url}
       <img src={entity.url} alt={"Référence visuelle : " + entity.name} loading="lazy" />
     {:else}
@@ -137,7 +137,7 @@
   .visual-card { min-width: 0; overflow: hidden; border: 1px solid #dedfd9; border-radius: 12px; background: #fff; display: flex; flex-direction: column; transition: border-color .15s, box-shadow .15s; }
   .visual-card:hover { border-color: #aabbb1; box-shadow: 0 5px 16px #17281e0d; }
   .artwork { height: 205px; position: relative; display: grid; place-items: center; overflow: hidden; background: #18241e; }
-  .artwork.missing-artwork { background: linear-gradient(145deg, #ebf0e9, #e3e9e3); }
+  .artwork.missing { background: linear-gradient(145deg, #ebf0e9, #e3e9e3); }
   .artwork img { display: block; width: 100%; height: 100%; object-fit: contain; }
   .no-image { color: #798a80; text-align: center; display: grid; justify-items: center; gap: 5px; font-size: 12px; }
   .placeholder-icon { font-size: 32px; line-height: 1; opacity: .5; }
