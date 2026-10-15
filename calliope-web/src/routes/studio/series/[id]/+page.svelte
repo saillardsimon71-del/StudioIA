@@ -149,22 +149,6 @@
       cta_placement: profile?.cta_placement ?? "middle",
     };
   }
-  async function reference(event: Event, entityId: number) {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file || !item) return;
-    busy = "reference";
-    error = "";
-    try {
-      item = await studio.uploadSeriesReference(item.id, entityId, file);
-      notice = "Référence enregistrée pour les prochaines images.";
-    } catch (err) {
-      error = errorMessage(err);
-    } finally {
-      busy = "";
-      input.value = "";
-    }
-  }
   async function seriesChanged(deleted: boolean) {
     if (deleted) await goto("/studio");
     else await load(false);
@@ -390,40 +374,28 @@
         >
       </form>
     </details>
-    {#if item.entities.length}<details class="stack advanced-references">
-        <summary>Réglages avancés des identités et références</summary>
-        <h2>Références de la série</h2>
-        <p class="hint">
-          Ces images sont réutilisées pour conserver les identités et les lieux.
-          Elles appartiennent uniquement à cette série.
-        </p>
-        <div class="references">
-          {#each item.entities as entity (entity.id)}<article
-              class="reference stack"
-            >
-              {#if entity.url}<img
-                  src={entity.url}
-                  alt={entity.name}
-                  loading="lazy"
-                />{/if}
-              <h3>{entity.name}</h3>
-              <span class="hint"
-                >{entity.kind === "character" ? "Personnage" : "Lieu"}</span
-              >
-              <p class="hint">{entity.description}</p>
-              <EntityIdentityEditor seriesId={item.id} {entity} entities={item.entities}
-                disabled={!!busy || active} onupdate={(updated) => item = updated} />
-              <label
-                >Remplacer la référence<input
-                  type="file"
-                  accept="image/*"
-                  disabled={!!busy || active}
-                  onchange={(event) => reference(event, entity.id)}
-                /></label
-              >
-            </article>{/each}
+    {#if item.entities.length}
+      <details class="advanced-references">
+        <summary>Options avancées des références <span class="advanced-hint">Variantes, valeurs et approbations manuelles</span></summary>
+        <div class="advanced-inner">
+          <p class="hint">Ces réglages sont facultatifs pour une production automatique. Pour ajouter une image ou modifier une description, utilisez les cartes « Personnages & décors » plus haut.</p>
+          <div class="advanced-list">
+            {#each item.entities as entity (entity.id)}
+              <details class="advanced-entity">
+                <summary>
+                  <strong>{entity.name}</strong>
+                  <span class="hint">{entity.kind === "character" ? "Personnage" : "Décor"}</span>
+                </summary>
+                <div class="advanced-editor">
+                  <EntityIdentityEditor seriesId={item.id} {entity} entities={item.entities}
+                    disabled={!!busy || active} onupdate={(value) => item = value} />
+                </div>
+              </details>
+            {/each}
+          </div>
         </div>
-      </details>{/if}
+      </details>
+    {/if}
   {/if}
 </main>
 {#if configOpen}<ConfigDialog
@@ -447,8 +419,7 @@
   }
   .episode-form,
   .episode-card,
-  .bible,
-  .reference {
+  .bible {
     background: var(--white);
     border: 1px solid var(--line);
     border-radius: 5px;
@@ -469,22 +440,16 @@
   .bible form {
     padding-top: 24px;
   }
-  .advanced-references { padding: 20px; background: var(--white); border: 1px solid var(--line); }
-  .advanced-references summary { cursor: pointer; font-weight: 650; margin-bottom: 14px; }
-  .references {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 16px;
-  }
-  .reference img {
-    width: 100%;
-    height: 240px;
-    object-fit: contain;
-    background: #17231e;
-  }
-  .reference {
-    padding: 18px;
-  }
+  .advanced-references { border: 1px solid var(--line); background: var(--white); border-radius: 9px; padding: 18px 22px; min-width: 0; }
+  .advanced-references > summary { cursor: pointer; font-weight: 650; color: #34483a; }
+  .advanced-hint { font-size: 12px; color: #79847c; font-weight: 400; margin-left: 8px; }
+  .advanced-inner { padding-top: 17px; display: grid; gap: 14px; min-width: 0; }
+  .advanced-list { display: grid; gap: 8px; min-width: 0; }
+  .advanced-entity { border: 1px solid #e2e7e0; border-radius: 8px; min-width: 0; overflow: hidden; }
+  .advanced-entity > summary { display: flex; gap: 12px; align-items: center; cursor: pointer; background: #f8faf7; padding: 13px 16px; }
+  .advanced-editor { padding: 16px; max-width: 660px; min-width: 0; }
+  .advanced-editor :global(textarea), .advanced-editor :global(input), .advanced-editor :global(select) { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+  .advanced-editor :global(.row) { flex-wrap: wrap; }
   .episode-card details p {
     margin-top: 12px;
   }
