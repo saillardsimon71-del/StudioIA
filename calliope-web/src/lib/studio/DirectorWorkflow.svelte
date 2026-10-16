@@ -82,7 +82,7 @@
     {#each board.jobs.filter(job => ['pending', 'running'].includes(job.status)) as job}
       <button disabled={busy} onclick={() => act(() => studio.cancel(job.id))}>Annuler la prise en cours (travail {job.id})</button>
     {/each}
-    {#if board.production.error}<p class="error" role="alert">{board.production.error}</p>{/if}
+    {#if board.production.error && !error}<p class="error" role="alert">{board.production.error}</p>{/if}
   {/if}
   {#if !current}<p>Ouverture du storyboard...</p>
   {:else if !current.enabled}

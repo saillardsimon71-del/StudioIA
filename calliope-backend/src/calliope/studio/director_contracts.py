@@ -48,7 +48,13 @@ class ShotContract(StrictModel):
         if len(casting) != len(self.casting):
             raise ValueError("Casting duplique.")
         if set(self.positions) != casting or set(self.eyelines) != casting:
-            raise ValueError("Positions et regards explicites requis pour tout le casting.")
+            raise ValueError(
+                f"positions: manquants={sorted(casting - self.positions.keys())}, "
+                f"inattendus={sorted(self.positions.keys() - casting)}; "
+                f"eyelines: manquants={sorted(casting - self.eyelines.keys())}, "
+                f"inattendus={sorted(self.eyelines.keys() - casting)}. "
+                f"Utiliser exactement les identifiants du casting: {sorted(casting)}."
+            )
         if not casting <= self.initial_state.keys() or not casting <= self.final_state.keys():
             raise ValueError("Etat initial et final requis pour chaque personnage.")
         if not (casting | {self.location}) <= set(self.references):

@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -336,6 +337,37 @@ async def prepare(project_id, internal=False):
         raise HTTPException(409, "Preparez le storyboard avant le Director.")
     contracts = []
     for index, shot in enumerate(shots):
+        direction = directions[shot["id"]]
+        expected = [{"speaker": t["speaker"], "text": t["text"]}
+                    for t in shot.get("dialogue_turns", [])]
+        if not expected and shot["dialogue"].strip():
+            expected = [{"speaker": direction.get("speaker"), "text": shot["dialogue"].strip()}]
+        casting = list(dict.fromkeys(
+            shot["character_keys"] + (direction.get("listener_keys") or [])
+            + [t["speaker"] for t in expected]
+        ))
+        previous = next((c for s, c in reversed(list(zip(shots[:index], contracts)))
+                         if s.get("purpose") not in ("midroll", "outro")), None)
+        requirements = {
+            "casting": casting, "location": direction.get("location_key"),
+            "duration_sec": shot["duration_sec"], "dialogue": expected,
+            "required_state_keys": sorted(set(casting) | set(direction.get("prop_keys") or [])),
+            "allowed_state_keys": sorted(
+                {e["key"] for e in memory["entities"]}
+                | set(plan.get("render_canon", {}).get("props", {}))
+            ),
+            "continuation_state": previous["final_state"]
+            if previous and shot["continue_from_previous"] else None,
+        }
+        schema = ShotContract.model_json_schema()
+        for field in ("casting", "location", "duration_sec"):
+            schema["properties"][field]["const"] = requirements[field]
+        for field in ("positions", "eyelines"):
+            value_schema = next(iter(schema["properties"][field]["patternProperties"].values()))
+            schema["properties"][field] = {
+                "type": "object", "properties": {key: value_schema for key in casting},
+                "required": casting, "additionalProperties": False,
+            }
         source = scrub({
             "memory": memory,
             "plan": {key: plan[key] for key in (
@@ -343,7 +375,8 @@ async def prepare(project_id, internal=False):
             ) if key in plan},
             "shots": [{k: v for k, v in shot.items() if k != "takes"}
                       | {"direction": directions[shot["id"]]}],
-            "previous_contract": contracts[-1] if contracts else None,
+            "requirements": requirements,
+            "previous_contract": previous,
             "next_direction": (
                 directions[shots[index + 1]["id"]] if index + 1 < len(shots) else None
             ),
@@ -355,50 +388,77 @@ async def prepare(project_id, internal=False):
                 "WHERE clip_id=? AND request_hash=?",
                 (shot["id"], request_hash),
             ).fetchone()
-        if draft:
-            value = json.loads(draft[0])
-        else:
-            try:
-                response = await generate_structured(
-                    [
-                        {"role": "system", "content": ROLE
-                         + '\nReturn ONLY one JSON object {"shots":[ShotContract]} '
-                         "for the ONE supplied shot. "
-                         "Do not return other shots or repeat the episode or canon. Be concise. "
-                         "Preserve the supplied direction, casting, location and prop states. "
-                         "Do not rewrite the story or exact dialogue. Every turn must retain "
-                         "its speaker and exact words. Allocate realistic non-overlapping times "
-                         "within the existing duration. Use previous_contract and next_direction "
-                         "to preserve geography, eyelines and state continuity. "
-                         "Schema: " + json.dumps(ShotContract.model_json_schema())},
-                        {"role": "user", "content": json.dumps(source, ensure_ascii=False)},
-                    ],
-                    temperature=0.2, max_tokens=6000, json_mode=True, required_keys=("shots",),
-                )
-            except (ValueError, RuntimeError) as exc:
-                raise HTTPException(
-                    422, f"Plan {index + 1}/{len(shots)} : {service.safe_error(exc)} "
-                    "Les contrats déjà préparés sont conservés pour la prochaine tentative.",
-                ) from None
+        for attempt in range(3):
+            if draft and attempt == 0:
+                response = {"shots": [json.loads(draft[0])]}
+            else:
+                try:
+                    response = await generate_structured(
+                        [
+                            {"role": "system", "content": ROLE
+                             + '\nReturn ONLY one JSON object {"shots":[ShotContract]} '
+                             "for the ONE supplied shot. Be concise. Never repeat the episode. "
+                             "Follow requirements using canonical IDs, never display names. "
+                             "positions and eyelines must use exactly the casting IDs as keys, "
+                             "with nonempty string values. State maps also have string values. "
+                             "Cover required_state_keys in initial_state and final_state, using "
+                             "only allowed_state_keys. Include casting and location in references. "
+                             "Preserve exact dialogue, speakers, casting, location and duration. "
+                             "Time dialogue without overlaps and keep chronological beats sorted "
+                             "and within duration. Use previous_contract and next_direction for "
+                             "continuity. If invalid_contract and validation_error are supplied, "
+                             "correct only the invalid fields, preserving valid fields. "
+                             "Schema: " + json.dumps(schema)},
+                            {"role": "user", "content": json.dumps(source, ensure_ascii=False)},
+                        ],
+                        temperature=0.2, max_tokens=6000, json_mode=True, required_keys=("shots",),
+                    )
+                except (ValueError, RuntimeError) as exc:
+                    raise HTTPException(
+                        422, f"Plan {index + 1}/{len(shots)} : {service.safe_error(exc)} "
+                        "Les contrats déjà préparés sont conservés pour la prochaine tentative.",
+                    ) from None
             values = response.get("shots") if isinstance(response, dict) else None
-            if not isinstance(values, list) or len(values) != 1:
-                raise HTTPException(422, f"Plan {index + 1} : un seul contrat est requis.")
-            value = values[0]
-        try:
-            valid = validate_contract(value, memory["entities"])
-        except ValueError as exc:
-            raise HTTPException(422, f"Plan {shot['id']}: {exc}") from None
-        expected = [(t["speaker"], t["text"]) for t in shot.get("dialogue_turns", [])]
-        if not expected and shot["dialogue"].strip():
-            with service.database() as conn:
-                speaker = service.shot_context(conn, shot["id"])["shot"].get("speaker")
-            expected = [(speaker, shot["dialogue"].strip())]
-        if [(t["speaker"], t["text"]) for t in valid["dialogue"]] != expected or valid[
-            "duration_sec"
-        ] != shot["duration_sec"]:
-            raise HTTPException(
-                422, "Le Director a modifie les paroles ou la duree pendant la preparation."
-            )
+            value = values[0] if isinstance(values, list) and len(values) == 1 else None
+            try:
+                if value is None:
+                    raise ValueError("Un seul contrat est requis.")
+                valid = validate_contract(value, memory["entities"])
+                for field in ("casting", "location", "duration_sec"):
+                    actual = set(valid[field]) if field == "casting" else valid[field]
+                    wanted = set(requirements[field]) if field == "casting" else requirements[field]
+                    if actual != wanted:
+                        raise ValueError(f"{field}: respecter la valeur fournie dans requirements.")
+                if [{"speaker": t["speaker"], "text": t["text"]}
+                        for t in valid["dialogue"]] != expected:
+                    raise ValueError("dialogue: conserver les locuteurs et paroles exacts.")
+                for field in ("initial_state", "final_state"):
+                    if not set(requirements["required_state_keys"]) <= valid[field].keys():
+                        raise ValueError(f"{field}: couvrir tous les required_state_keys.")
+                    if not valid[field].keys() <= set(requirements["allowed_state_keys"]):
+                        raise ValueError(f"{field}: utiliser uniquement les allowed_state_keys.")
+                if requirements["continuation_state"] and any(
+                    valid["initial_state"].get(k) != v
+                    for k, v in requirements["continuation_state"].items()
+                ):
+                    raise ValueError("initial_state: reprendre exactement continuation_state.")
+            except ValueError as exc:
+                error = service.safe_error(exc)
+                directory = settings.assets_dir / str(project_id) / "studio" / "diagnostics"
+                directory.mkdir(parents=True, exist_ok=True)
+                (directory / f"director-{shot['id']}-{uuid.uuid4().hex}.json").write_text(
+                    json.dumps(scrub({"response": response, "validation_error": error}),
+                               ensure_ascii=False, indent=2), encoding="utf-8",
+                )
+                if attempt == 2:
+                    raise HTTPException(
+                        422, f"Plan {shot['id']}: {error} "
+                        "Deux corrections automatiques ont échoué. "
+                        "Les autres contrats sont conservés.",
+                    ) from None
+                source.update(invalid_contract=scrub(value), validation_error=error)
+                continue
+            break
         contracts.append(valid)
         if not internal:
             series.require_editable(project_id)

@@ -551,6 +551,96 @@ async def test_preparation_rejects_changed_dialogue_before_applying_contracts(cl
     assert service.board(project)['scenes'] == before['scenes']
 
 
+@pytest.mark.asyncio
+async def test_preparation_repairs_invalid_positions_for_only_the_affected_shot(client, monkeypatch):
+    from calliope.studio import director
+
+    project = persisted_episode(client, monkeypatch)
+    before = service.board(project)
+    shots = [s for scene in before['scenes'] for s in scene['shots']]
+    requests = []
+
+    async def realize(messages, **kwargs):
+        source = json.loads(messages[-1]['content'])
+        shot = source['shots'][0]
+        requests.append(source)
+        value = contract()
+        value['duration_sec'] = shot['duration_sec']
+        value['dialogue'] = [{'speaker': 'keeper', 'text': shot['dialogue'],
+                              'start_sec': 0., 'end_sec': shot['duration_sec']}]
+        if len(requests) == 1:
+            value['positions'] = {'radio': 'left, facing right'}
+            value['eyelines'] = {}
+        return {'shots': [value]}
+
+    monkeypatch.setattr(director, 'generate_structured', realize)
+    result = await director.prepare(project)
+    assert [r['shots'][0]['id'] for r in requests] == [shots[0]['id']] + [s['id'] for s in shots]
+    assert requests[1]['invalid_contract']['positions'] == {'radio': 'left, facing right'}
+    assert 'positions' in requests[1]['validation_error']
+    assert 'keeper' in requests[1]['validation_error']
+    assert requests[1]['requirements']['casting'] == ['keeper']
+    assert requests[1]['requirements']['dialogue'] == [{'speaker': 'keeper', 'text': shots[0]['dialogue']}]
+    assert result['enabled'] and not result['approved']
+    for entry in result['shots']:
+        assert set(entry['contract']['positions']) == set(entry['contract']['casting'])
+        assert set(entry['contract']['eyelines']) == set(entry['contract']['casting'])
+
+
+@pytest.mark.asyncio
+async def test_preparation_bounds_semantic_repairs_and_never_invents_missing_positions(client, monkeypatch):
+    from calliope.studio import director
+
+    project = persisted_episode(client, monkeypatch)
+    before = service.board(project)
+    requests = []
+
+    async def invalid(messages, **kwargs):
+        source = json.loads(messages[-1]['content'])
+        requests.append(source)
+        value = contract()
+        value['positions'] = {}
+        return {'shots': [value]}
+
+    monkeypatch.setattr(director, 'generate_structured', invalid)
+    with pytest.raises(service.HTTPException) as failure:
+        await director.prepare(project)
+    assert failure.value.status_code == 422
+    assert len(requests) == 3
+    assert 'positions' in failure.value.detail
+    assert not director.state(project)['enabled']
+    assert service.board(project)['scenes'] == before['scenes']
+    with service.database() as conn:
+        assert not conn.execute('SELECT 1 FROM studio_director_drafts').fetchone()
+
+
+@pytest.mark.asyncio
+async def test_preparation_rejects_a_known_but_wrong_location(client, monkeypatch):
+    from calliope.studio import director
+
+    project = persisted_episode(client, monkeypatch)
+    with service.database() as conn:
+        series_id = conn.execute('SELECT series_id FROM studio_episodes WHERE project_id=?', (project,)).fetchone()[0]
+        conn.execute("INSERT INTO studio_entities(series_id,entity_key,kind,name,description) "
+                     "VALUES(?,'other-room','location','Other room','Another room.')", (series_id,))
+        conn.commit()
+
+    async def wrong_location(messages, **kwargs):
+        shot = json.loads(messages[-1]['content'])['shots'][0]
+        value = contract() | {'location': 'other-room', 'references': ['keeper', 'other-room']}
+        value['duration_sec'] = shot['duration_sec']
+        value['dialogue'] = [{'speaker': 'keeper', 'text': shot['dialogue'],
+                              'start_sec': 0., 'end_sec': shot['duration_sec']}]
+        return {'shots': [value]}
+
+    monkeypatch.setattr(director, 'generate_structured', wrong_location)
+    with pytest.raises(service.HTTPException) as failure:
+        await director.prepare(project)
+    assert failure.value.status_code == 422
+    assert 'location' in failure.value.detail
+    assert not director.state(project)['enabled']
+
+
 @pytest.mark.parametrize('change', ['shot', 'canon'])
 @pytest.mark.asyncio
 async def test_preparation_does_not_reuse_drafts_after_input_changes(client, monkeypatch, change):
