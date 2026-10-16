@@ -26,6 +26,15 @@ async def generate_structured(messages, *, role=None, **options):
     Agent role assignments are independent of the Studio's chosen writer and
     should never silently override it.
     """
+    from calliope.studio.director_contracts import ROLE
+
+    messages = copy.deepcopy(messages)
+    if messages and messages[0]['role'] == 'system' and not messages[0]['content'].startswith(ROLE):
+        messages[0]['content'] = ROLE + '\n' + messages[0]['content']
+    for message in messages:
+        for key in [settings.llm_api_key, settings.studio_image_api_key] + [p.get('api_key') for p in settings.llm_profiles]:
+            if key and isinstance(message.get('content'), str):
+                message['content'] = message['content'].replace(key, '[secret masque]')
     deepseek = settings.llm_base_url.rstrip("/").endswith("api.deepseek.com")
     return await _generate_structured(
         messages, role=None,

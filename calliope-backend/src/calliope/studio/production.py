@@ -207,6 +207,10 @@ def save_episode_plan(project_id, plan):
 
 
 def ensure_midroll(project_id):
+    from calliope.studio import director
+    with service.database() as conn:
+        if director.enabled(conn, project_id):
+            return
     with service.database() as conn:
         conn.execute("BEGIN IMMEDIATE")
         episode = conn.execute(
@@ -782,6 +786,11 @@ async def render_shot(job, initial, should_stop):
         raise ProductionPausedError()
     shot = load_shot(initial["id"])
     chosen = reusable_video(shot)
+    from calliope.studio import director
+    with service.database() as conn:
+        uses_director = director.enabled(conn, job['project_id']) if job.get('project_id') else False
+    if uses_director and chosen and shot['approved']:
+        return
     if not chosen:
         try:
             shot = await generate_take(job, shot, "video", should_stop)
@@ -795,9 +804,17 @@ async def render_shot(job, initial, should_stop):
                 )
                 conn.commit()
             raise ProductionPausedError() from None
-    if job.get('video_ready'):
+    if job.get('video_ready') and not uses_director:
         job['video_ready']()
     verdict = await assess_take(shot)
+    if uses_director:
+        if verdict and verdict['status'] == 'ok':
+            trim_take(shot, verdict.get('voice'), verdict.get('trim_end_limit_sec'))
+        with service.database() as conn:
+            conn.execute("UPDATE studio_productions SET status='paused',stage='qc',message=? WHERE project_id=?",
+                ('Prise conservee. Verifiez les paroles, locuteurs, image et raccords avant de continuer.', job['project_id']))
+            conn.commit()
+        raise ProductionPausedError()
     if not verdict or verdict["status"] == "ok":
         trim_take(shot, (verdict or {}).get("voice"), (verdict or {}).get("trim_end_limit_sec"))
     if should_stop():
@@ -835,6 +852,15 @@ async def render_videos(job, shots, should_stop):
     if should_stop():
         raise asyncio.CancelledError()
     concurrency = settings.studio_video_concurrency
+    from calliope.studio import director
+    director_mode = False
+    with service.database() as conn:
+        if job.get('project_id') and director.enabled(conn, job['project_id']):
+            director_mode = True
+            concurrency = 1
+            shots = [s for s in shots if not s['approved']]
+    if not shots:
+        return
     semaphore = asyncio.Semaphore(concurrency)
     aborted = asyncio.Event()
     failure = None
@@ -870,7 +896,7 @@ async def render_videos(job, shots, should_stop):
                 should_stop,
             )
             await render_shot(job | {
-                'video_batch_last': index == len(shots) - 1 and concurrency == 1,
+                'video_batch_last': director_mode or index == len(shots) - 1 and concurrency == 1,
                 'video_preparation': preparation,
                 'video_ready': video_ready,
             }, shot, should_stop)
@@ -947,6 +973,14 @@ async def run_production(job, payload, should_stop):
             await checkpoint(job, "writing", 0.1, "Scénario préparé", should_stop)
             save_episode_plan(project_id, plan)
         ensure_midroll(project_id)
+        from calliope.studio import director
+        with service.database() as conn:
+            wants_director = json.loads(episode['context_json']).get('studio_director')
+            has_director = director.enabled(conn, project_id)
+            contracts_ready = has_director and all(s['contract'] for s in director._state(conn, project_id)['shots'])
+        if wants_director and not contracts_ready:
+            await director.prepare(project_id, internal=True)
+            has_director = True
         if payload.get("prepare_only"):
             with service.database() as conn:
                 conn.execute(
@@ -956,6 +990,14 @@ async def run_production(job, payload, should_stop):
                 )
                 conn.commit()
             raise ProductionPausedError()
+        if has_director:
+            check = director.preflight(project_id, payload.get('target_shot_ids'))
+            if not check['ok']:
+                with service.database() as conn:
+                    conn.execute("UPDATE studio_productions SET status='paused',message=? WHERE project_id=?",
+                                 (' '.join(check['errors']), project_id))
+                    conn.commit()
+                raise ProductionPausedError()
         with service.database() as conn:
             snapshot = json.loads(episode["context_json"])
             expected_values = {
@@ -993,6 +1035,8 @@ async def run_production(job, payload, should_stop):
             )
         board = service.board(project_id)
         shots = [s for scene in board["scenes"] for s in scene["shots"]]
+        if payload.get('target_shot_ids'):
+            shots = [s for s in shots if s['id'] in payload['target_shot_ids']]
         for index, initial in enumerate(shots):
             await checkpoint(
                 job,

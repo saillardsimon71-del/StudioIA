@@ -74,6 +74,9 @@ class EpisodeCreate(BaseModel):
     request_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
     prepare_only: bool = False
     image_mode: Literal["generated", "text_to_video"] = "generated"
+    studio_director: bool = False
+    target_seconds: int | None = Field(default=None, ge=10, le=120)
+    tone: str = Field(default='', max_length=2000)
 
     @field_validator("idea")
     @classmethod

@@ -268,6 +268,7 @@ def test_agnes_25_images_send_references_as_documented_json(monkeypatch, tmp_pat
 
     from calliope.studio import service
 
+    monkeypatch.setattr(settings, 'dry_run', True)
     reference = tmp_path / "reference.png"
     reference.write_bytes(png_bytes())
     original_client = httpx.AsyncClient

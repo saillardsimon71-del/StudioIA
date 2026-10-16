@@ -520,8 +520,8 @@ def context(conn, series_id):
             dict(r)
             for r in conn.execute(
                 (
-                    "SELECT ss.prompt,ss.dialogue,c.description FROM clips c JOIN studio_sh"
-                    "ots ss ON ss.clip_id=c.id JOIN scenes s ON s.id=c.scene_id WHERE c.pro"
+                    "SELECT ss.prompt,ss.dialogue,c.description,sc.context_json AS state_json FROM clips c JOIN studio_sh"
+                    "ots ss ON ss.clip_id=c.id JOIN scenes s ON s.id=c.scene_id LEFT JOIN studio_shot_context sc ON sc.clip_id=c.id WHERE c.pro"
                     "ject_id=? AND COALESCE((SELECT json_extract(context_json,'$.purpose') "
                     "FROM studio_shot_context WHERE clip_id=c.id),'') NOT IN ('midroll','outro') "
                     "ORDER BY s.order_index,s.id,c.order_index,c.id"
@@ -536,13 +536,15 @@ def context(conn, series_id):
                 "summary": row["summary"],
                 "events": json.loads(row["events_json"]),
                 "ongoing_plot": row["ongoing_plot"],
-                "shots": shots,
+                "shots": [shot | {'state': json.loads(shot.pop('state_json') or '{}')} for shot in shots],
             }
         )
     return result
 
 
 def create_episode(series_id, data):
+    if data.get('studio_director'):
+        data = data | {'prepare_only': True, 'image_mode': 'manual_chatgpt'}
     if data.get("prepare_only"):
         require_services(preparation_only=True)
     else:
@@ -562,6 +564,8 @@ def create_episode(series_id, data):
                 or old["objective"] != data.get("objective", "").strip()
                 or bool(json.loads(old["context_json"]).get("prepare_only"))
                 != bool(data.get("prepare_only"))
+                or json.loads(old['context_json']).get('episode_options', {'target_seconds': None, 'tone': ''}) != {
+                    'target_seconds': data.get('target_seconds'), 'tone': data.get('tone', '').strip()}
             ):
                 raise HTTPException(
                     409, "Cette demande correspond déjà à une autre idée "
@@ -586,6 +590,13 @@ def create_episode(series_id, data):
         ).fetchone()[0]
         frozen = context(conn, series_id)
         frozen["prepare_only"] = bool(data.get("prepare_only"))
+        frozen['studio_director'] = bool(data.get('studio_director'))
+        frozen['episode_options'] = {'target_seconds': data.get('target_seconds'),
+                                     'tone': data.get('tone', '').strip()}
+        if data.get('target_seconds') is not None:
+            frozen['target_seconds'] = data['target_seconds']
+        if data.get('tone', '').strip():
+            frozen['bible'] = frozen['bible'] | {'tone': data['tone'].strip()}
         frozen["image_mode"] = data.get("image_mode", "generated")
         cur = conn.execute(
             "INSERT INTO projects(title,idea) VALUES(?,?)",
@@ -679,6 +690,10 @@ def set_image_mode(project_id, mode):
     if mode not in ("generated", "text_to_video"):
         raise HTTPException(422, "Mode de création d'images inconnu.")
     require_editable(project_id)
+    from calliope.studio import director
+    with service.database() as conn:
+        if director.enabled(conn, project_id):
+            raise HTTPException(422, 'Ce parcours utilise uniquement les images ChatGPT importees manuellement.')
     with service.database() as conn:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
@@ -726,7 +741,10 @@ def retake_from(project_id, shot_id, request_id):
                 raise HTTPException(409, "Cette demande correspond à un autre plan.")
             return service.board(project_id)
     require_editable(project_id)
-    require_services()
+    with service.database() as conn:
+        from calliope.studio import director
+        uses_director = director.enabled(conn, project_id)
+    require_services(preparation_only=uses_director)
     with service.database() as conn:
         conn.execute("BEGIN IMMEDIATE")
         require_active_project(conn, project_id)
@@ -771,7 +789,7 @@ def retake_from(project_id, shot_id, request_id):
             )
             conn.execute("UPDATE clips SET clip_path=NULL WHERE id=?", (clip_id,))
         payload = {'studio_production_id':project_id, 'retake_from':shot_id,
-                   'retake_request_id':request_id}
+                   'retake_request_id':request_id, 'target_shot_ids': affected}
         job_id = conn.execute(
             "INSERT INTO jobs(project_id,kind,payload_json) VALUES(?,?,?)",
             (project_id, 'production', json.dumps(payload)),
@@ -803,10 +821,16 @@ def resume(project_id):
         if job["error"] == "cancelled":
             raise HTTPException(409, "Cette production a été annulée.")
         payload = json.loads(job["payload_json"])
+        from calliope.studio import director
+        uses_director = director.enabled(conn, project_id)
         if payload.get("prepare_only") and row["stage"] != "review":
             require_services(preparation_only=True)
         else:
-            require_services()
+            require_services(preparation_only=uses_director)
+            if uses_director:
+                check = director.preflight(project_id)
+                if not check['ok']:
+                    raise HTTPException(422, ' '.join(check['errors']))
             payload.pop("prepare_only", None)
         conn.execute("UPDATE jobs SET payload_json=? WHERE id=?",
                      (json.dumps(payload), row["job_id"]))
@@ -886,17 +910,25 @@ def restart(project_id, request_id):
             require_lifecycle_editable(conn, episode["series_id"])
             frozen = context(conn, episode["series_id"])
             frozen["prepare_only"] = preparation_only
+            options = json.loads(episode['context_json']).get('episode_options', {})
+            frozen['episode_options'] = options
+            if options.get('target_seconds') is not None:
+                frozen['target_seconds'] = options['target_seconds']
+            if options.get('tone'):
+                frozen['bible'] = frozen['bible'] | {'tone': options['tone']}
+            if json.loads(episode['context_json']).get('studio_director'):
+                frozen.update(studio_director=True, image_mode='manual_chatgpt', prepare_only=True)
             snapshot = {}
             for table in ("studio_projects", "studio_episodes", "studio_productions", "scenes",
                           "clips", "studio_takes", "studio_exports", "jobs", "studio_audio",
-                          "studio_audio_assets"):
+                          "studio_audio_assets", "studio_director_projects", "studio_director_reservations"):
                 snapshot[table] = [dict(item) for item in conn.execute(
                     f"SELECT * FROM {table} WHERE project_id=?", (project_id,)
                 )]
             snapshot["projects"] = [dict(conn.execute(
                 "SELECT * FROM projects WHERE id=?", (project_id,)
             ).fetchone())]
-            for table in ("studio_shots", "studio_shot_context"):
+            for table in ("studio_shots", "studio_shot_context", "studio_director_shots"):
                 snapshot[table] = [dict(item) for item in conn.execute(
                     f"SELECT s.* FROM {table} s JOIN clips c ON c.id=s.clip_id "
                     "WHERE c.project_id=?", (project_id,)
@@ -991,4 +1023,5 @@ def episode_meta(conn, project_id):
         frozen.get("directing_profile")
     )["production_mode"]
     result["image_mode"] = frozen.get("image_mode", "generated")
+    result['studio_director'] = bool(frozen.get('studio_director'))
     return result

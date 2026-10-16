@@ -72,6 +72,10 @@ def shot_context(conn, shot_id):
         **{k: v for k, v in context.get("bible", {}).items() if v},
     }
     context["shot"] = json.loads(row["shot_json"] or "{}") if row else {}
+    contract = conn.execute('SELECT contract_json FROM studio_director_shots WHERE clip_id=?',
+                            (shot_id,)).fetchone()
+    if contract:
+        context['director_contract'] = json.loads(contract[0])
     context["prompt_contract_version"] = plan.get("prompt_contract_version", 1)
     context["render_canon"] = plan.get("render_canon", {})
     if context["prompt_contract_version"] == 2:
@@ -767,6 +771,11 @@ def select_take(take_id):
                     "UPDATE clips SET clip_path=? WHERE id=?", (row["output_path"], row["clip_id"])
                 )
             touch(conn, row["project_id"])
+            from calliope.studio import director
+
+            if director.enabled(conn, row['project_id']):
+                conn.execute('UPDATE studio_shots SET trim_start_sec=NULL,trim_end_sec=NULL WHERE clip_id=?', (row['clip_id'],))
+            director.invalidate_dependents(conn, row['project_id'], {row['clip_id']})
         result = public_shot(conn, row["clip_id"])
         conn.commit()
         return result
@@ -885,7 +894,7 @@ def require_source_visual_review(source, shot, context, previous_video_time=None
         raise HTTPException(422, str(exc)) from None
 
     labels = [label for label in shot.get("screen_text", []) if label.get("anchor") == "character"]
-    strict = context.get("directing_profile", {}).get("require_reference_approval")
+    strict = context.get("directing_profile", {}).get("require_reference_approval") or context.get('studio_director')
     if not strict and not labels:
         return None
     if not source:
@@ -947,6 +956,9 @@ def approve_shot(shot_id, approved):
                     409, "Choisissez une prise vidéo terminée avant de valider ce plan."
                 )
             metadata = json.loads(take["metadata_json"] or "{}")
+            from calliope.studio import director
+
+            director.guard_approval(conn, shot, take)
             if shot["audio_mode"] == "native" and metadata.get("has_audio") is False:
                 raise HTTPException(409, "La piste sonore native attendue est absente.")
             context = shot_context(conn, shot_id)
@@ -1006,6 +1018,9 @@ def enqueue_takes(shot_id, data):
     with database() as conn:
         conn.execute("BEGIN IMMEDIATE")
         shot = public_shot(conn, shot_id)
+        from calliope.studio import director
+
+        director.guard_generation(conn, shot, data['kind'])
         project = require_project(conn, shot["project_id"])
         from calliope.studio.series import require_active_project
 
@@ -1065,6 +1080,9 @@ def enqueue_takes(shot_id, data):
             "image_base_url": settings.studio_image_base_url,
             "image_model": settings.studio_image_model,
         }
+        if director.enabled(conn, shot['project_id']):
+            entry = next(s for s in director._state(conn, shot['project_id'])['shots'] if s['id'] == shot_id)
+            parameters['director_shot_hash'] = entry['hash']
         if kind == "video":
             parameters.update(
                 video_profile=settings.studio_video_profile,
@@ -1205,6 +1223,8 @@ def enqueue_takes(shot_id, data):
                 ),
             )
             take_id = cur.lastrowid
+            if kind == 'video':
+                director.reserve(conn, shot, take_id)
             cur = conn.execute(
                 "INSERT INTO jobs(project_id,scene_id,clip_id,kind,payload_json) VALUES(?,?,?,?,?)",
                 (
@@ -1299,6 +1319,7 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
             "SELECT * FROM studio_projects WHERE project_id=?", (project_id,)
         ).fetchone()
         clips, missing = [], []
+        from calliope.studio import director
         for row in conn.execute(
             "SELECT c.id,c.scene_id,s.heading,c.order_index FROM clips c "
             "JOIN scenes s ON s.id=c.scene_id "
@@ -1310,6 +1331,8 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
                 "SELECT * FROM studio_takes WHERE id=? AND clip_id=?",
                 (shot["selected_video_id"], row["id"]),
             ).fetchone()
+            if shot['approved'] and take:
+                director.guard_approval(conn, shot, take)
             if (
                 not shot["approved"] or not take or not Path(take["output_path"] or "").is_file()
                 or evaluated.get(row['id']) != take['id']
@@ -1385,6 +1408,8 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
 
 
 async def _generate_image(request, *, check_cancel=None):
+    if not settings.dry_run:
+        raise ValueError('Images manuelles uniquement: utilisez le paquet pour ChatGPT puis importez les images.')
     from calliope.studio.visual_identity import verify_reference_inputs
 
     verify_reference_inputs(request)
@@ -1541,6 +1566,15 @@ async def run_studio_job(job, payload, should_stop):
         if take["output_path"] and Path(take["output_path"]).is_file() and take["status"] == "done":
             return [take["output_path"]]
         request = json.loads(take["request_json"])
+        from calliope.studio import director
+
+        director.guard_generation(conn, public_shot(conn, take['clip_id']), take['kind'])
+        if director.enabled(conn, take['project_id']):
+            director.guard_budget(conn, take['project_id'])
+            current = director._state(conn, take['project_id'])
+            entry = next(s for s in current['shots'] if s['id'] == take['clip_id'])
+            if request.get('director_shot_hash') != entry['hash']:
+                raise ValueError('Le plan a change depuis la preparation de cette prise.')
         conn.execute("UPDATE studio_takes SET status='running',error=NULL WHERE id=?", (take_id,))
         conn.commit()
     directory = settings.assets_dir / str(take["project_id"]) / "studio" / "takes" / str(take_id)

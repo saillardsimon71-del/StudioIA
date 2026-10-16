@@ -133,6 +133,21 @@ CREATE TABLE IF NOT EXISTS studio_audio_assets (
     path TEXT NOT NULL,
     duration_sec REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS studio_director_projects (
+    project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    approved_hash TEXT,
+    budget_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS studio_director_shots (
+    clip_id INTEGER PRIMARY KEY REFERENCES clips(id) ON DELETE CASCADE,
+    contract_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS studio_director_reservations (
+    take_id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    estimated_eur REAL NOT NULL,
+    video_seconds REAL NOT NULL
+);
 """
 
 

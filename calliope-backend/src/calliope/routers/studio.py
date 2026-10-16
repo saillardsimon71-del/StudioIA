@@ -11,12 +11,14 @@ from pydantic import BaseModel, Field
 from calliope.config import settings
 from calliope.queue.manager import queue_manager
 from calliope.routers.studio_series import router as series_router
-from calliope.studio import runtime, series, service
+from calliope.routers.studio_director import router as director_router
+from calliope.studio import director, runtime, series, service
 from calliope.studio.planner import parse_script, plan_with_llm
 from calliope.studio.screen_text import ScreenText
 
 router = APIRouter()
 router.include_router(series_router)
+router.include_router(director_router)
 
 
 class ProjectCreate(BaseModel):
@@ -286,6 +288,7 @@ async def prepare(project_id: int, payload: PlanRequest):
 async def new_scene(project_id: int, payload: SceneData):
     series.require_editable(project_id)
     with service.database() as conn:
+        director.require_fixed_structure(conn, project_id)
         scene_id = service.add_scene(conn, project_id, payload.model_dump())
         conn.commit()
     return next(s for s in service.board(project_id)["scenes"] if s["id"] == scene_id)
@@ -313,6 +316,7 @@ async def edit_scene(project_id: int, scene_id: int, payload: SceneUpdate):
 async def new_shot(project_id: int, scene_id: int, payload: ShotCreate):
     series.require_editable(project_id)
     with service.database() as conn:
+        director.require_fixed_structure(conn, project_id)
         service.require_project(conn, project_id)
         if not conn.execute(
             "SELECT id FROM scenes WHERE id=? AND project_id=?", (scene_id, project_id)
@@ -346,6 +350,7 @@ async def prompt_preview(project_id: int, shot_id: int):
 async def delete_shot(project_id: int, shot_id: int):
     series.require_editable(project_id)
     with service.database() as conn:
+        director.require_fixed_structure(conn, project_id)
         shot = service.require_shot(conn, shot_id, project_id)
         if (
             conn.execute(
