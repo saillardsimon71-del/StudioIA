@@ -818,7 +818,7 @@ def resume(project_id):
             raise HTTPException(409, "Cette production est déjà terminée.")
         job = conn.execute("SELECT status,error,payload_json FROM jobs WHERE id=?",
                            (row["job_id"],)).fetchone()
-        if job["error"] == "cancelled":
+        if job["status"] == "cancelled" or job["error"] == "cancelled":
             raise HTTPException(409, "Cette production a été annulée.")
         payload = json.loads(job["payload_json"])
         from calliope.studio import director

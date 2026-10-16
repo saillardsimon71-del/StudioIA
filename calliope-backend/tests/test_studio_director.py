@@ -72,6 +72,28 @@ def test_contract_rejects_unknown_speaker_timing_and_blank(client, prepared):
             validate_contract(contract() | change, context['entities'])
 
 
+def test_resume_rejects_cancelled_job_without_leaving_false_pending_state(client, prepared, monkeypatch):
+    from calliope.studio import director, series
+
+    project, _ = prepared
+    with service.database() as conn:
+        job_id = conn.execute('SELECT job_id FROM studio_productions WHERE project_id=?',
+                              (project,)).fetchone()[0]
+        conn.execute("UPDATE jobs SET status='cancelled',error='Manual diagnostic' WHERE id=?", (job_id,))
+        conn.execute("UPDATE studio_productions SET status='paused',stage='review' WHERE project_id=?",
+                     (project,))
+        conn.commit()
+    monkeypatch.setattr(series, 'require_services', lambda **kwargs: None)
+    monkeypatch.setattr(director, 'preflight', lambda project_id: {'ok': True})
+    result = client.post(f'/api/studio/projects/{project}/production/resume')
+    assert result.status_code == 409
+    assert service.board(project)['production']['status'] == 'paused'
+    with service.database() as conn:
+        assert conn.execute('SELECT status FROM jobs WHERE id=?', (job_id,)).fetchone()[0] == 'cancelled'
+        assert not conn.execute("SELECT 1 FROM jobs WHERE project_id=? AND status='pending'",
+                                (project,)).fetchone()
+
+
 def test_storyboard_review_and_images_are_required_before_gpu(client, prepared):
     project, shots = prepared
     current = state(client, project)
