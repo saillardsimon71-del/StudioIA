@@ -486,6 +486,40 @@ def _sse_lines(*chunks: dict) -> list[bytes]:
     return out
 
 
+@pytest.mark.parametrize('streaming', [True, False])
+@pytest.mark.parametrize('content', ['{"shots":[', '{"shots":[]}'])
+async def test_structured_reply_reports_truncation_without_replaying_same_request(
+    monkeypatch, streaming, content,
+):
+    from calliope.agent import llm
+
+    requests = []
+
+    def respond(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        if payload.get('stream'):
+            if not streaming:
+                return httpx.Response(400, json={'error': 'Streaming unsupported'})
+            chunks = [
+                {'choices': [{'delta': {'content': content}}]},
+                {'choices': [{'delta': {}, 'finish_reason': 'length'}]},
+            ]
+            return httpx.Response(200, content=b'\n'.join(_sse_lines(*chunks)),
+                                  headers={'content-type': 'text/event-stream'})
+        return httpx.Response(200, json={'choices': [{
+            'message': {'content': content}, 'finish_reason': 'length',
+        }]})
+
+    client = LLMClient(base_url='https://test.invalid/v1', model='test', api_key='')
+    await client.client.aclose()
+    client.client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    monkeypatch.setattr(llm, 'LLMClient', lambda: client)
+    with pytest.raises(RuntimeError, match='finish_reason=length'):
+        await llm.generate_structured([{'role': 'user', 'content': 'Return JSON.'}], max_tokens=16)
+    assert len(requests) == (1 if streaming else 2)
+
+
 class _StreamRouter:
     """Serves a scripted SSE stream."""
 

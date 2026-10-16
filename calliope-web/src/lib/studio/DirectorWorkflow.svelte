@@ -77,7 +77,7 @@
     <button disabled={busy} onclick={load}>Actualiser</button></div>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if notice}<p class="notice" role="status">{notice}</p>{/if}
-  {#if board.production}<p role="status">{board.production.message}</p>
+  {#if board.production && !(busy && current && !current.enabled)}<p role="status">{board.production.message}</p>
     {#if active}<progress max="1" value={board.production.progress}></progress>{/if}
     {#each board.jobs.filter(job => ['pending', 'running'].includes(job.status)) as job}
       <button disabled={busy} onclick={() => act(() => studio.cancel(job.id))}>Annuler la prise en cours (travail {job.id})</button>
@@ -88,7 +88,8 @@
   {:else if !current.enabled}
     <p>DeepSeek prépare le storyboard et les réglages de réalisation à partir de votre série.</p>
     <button class="primary" disabled={busy || active || !board.scenes.length}
-      onclick={() => act(() => director.prepare(board.project.id))}>Préparer les contrats du Director</button>
+      onclick={() => act(() => director.prepare(board.project.id))}>{busy ? 'Préparation des plans en cours...' : 'Préparer les contrats du Director'}</button>
+    {#if busy}<progress aria-label="Préparation du storyboard"></progress><p role="status">Les plans sont préparés un par un. Les contrats déjà prêts sont conservés en cas d'interruption. Aucune vidéo ne démarre à cette étape.</p>{/if}
     {#if !board.scenes.length}<p class="hint">Le scénario est en cours de préparation. Les contrats apparaîtront ensuite.</p>{/if}
   {:else}
     <ol class="steps"><li class:done={current.approved}>Relire le storyboard</li><li class:done={current.shots.filter(s => !s.continue_from_previous).every(s => s.image?.approved)}>Importer les images ChatGPT</li><li>Produire et vérifier les prises</li></ol>

@@ -148,6 +148,11 @@ CREATE TABLE IF NOT EXISTS studio_director_reservations (
     estimated_eur REAL NOT NULL,
     video_seconds REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS studio_director_drafts (
+    clip_id INTEGER PRIMARY KEY REFERENCES clips(id) ON DELETE CASCADE,
+    request_hash TEXT NOT NULL,
+    contract_json TEXT NOT NULL
+);
 """
 
 

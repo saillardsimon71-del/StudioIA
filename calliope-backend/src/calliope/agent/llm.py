@@ -345,6 +345,7 @@ class LLMClient:
         try:
             parts: list[str] = []
             reasoning_chars = 0
+            truncated = False
             async for ev in self.chat_stream(
                 messages,
                 temperature=temperature,
@@ -356,6 +357,8 @@ class LLMClient:
                     parts.append(ev["content"])
                 elif ev["type"] == "reasoning":
                     reasoning_chars += len(ev["content"])
+                elif ev["type"] == "truncated":
+                    truncated = True
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code not in _STREAM_UNSUPPORTED_STATUS:
                 raise
@@ -367,6 +370,11 @@ class LLMClient:
             )
             return await self._chat_blocking(
                 messages, temperature, response_format, extra_body, max_tokens
+            )
+        if truncated:
+            raise RuntimeError(
+                "Réponse du modèle tronquée (finish_reason=length). "
+                "La demande doit être découpée en réponses plus courtes."
             )
         content = "".join(parts).strip()
         if not content:
@@ -464,6 +472,11 @@ class LLMClient:
             resp = await self._post_json(url, payload)
         resp.raise_for_status()
         data = resp.json()
+        if data["choices"][0].get("finish_reason") == "length":
+            raise RuntimeError(
+                "Réponse du modèle tronquée (finish_reason=length). "
+                "La demande doit être découpée en réponses plus courtes."
+            )
         content = data["choices"][0]["message"]["content"]
         return content.strip()
 
@@ -645,6 +658,7 @@ class LLMClient:
 
         - {"type": "delta", "content": str}          — text token
         - {"type": "reasoning", "content": str}      — reasoning/thinking token
+        - {"type": "truncated"}                     - output token limit reached
         - {"type": "tool_call", "tool_call": {...}}  — one complete tool call
           (argument fragments accumulated across chunks)
         - {"type": "done"}                           — stream finished
@@ -767,6 +781,8 @@ class LLMClient:
                 if fn.get("arguments"):
                     acc["function"]["arguments"] += fn["arguments"]
             finish = choices[0].get("finish_reason")
+            if finish == "length":
+                yield {"type": "truncated"}
             if finish == "tool_calls":
                 for idx in sorted(tool_acc):
                     if tool_acc[idx]["function"]["name"]:

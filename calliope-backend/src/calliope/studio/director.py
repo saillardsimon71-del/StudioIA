@@ -244,6 +244,15 @@ def initialize(project_id, contracts):
             "UPDATE studio_episodes SET context_json=? WHERE project_id=?",
             (json.dumps(context), project_id),
         )
+        conn.execute(
+            "DELETE FROM studio_director_drafts WHERE clip_id IN "
+            "(SELECT id FROM clips WHERE project_id=?)", (project_id,),
+        )
+        conn.execute(
+            "UPDATE studio_productions SET status='paused',stage='review',error=NULL,"
+            "message=? WHERE project_id=? AND status NOT IN ('pending','running')",
+            ("Storyboard préparé. Vérifiez et validez les plans avant les images.", project_id),
+        )
         service.touch(conn, project_id)
         conn.commit()
     return state(project_id)
@@ -321,41 +330,60 @@ async def prepare(project_id, internal=False):
         memory = series.context(conn, row["series_id"])
         plan = json.loads(row["plan_json"])
         shots = live_shots(conn, project_id)
-        baseline = digest(shots)
+        directions = {s["id"]: service.shot_context(conn, s["id"])["shot"] for s in shots}
+        baseline = digest([shots, directions])
     if not shots:
         raise HTTPException(409, "Preparez le storyboard avant le Director.")
-    response = await generate_structured(
-        [
-            {
-                "role": "system",
-                "content": ROLE
-                + '\nReturn ONLY {"shots":[ShotContract,...]} in the exact supplied order. '
-                "Do not rewrite the story or exact dialogue. Every dialogue turn must retain "
-                "its speaker and exact words. "
-                "Allocate realistic non-overlapping times within the existing shot duration. "
-                "Schema: " + json.dumps(ShotContract.model_json_schema()),
-            },
-            {
-                "role": "user",
-                "content": json.dumps(
-                    scrub(
-                        {
-                            "memory": memory,
-                            "plan": plan,
-                            "shots": [{k: v for k, v in s.items() if k != "takes"} for s in shots],
-                        }
-                    )
-                ),
-            },
-        ],
-        temperature=0.2,
-        max_tokens=16000,
-        json_mode=True,
-    )
-    contracts = response.get("shots") if isinstance(response, dict) else None
-    if not isinstance(contracts, list) or len(contracts) != len(shots):
-        raise HTTPException(422, "DeepSeek doit fournir exactement un contrat par plan.")
-    for shot, value in zip(shots, contracts):
+    contracts = []
+    for index, shot in enumerate(shots):
+        source = scrub({
+            "memory": memory,
+            "plan": {key: plan[key] for key in (
+                "title", "summary", "events", "speaker_ids", "render_canon",
+            ) if key in plan},
+            "shots": [{k: v for k, v in shot.items() if k != "takes"}
+                      | {"direction": directions[shot["id"]]}],
+            "previous_contract": contracts[-1] if contracts else None,
+            "next_direction": (
+                directions[shots[index + 1]["id"]] if index + 1 < len(shots) else None
+            ),
+        })
+        request_hash = digest(source)
+        with service.database() as conn:
+            draft = conn.execute(
+                "SELECT contract_json FROM studio_director_drafts "
+                "WHERE clip_id=? AND request_hash=?",
+                (shot["id"], request_hash),
+            ).fetchone()
+        if draft:
+            value = json.loads(draft[0])
+        else:
+            try:
+                response = await generate_structured(
+                    [
+                        {"role": "system", "content": ROLE
+                         + '\nReturn ONLY one JSON object {"shots":[ShotContract]} '
+                         "for the ONE supplied shot. "
+                         "Do not return other shots or repeat the episode or canon. Be concise. "
+                         "Preserve the supplied direction, casting, location and prop states. "
+                         "Do not rewrite the story or exact dialogue. Every turn must retain "
+                         "its speaker and exact words. Allocate realistic non-overlapping times "
+                         "within the existing duration. Use previous_contract and next_direction "
+                         "to preserve geography, eyelines and state continuity. "
+                         "Schema: " + json.dumps(ShotContract.model_json_schema())},
+                        {"role": "user", "content": json.dumps(source, ensure_ascii=False)},
+                    ],
+                    temperature=0.2, max_tokens=6000, json_mode=True, required_keys=("shots",),
+                )
+            except (ValueError, RuntimeError) as exc:
+                raise HTTPException(
+                    422, f"Plan {index + 1}/{len(shots)} : {service.safe_error(exc)} "
+                    "Les contrats déjà préparés sont conservés pour la prochaine tentative.",
+                ) from None
+            values = response.get("shots") if isinstance(response, dict) else None
+            if not isinstance(values, list) or len(values) != 1:
+                raise HTTPException(422, f"Plan {index + 1} : un seul contrat est requis.")
+            value = values[0]
         try:
             valid = validate_contract(value, memory["entities"])
         except ValueError as exc:
@@ -371,10 +399,24 @@ async def prepare(project_id, internal=False):
             raise HTTPException(
                 422, "Le Director a modifie les paroles ou la duree pendant la preparation."
             )
+        contracts.append(valid)
+        if not internal:
+            series.require_editable(project_id)
+        with service.database() as conn:
+            conn.execute(
+                "INSERT INTO studio_director_drafts(clip_id,request_hash,contract_json) "
+                "VALUES(?,?,?) "
+                "ON CONFLICT(clip_id) DO UPDATE SET request_hash=excluded.request_hash,"
+                "contract_json=excluded.contract_json",
+                (shot["id"], request_hash, json.dumps(valid)),
+            )
+            conn.commit()
     if not internal:
         series.require_editable(project_id)
     with service.database() as conn:
-        if digest(live_shots(conn, project_id)) != baseline:
+        current = live_shots(conn, project_id)
+        current_directions = {s["id"]: service.shot_context(conn, s["id"])["shot"] for s in current}
+        if digest([current, current_directions]) != baseline:
             raise HTTPException(409, "Le storyboard a change pendant la preparation.")
     return initialize(project_id, contracts)
 

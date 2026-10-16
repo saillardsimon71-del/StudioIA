@@ -482,6 +482,138 @@ def test_migration_is_additive_and_repeatable(client, prepared):
 
 
 @pytest.mark.asyncio
+async def test_preparation_batches_contracts_and_resumes_validated_drafts(client, monkeypatch):
+    from calliope.studio import director
+
+    project = persisted_episode(client, monkeypatch)
+    before = service.board(project)
+    calls = []
+    interrupted = False
+
+    async def realize(messages, **kwargs):
+        nonlocal interrupted
+        source = json.loads(messages[-1]['content'])
+        if len(source['shots']) != 1:
+            raise ValueError('No JSON object found in LLM reply (len=54451)')
+        shot = source['shots'][0]
+        calls.append(shot['id'])
+        if len(calls) == 2:
+            interrupted = True
+            raise RuntimeError('Reply truncated (finish_reason=length)')
+        c = contract()
+        c['duration_sec'] = shot['duration_sec']
+        c['dialogue'] = [{'speaker': 'keeper', 'text': shot['dialogue'],
+                          'start_sec': 0., 'end_sec': shot['duration_sec']}]
+        return {'shots': [c]}
+
+    monkeypatch.setattr(director, 'generate_structured', realize)
+    with pytest.raises(service.HTTPException) as failure:
+        await director.prepare(project)
+    assert interrupted
+    assert 'finish_reason=length' in failure.value.detail
+    assert not director.state(project)['enabled']
+    assert service.board(project)['scenes'] == before['scenes']
+    with service.database() as conn:
+        conn.execute("UPDATE studio_productions SET status='failed',error='Old JSON failure' WHERE project_id=?", (project,))
+        conn.commit()
+    result = await director.prepare(project)
+    ids = [s['id'] for scene in before['scenes'] for s in scene['shots']]
+    assert calls == ids[:2] + ids[1:]
+    assert result['enabled'] and not result['approved']
+    assert [s['id'] for s in result['shots']] == ids
+    for entry, shot in zip(result['shots'], [s for scene in before['scenes'] for s in scene['shots']]):
+        assert entry['contract']['dialogue'][0]['text'] == shot['dialogue']
+        assert entry['contract']['duration_sec'] == shot['duration_sec']
+    board = service.board(project)
+    assert board['production']['status'] == 'paused'
+    assert board['production']['stage'] == 'review'
+    assert board['production']['error'] is None
+    assert all(not s['takes'] for scene in board['scenes'] for s in scene['shots'])
+
+
+@pytest.mark.asyncio
+async def test_preparation_rejects_changed_dialogue_before_applying_contracts(client, monkeypatch):
+    from calliope.studio import director
+
+    project = persisted_episode(client, monkeypatch)
+    before = service.board(project)
+
+    async def wrong_dialogue(*args, **kwargs):
+        return {'shots': [contract() | {'dialogue': [
+            {'speaker': 'keeper', 'text': 'Invented line.', 'start_sec': 0., 'end_sec': 3.},
+        ]}]}
+
+    monkeypatch.setattr(director, 'generate_structured', wrong_dialogue)
+    with pytest.raises(service.HTTPException) as failure:
+        await director.prepare(project)
+    assert failure.value.status_code == 422
+    assert not director.state(project)['enabled']
+    assert service.board(project)['scenes'] == before['scenes']
+
+
+@pytest.mark.parametrize('change', ['shot', 'canon'])
+@pytest.mark.asyncio
+async def test_preparation_does_not_reuse_drafts_after_input_changes(client, monkeypatch, change):
+    from calliope.studio import director
+
+    project = persisted_episode(client, monkeypatch)
+    calls = []
+
+    async def realize(messages, **kwargs):
+        shot = json.loads(messages[-1]['content'])['shots'][0]
+        calls.append(shot['id'])
+        if len(calls) == 2:
+            raise RuntimeError('Interrupted')
+        value = contract()
+        value['duration_sec'] = shot['duration_sec']
+        value['dialogue'] = [{'speaker': 'keeper', 'text': shot['dialogue'],
+                              'start_sec': 0., 'end_sec': shot['duration_sec']}]
+        return {'shots': [value]}
+
+    monkeypatch.setattr(director, 'generate_structured', realize)
+    with pytest.raises(service.HTTPException):
+        await director.prepare(project)
+    first = calls[0]
+    if change == 'shot':
+        service.update_shot(project, first, {'dialogue': 'A revised line.'})
+    else:
+        with service.database() as conn:
+            conn.execute("UPDATE studio_entities SET description='A revised identity.' WHERE series_id="
+                         "(SELECT series_id FROM studio_episodes WHERE project_id=?)", (project,))
+            conn.commit()
+    result = await director.prepare(project)
+    assert calls.count(first) == 2
+    assert result['enabled'] and not result['approved']
+    if change == 'shot':
+        assert result['shots'][0]['contract']['dialogue'][0]['text'] == 'A revised line.'
+
+
+@pytest.mark.asyncio
+async def test_preparation_does_not_overwrite_an_edit_made_during_the_request(client, monkeypatch):
+    from calliope.studio import director
+
+    project = persisted_episode(client, monkeypatch)
+    first = service.board(project)['scenes'][0]['shots'][0]['id']
+
+    async def realize(messages, **kwargs):
+        shot = json.loads(messages[-1]['content'])['shots'][0]
+        if shot['id'] == first:
+            service.update_shot(project, first, {'dialogue': 'Concurrent edit.'})
+        value = contract()
+        value['duration_sec'] = shot['duration_sec']
+        value['dialogue'] = [{'speaker': 'keeper', 'text': shot['dialogue'],
+                              'start_sec': 0., 'end_sec': shot['duration_sec']}]
+        return {'shots': [value]}
+
+    monkeypatch.setattr(director, 'generate_structured', realize)
+    with pytest.raises(service.HTTPException) as failure:
+        await director.prepare(project)
+    assert failure.value.status_code == 409
+    assert not director.state(project)['enabled']
+    assert service.board(project)['scenes'][0]['shots'][0]['dialogue'] == 'Concurrent edit.'
+
+
+@pytest.mark.asyncio
 async def test_new_episode_writes_contracts_then_pauses_without_any_media(client, monkeypatch):
     from calliope.config import settings
     from calliope.queue.manager import queue_manager
