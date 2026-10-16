@@ -84,15 +84,8 @@
 					<label>Clé API d'écriture<input type="password" autocomplete="new-password" bind:value={llmKey} placeholder={textProvider === 'deepseek' ? 'Coller votre clé DeepSeek ici' : config.llm_configured ? 'Clé existante, laisser vide pour conserver' : 'Clé API si nécessaire'} /></label>
 					<p class="hint">L'IA choisie rédige les histoires, les plans et les prompts vidéo. Le changement ne réécrit pas automatiquement un épisode terminé.</p>
 				</fieldset>
-				<fieldset class="stack"><legend>Images de référence</legend>
-					<label>Générateur d'images<select bind:value={config.image_provider}><option value="codex">Codex - abonnement ChatGPT</option><option value="api">Service API</option></select></label>
-					{#if config.image_provider === 'codex'}
-						<p class="hint">Codex doit être installé et connecté via ChatGPT sur cet ordinateur. Aucune clé API nécessaire. La génération utilise les limites de votre abonnement Codex.</p>
-					{:else}
-					<label>Adresse de l'API<input type="url" bind:value={config.image_base_url} placeholder="https://api.openai.com/v1" /></label>
-					<div class="columns"><label>Modèle d'image<input bind:value={config.image_model} placeholder="Nom du modèle" /></label><label>Clé API<input type="password" autocomplete="new-password" bind:value={imageKey} placeholder={config.image_configured ? 'Clé enregistrée, conserver si vide' : 'Clé si votre service en exige une'} /></label></div>
-					{/if}
-					<p class="hint">Vous pouvez aussi importer vos propres images dans chaque plan.</p>
+				<fieldset class="stack"><legend>Images manuelles dans ChatGPT</legend>
+					<p class="hint">Le Director prépare un paquet avec prompts, références et noms de fichiers. Vous créez les images dans votre conversation ChatGPT, puis les importez et les validez dans Studio IA. Aucune génération automatique d'images.</p>
 				</fieldset>
 				<details><summary>Mode de diagnostic</summary><label class="check mode"><input type="checkbox" bind:checked={config.dry_run} />Activer la simulation sans génération de médias</label></details>
 			{:else if !error}<p class="muted">Chargement des paramètres...</p>{/if}

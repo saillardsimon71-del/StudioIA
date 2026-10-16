@@ -181,7 +181,8 @@
 		</section>
 		<section class="generation stack"><h3>Générer de nouvelles prises</h3>
 			<div class="columns"><label>Nombre de prises<select bind:value={nTakes}>{#each [1, 2, 3, 4] as count}<option value={count}>{count}</option>{/each}</select></label><label>Graine (facultatif)<input type="number" min="0" step="1" bind:value={seed} placeholder="Aléatoire" /></label></div>
-			<div class="row"><button disabled={!!busy || !valid || !draft.image_prompt.trim()} onclick={() => generate('image')}>{busy === 'image' ? 'Lancement...' : 'Générer des images'}</button><button class="primary" disabled={!!busy || !valid || !draft.prompt.trim()} onclick={() => generate('video')}>{busy === 'video' ? 'Lancement...' : shot.takes.some((take) => take.kind === 'video') ? 'Régénérer ce plan' : 'Générer la vidéo'}</button></div>
+			<p class="hint">Les images sont créées manuellement dans ChatGPT, puis importées. Le paquet de l'épisode fournit les prompts et les références.</p>
+			<div class="row"><button class="primary" disabled={!!busy || !valid || !draft.prompt.trim()} onclick={() => generate('video')}>{busy === 'video' ? 'Lancement...' : shot.takes.some((take) => take.kind === 'video') ? 'Régénérer ce plan' : 'Générer la vidéo'}</button></div>
 			<p class="hint">Les changements sont enregistrés avant la génération. Toutes les prises sont conservées, aucune vidéo n'est choisie automatiquement.</p>
 			<label>Ou importer une vidéo<input type="file" accept="video/*" disabled={!!busy} onchange={(event) => upload(event, 'video')} /></label>
 		</section>

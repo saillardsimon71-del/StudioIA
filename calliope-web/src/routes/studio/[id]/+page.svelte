@@ -2,6 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { beforeNavigate } from '$app/navigation';
 	import ShotEditor from '$lib/studio/ShotEditor.svelte';
+	import DirectorWorkflow from '$lib/studio/DirectorWorkflow.svelte';
 	import PlannerDialog from '$lib/studio/PlannerDialog.svelte';
 	import SceneDialog from '$lib/studio/SceneDialog.svelte';
 	import ConfigDialog from '$lib/studio/ConfigDialog.svelte';
@@ -147,6 +148,9 @@
 {#if loading}<main class="loading"><p class="muted">Ouverture du projet...</p></main>
 {:else if !board}<main class="loading"><p class="error" role="alert">{connectionError || error || 'Projet introuvable.'}</p><button onclick={() => refresh()}>Réessayer</button></main>
 {:else}
+	{#if board.episode}<DirectorWorkflow {board} {active} onchanged={refresh} />{/if}
+	<details open={!board.episode?.studio_director}>
+		<summary>Panneau expert : plans, montage, sons et anciennes prises</summary>
 	<div class:with-editor={!!selected} class="workspace">
 		<nav class="scene-nav" aria-label="Scènes du projet" inert={!!selected && compact}><div class="project-label"><span class="badge">{board.project.aspect_ratio}</span><h2>{board.project.title}</h2><p class="hint">{shots.length} plans, environ {duration.toFixed(1).replace('.0', '')} s</p></div>
 			<div class="scene-links">{#each board.scenes as scene, index (scene.id)}<a href={`#scene-${scene.id}`}><span>{index + 1}</span><div>{scene.heading}<small>{scene.shots.length} plans</small></div></a>{/each}</div>
@@ -233,6 +237,7 @@
 		</main>
 		{#if selected}{#key selected.id}<ShotEditor shot={selected} {projectId} onrefresh={refresh} onclose={closeShot} ondirty={(dirty) => editorDirty = dirty} />{/key}{/if}
 	</div>
+	</details>
 {/if}
 {#if plannerOpen && board}<PlannerDialog project={board.project} onclose={() => plannerOpen = false} onrefresh={refresh} />{/if}
 {#if sceneOpen}<SceneDialog {projectId} scene={sceneToEdit} onclose={() => sceneOpen = false} onrefresh={refresh} />{/if}

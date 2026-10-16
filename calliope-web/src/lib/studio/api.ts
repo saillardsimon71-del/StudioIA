@@ -23,6 +23,7 @@ export interface StudioProject {
   updated_at: string;
   cover_url?: string | null;
   script_source?: string | null;
+  revision?: number;
 }
 
 export interface Take {
@@ -163,7 +164,8 @@ export interface Board {
     summary: string;
     ongoing_plot: string;
     production_mode: "automatic" | "manual";
-    image_mode: "generated" | "text_to_video";
+    image_mode: "generated" | "text_to_video" | "manual_chatgpt";
+    studio_director?: boolean;
     editorial_review?: Partial<Record<"hook" | "stakes" | "progression" | "payoff" | "next_episode" | "risks", string>>;
     editorial_stale?: boolean;
   } | null;
@@ -307,7 +309,7 @@ export interface Preflight {
   engine: string;
 }
 
-async function request<T>(
+export async function request<T>(
   path: string,
   method = "GET",
   body?: unknown,
@@ -394,7 +396,7 @@ export const studio = {
     request<Board>(`/projects/${projectId}/visual-contract`, "POST"),
   createEpisode: (
     id: number,
-    payload: { idea: string; objective: string; request_id: string; prepare_only?: boolean; image_mode?: "generated" | "text_to_video" },
+    payload: { idea: string; objective: string; request_id: string; prepare_only?: boolean; image_mode?: "generated" | "text_to_video"; studio_director?: boolean; target_seconds?: number; tone?: string },
   ) =>
     request<{ project_id: number; job_id: number }>(
       `/series/${id}/episodes`,

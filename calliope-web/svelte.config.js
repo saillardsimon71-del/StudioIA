@@ -6,6 +6,8 @@ const config = {
 	preprocess: vitePreprocess(),
 	kit: {
 		adapter: adapter({
+			pages: process.env.STUDIO_BUILD_DIR || 'build',
+			assets: process.env.STUDIO_BUILD_DIR || 'build',
 			fallback: 'index.html',
 		}),
 		paths: {

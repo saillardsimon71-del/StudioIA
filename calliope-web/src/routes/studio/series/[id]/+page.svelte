@@ -19,8 +19,8 @@
   let profile = $state<DirectingProfile | null>(null);
   let idea = $state("");
   let objective = $state("");
-  let prepareOnly = $state(true);
-  let imageMode = $state<"generated" | "text_to_video">("generated");
+  let episodeSeconds = $state<number | undefined>();
+  let episodeTone = $state('');
   let error = $state("");
   let notice = $state("");
   let busy = $state("");
@@ -83,7 +83,7 @@
     if (busy) return;
     busy = "episode";
     error = "";
-    const content = JSON.stringify([idea.trim(), objective.trim(), prepareOnly, imageMode]);
+    const content = JSON.stringify([idea.trim(), objective.trim(), episodeSeconds, episodeTone, 'studio_director']);
     if (content !== requestContent) {
       requestContent = content;
       requestId = newRequestId();
@@ -93,8 +93,10 @@
         idea: idea.trim(),
         objective: objective.trim(),
         request_id: requestId,
-        prepare_only: prepareOnly,
-        image_mode: imageMode,
+        prepare_only: true,
+        studio_director: true,
+        ...(episodeSeconds ? { target_seconds: episodeSeconds } : {}),
+        tone: episodeTone.trim(),
       });
       await goto("/studio/" + result.project_id);
     } catch (err) {
@@ -213,17 +215,11 @@
             placeholder="Une révélation, une tension, une émotion..."
           /></label
         >
-        <label class="row"><input type="checkbox" bind:checked={prepareOnly} />Préparer et relire le scénario avant les rendus</label>
-        <label>Images de départ pour la vidéo
-          <select bind:value={imageMode}>
-            <option value="generated">Créer une image par plan (Codex / API images)</option>
-            <option value="text_to_video">Sans image par plan (texte vers vidéo, sans Codex)</option>
-          </select>
-        </label>
-        {#if imageMode === "text_to_video"}<p class="hint">Le moteur vidéo crée les plans depuis le scénario. Les descriptions des personnages et lieux sont utilisées, mais leurs images de référence ne sont pas transmises au modèle. La ressemblance peut être moins bonne.</p>{/if}
-        <p class="hint">{prepareOnly
-          ? "Le scénario et sa revue apparaissent sans générer de médias. Vous pourrez les corriger, puis lancer les rendus."
-          : "Le studio prépare le scénario et les médias, puis exporte le MP4. Vous pourrez mettre la production en pause."}
+        <details><summary>Durée et ton (facultatifs)</summary><div class="stack">
+          <label>Durée visée en secondes<input type="number" min="10" max="120" bind:value={episodeSeconds} placeholder={String(item.target_seconds)} /></label>
+          <label>Ton de cet épisode<input maxlength="2000" bind:value={episodeTone} placeholder="Suspense, tendre, comique..." /></label>
+        </div></details>
+        <p class="hint">DeepSeek prépare le storyboard et les réglages. Vous relisez et validez, générez les images manuellement dans ChatGPT, puis les importez ici avant toute vidéo.
           {item.directing_profile.cta_placement === "end"
             ? "L'incitation est ajoutée à la fin, après la chute de l'histoire."
             : "Chaque épisode inclut une courte incitation au milieu. La fin reste consacrée à l'histoire et à la suite."}
@@ -232,7 +228,7 @@
           <button class="primary" disabled={!!busy || !idea.trim()}
             >{busy === "episode"
               ? "Lancement..."
-              : prepareOnly ? "Préparer le scénario" : "Produire l'épisode"}</button
+              : "Préparer le storyboard"}</button
           ><button
             type="button"
             onclick={() => (episodeOpen = false)}
