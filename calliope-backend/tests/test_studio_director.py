@@ -72,6 +72,54 @@ def test_contract_rejects_unknown_speaker_timing_and_blank(client, prepared):
             validate_contract(contract() | change, context['entities'])
 
 
+@pytest.mark.asyncio
+async def test_canonical_prop_references_survive_prepare_package_and_revision(client, monkeypatch):
+    from calliope.studio import director
+
+    project = persisted_episode(client, monkeypatch)
+    with service.database() as conn:
+        row = conn.execute('SELECT plan_json FROM studio_episodes WHERE project_id=?',
+                           (project,)).fetchone()
+        plan = json.loads(row[0])
+        plan.setdefault('render_canon', {})['props'] = {'case': 'A closed metal case.'}
+        conn.execute('UPDATE studio_episodes SET plan_json=? WHERE project_id=?',
+                     (json.dumps(plan), project))
+        conn.commit()
+
+    async def generated(messages, **options):
+        source = json.loads(messages[-1]['content'])
+        shot = source['shots'][0]
+        value = contract()
+        value['duration_sec'] = shot['duration_sec']
+        value['dialogue'] = [{'speaker': 'keeper', 'text': shot['dialogue'],
+                              'start_sec': 0., 'end_sec': shot['duration_sec']}]
+        value['references'].append('case')
+        value['initial_state']['case'] = value['final_state']['case'] = 'Closed on the desk.'
+        return {'shots': [value]}
+
+    monkeypatch.setattr(director, 'generate_structured', generated)
+    current = await director.prepare(project)
+    assert current['enabled']
+    director.approve(project, current['storyboard_hash'])
+    archive = zipfile.ZipFile(io.BytesIO(director.package(project)))
+    manifest = json.loads(archive.read('manifest.json'))
+    prop = next(ref for ref in manifest['shots'][0]['references'] if ref['key'] == 'case')
+    assert prop == {'key': 'case', 'kind': 'prop', 'description': 'A closed metal case.',
+                    'file': None, 'available': False}
+    value = copy.deepcopy(current['shots'][0]['contract'])
+    value['camera'] = 'A slow push in.'
+    revised = await director.revise(project, current['storyboard_hash'],
+                                    [current['shots'][0]['id']], '',
+                                    contracts=[{'id': current['shots'][0]['id'], 'contract': value}])
+    assert 'case' in revised['shots'][0]['contract']['references']
+    with service.database() as conn:
+        director.validate_live(conn, project, revised)
+        context = service.shot_context(conn, current['shots'][0]['id'])
+    with pytest.raises(ValueError, match='unknown-case'):
+        director.validate_contract(value | {'references': value['references'] + ['unknown-case']},
+                                   context['entities'], context['render_canon']['props'])
+
+
 def test_resume_rejects_cancelled_job_without_leaving_false_pending_state(client, prepared, monkeypatch):
     from calliope.studio import director, series
 

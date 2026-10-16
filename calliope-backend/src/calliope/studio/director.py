@@ -49,7 +49,7 @@ def require_fixed_structure(conn, project_id):
         )
 
 
-def validate_contract(value, entities):
+def validate_contract(value, entities, props=()):
     try:
         contract = ShotContract.model_validate(value).model_dump()
     except ValidationError as exc:
@@ -63,8 +63,9 @@ def validate_contract(value, entities):
     locations = {e["key"] for e in entities if e["kind"] == "location"}
     if not set(contract["casting"]) <= characters or contract["location"] not in locations:
         raise ValueError("Casting ou lieu inconnu du canon.")
-    if not set(contract["references"]) <= (characters | locations):
-        raise ValueError("Reference inconnue du canon.")
+    unknown = set(contract["references"]) - (characters | locations | set(props))
+    if unknown:
+        raise ValueError("Reference inconnue du canon: " + ", ".join(sorted(unknown)))
     return contract
 
 
@@ -218,10 +219,12 @@ def initialize(project_id, contracts):
         shots = live_shots(conn, project_id)
         if len(shots) != len(contracts) or not shots:
             raise ValueError("Un contrat complet est requis pour chaque plan.")
-        values = [
-            validate_contract(c, service.shot_context(conn, s["id"])["entities"])
-            for s, c in zip(shots, contracts)
-        ]
+        values = []
+        for shot, value in zip(shots, contracts):
+            context = service.shot_context(conn, shot["id"])
+            values.append(validate_contract(
+                value, context["entities"], context.get("render_canon", {}).get("props", {}),
+            ))
         conn.execute(
             "INSERT INTO studio_director_projects(project_id,budget_json) VALUES(?,?) "
             "ON CONFLICT(project_id) DO UPDATE SET approved_hash=NULL",
@@ -330,6 +333,7 @@ async def prepare(project_id, internal=False):
             raise HTTPException(404, "Episode de serie introuvable.")
         memory = series.context(conn, row["series_id"])
         plan = json.loads(row["plan_json"])
+        props = plan.get("render_canon", {}).get("props", {})
         shots = live_shots(conn, project_id)
         directions = {s["id"]: service.shot_context(conn, s["id"])["shot"] for s in shots}
         baseline = digest([shots, directions])
@@ -354,7 +358,7 @@ async def prepare(project_id, internal=False):
             "required_state_keys": sorted(set(casting) | set(direction.get("prop_keys") or [])),
             "allowed_state_keys": sorted(
                 {e["key"] for e in memory["entities"]}
-                | set(plan.get("render_canon", {}).get("props", {}))
+                | set(props)
             ),
             "continuation_state": previous["final_state"]
             if previous and shot["continue_from_previous"] else None,
@@ -429,7 +433,7 @@ async def prepare(project_id, internal=False):
                     ) from None
             if isinstance(response, dict) and "shots" not in response:
                 try:
-                    validate_contract(response, memory["entities"])
+                    validate_contract(response, memory["entities"], props)
                 except ValueError:
                     pass
                 else:
@@ -439,7 +443,7 @@ async def prepare(project_id, internal=False):
             try:
                 if value is None:
                     raise ValueError("Un seul contrat est requis.")
-                valid = validate_contract(value, memory["entities"])
+                valid = validate_contract(value, memory["entities"], props)
                 for field in ("casting", "location", "duration_sec"):
                     actual = set(valid[field]) if field == "casting" else valid[field]
                     wanted = set(requirements[field]) if field == "casting" else requirements[field]
@@ -518,7 +522,10 @@ def validate_live(conn, project_id, current):
     for entry, shot in zip(current["shots"], live_shots(conn, project_id)):
         context = service.shot_context(conn, shot["id"])
         try:
-            contract = validate_contract(entry["contract"], context["entities"])
+            contract = validate_contract(
+                entry["contract"], context["entities"],
+                context.get("render_canon", {}).get("props", {}),
+            )
         except ValueError as exc:
             raise HTTPException(422, f"Plan {shot['id']}: {exc}") from None
         if contract["duration_sec"] != shot["duration_sec"]:
@@ -608,6 +615,13 @@ def package(project_id):
                             "available": bool(name),
                         }
                     )
+                entity_keys = {entity["key"] for entity in context["entities"]}
+                for key, description in context.get("render_canon", {}).get("props", {}).items():
+                    if key in entry["contract"]["references"] and key not in entity_keys:
+                        refs.append({
+                            "key": key, "kind": "prop", "description": description,
+                            "file": None, "available": False,
+                        })
                 c = entry["contract"]
                 prompt = (
                     "Create ONE starting still, t=0 only. No captions, speech bubbles, "
@@ -987,9 +1001,10 @@ async def revise(project_id, expected_hash, shot_ids, instruction, contracts=Non
         ):
             raise HTTPException(422, "Selection de plans invalide.")
         episode = conn.execute(
-            "SELECT series_id FROM studio_episodes WHERE project_id=?", (project_id,)
+            "SELECT series_id,plan_json FROM studio_episodes WHERE project_id=?", (project_id,)
         ).fetchone()
         memory = series.context(conn, episode[0])
+        props = json.loads(episode["plan_json"]).get("render_canon", {}).get("props", {})
     if contracts is None:
         response = await generate_structured(
             [
@@ -1036,7 +1051,7 @@ async def revise(project_id, expected_hash, shot_ids, instruction, contracts=Non
     story_changed = False
     for item in contracts:
         try:
-            updates[item["id"]] = validate_contract(item["contract"], memory["entities"])
+            updates[item["id"]] = validate_contract(item["contract"], memory["entities"], props)
         except (KeyError, ValueError) as exc:
             raise HTTPException(422, f"Contrat de revision invalide: {exc}") from None
         original = next(s for s in before["shots"] if s["id"] == item["id"])
