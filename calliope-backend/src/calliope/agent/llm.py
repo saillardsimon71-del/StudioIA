@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import time
+import uuid
+from pathlib import Path
 from typing import Any, AsyncIterator
 from urllib.parse import urlsplit
 
@@ -278,6 +280,8 @@ class LLMClient:
         # server still fails fast. Shorter timeouts (e.g. the 30 s preview
         # path) trade headroom for a snappier deterministic fallback.
         self.client = httpx.AsyncClient(timeout=timeout)
+        self.capture_response = False
+        self.last_response: dict[str, Any] = {}
         # Flipped when the endpoint rejects image content parts; also tracked
         # process-wide per base_url so new clients start with the knowledge.
         self._text_only = self.base_url in _TEXT_ONLY_ENDPOINTS
@@ -371,6 +375,8 @@ class LLMClient:
             return await self._chat_blocking(
                 messages, temperature, response_format, extra_body, max_tokens
             )
+        if self.capture_response:
+            self.last_response["content"] = "".join(parts)
         if truncated:
             raise RuntimeError(
                 "Réponse du modèle tronquée (finish_reason=length). "
@@ -471,7 +477,15 @@ class LLMClient:
             payload.pop("response_format")
             resp = await self._post_json(url, payload)
         resp.raise_for_status()
+        if self.capture_response:
+            self.last_response = {"kind": "blocking", "status_code": resp.status_code,
+                                  "raw_body": resp.text}
         data = resp.json()
+        if self.capture_response:
+            self.last_response.update(
+                finish_reason=data["choices"][0].get("finish_reason"),
+                content=data["choices"][0].get("message", {}).get("content") or "",
+            )
         if data["choices"][0].get("finish_reason") == "length":
             raise RuntimeError(
                 "Réponse du modèle tronquée (finish_reason=length). "
@@ -729,7 +743,11 @@ class LLMClient:
     async def _parse_sse(
         self, resp: httpx.Response, tool_acc: dict[int, dict[str, Any]]
     ) -> AsyncIterator[dict[str, Any]]:
+        if self.capture_response:
+            self.last_response = {"kind": "sse", "status_code": resp.status_code, "raw_lines": []}
         async for line in resp.aiter_lines():
+            if self.capture_response:
+                self.last_response["raw_lines"].append(line)
             if not line.startswith("data:"):
                 continue
             data_str = line[5:].strip()
@@ -781,6 +799,8 @@ class LLMClient:
                 if fn.get("arguments"):
                     acc["function"]["arguments"] += fn["arguments"]
             finish = choices[0].get("finish_reason")
+            if self.capture_response and finish is not None:
+                self.last_response["finish_reason"] = finish
             if finish == "length":
                 yield {"type": "truncated"}
             if finish == "tool_calls":
@@ -868,42 +888,75 @@ def extract_json(text: str) -> dict[str, Any]:
     raise ValueError(f"No JSON object found in LLM reply (len={len(text)})")
 
 
+def _record_structured_response(directory, client, text, error, attempt):
+    response = getattr(client, "last_response", {})
+    content = response.get("content", text)
+    data = {
+        "outcome": "rejected" if error else "parsed", "attempt": attempt,
+        "provider_host": urlsplit(getattr(client, "base_url", "")).hostname,
+        "model": getattr(client, "model", None), "response_text": content,
+        "transport": response, "error": str(error) if error else None,
+    }
+    try:
+        data["json_root_type"] = type(json.loads(content)).__name__
+    except json.JSONDecodeError as exc:
+        data["json_error"] = {
+            "reason": exc.msg, "line": exc.lineno, "column": exc.colno, "position": exc.pos,
+        }
+    encoded = json.dumps(data, ensure_ascii=True, indent=2)
+    keys = [getattr(client, "api_key", None), settings.llm_api_key, settings.studio_image_api_key]
+    keys += [p.get("api_key") for p in settings.llm_profiles]
+    for key in keys:
+        if isinstance(key, str) and key:
+            encoded = encoded.replace(json.dumps(key)[1:-1], "[secret masque]")
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"llm-response-{uuid.uuid4().hex}.json"
+    path.write_text(encoded, encoding="utf-8")
+    logger.info("Structured response %s; diagnostic=%s", data["outcome"], path.name)
+
+
 async def generate_structured(
     messages: list[dict[str, str]], temperature: float = 0.7, max_tokens: int | None = None,
     required_keys=(),
     json_mode=False,
     role: str | None = None,
     extra_body: dict[str, Any] | None = None,
+    diagnostics_dir: Path | None = None,
+    retry_invalid: bool = True,
 ) -> dict[str, Any]:
     client = LLMClient.for_role(role) if role else LLMClient()
+    if diagnostics_dir is not None:
+        client.capture_response = True
     try:
         # JSON mode is off by default: several OpenAI-compatible servers
         # (notably LM Studio) reject response_format, and the prompts already
         # instruct the model to answer with a single JSON object.
-        try:
-            # chat() itself can raise ValueError when a thinking model spends
-            # the whole completion streaming reasoning and accumulates no
-            # content — that must reach the retry below, so it lives inside
-            # this try alongside the parse.
-            options = {"max_tokens": max_tokens} if max_tokens is not None else {}
-            if json_mode:
+        options = {"max_tokens": max_tokens} if max_tokens is not None else {}
+        if json_mode:
+            options["response_format"] = {"type": "json_object"}
+        attempts = 2 if retry_invalid else 1
+        for attempt in range(attempts):
+            text = ""
+            try:
+                text = await client.chat(
+                    messages, temperature=temperature, extra_body=extra_body, **options,
+                )
+                result = extract_json(text)
+                if any(key not in result for key in required_keys):
+                    raise ValueError(
+                        f"Structured reply missing root fields: {', '.join(required_keys)}"
+                    )
+            except (ValueError, RuntimeError) as exc:
+                if diagnostics_dir is not None:
+                    _record_structured_response(diagnostics_dir, client, text, exc, attempt + 1)
+                if isinstance(exc, RuntimeError) or attempt + 1 == attempts:
+                    raise
+                logger.warning("LLM reply unusable (%s); retrying with json_object mode", exc)
                 options["response_format"] = {"type": "json_object"}
-            text = await client.chat(messages, temperature=temperature, extra_body=extra_body, **options)
-            result = extract_json(text)
-            if any(key not in result for key in required_keys):
-                raise ValueError(f"Structured reply missing root fields: {', '.join(required_keys)}")
-            return result
-        except ValueError as exc:
-            # One retry with JSON mode requested, for servers that support it
-            logger.warning("LLM reply unusable (%s); retrying with json_object mode", exc)
-            options.pop("response_format", None)
-            text = await client.chat(
-                messages, temperature=temperature, response_format={"type": "json_object"},
-                extra_body=extra_body, **options,
-            )
-            result = extract_json(text)
-            if any(key not in result for key in required_keys):
-                raise ValueError(f"Structured reply missing root fields: {', '.join(required_keys)}")
+                continue
+            if diagnostics_dir is not None:
+                _record_structured_response(diagnostics_dir, client, text, None, attempt + 1)
             return result
     finally:
         await client.close()

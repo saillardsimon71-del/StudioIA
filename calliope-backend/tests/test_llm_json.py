@@ -54,6 +54,73 @@ def test_extract_json_empty():
         extract_json("   ")
 
 
+@pytest.mark.parametrize('transport', ['sse', 'blocking'])
+@pytest.mark.parametrize('finish', ['stop', 'length'])
+async def test_structured_diagnostic_preserves_rejected_wire_without_secrets_or_retry(
+    monkeypatch, tmp_path, caplog, transport, finish,
+):
+    from calliope.agent import llm
+    from calliope.config import settings
+
+    key = 'private-test-credential'
+    other_key = 'private-profile-credential'
+    text = '{"shots":[{"text":"' + key + ' ' + other_key + '"}'
+    requests = []
+
+    def respond(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        if payload.get('stream'):
+            if transport == 'blocking':
+                return httpx.Response(405, json={'error': 'Streaming unavailable'})
+            chunks = [{'choices': [{'delta': {'content': text}}]},
+                      {'choices': [{'delta': {}, 'finish_reason': finish}]}]
+            return httpx.Response(200, content=b'\n'.join(_sse_lines(*chunks)),
+                                  headers={'content-type': 'text/event-stream'})
+        return httpx.Response(200, json={'choices': [{
+            'message': {'content': text}, 'finish_reason': finish,
+        }]})
+
+    client = LLMClient(base_url='https://test.invalid/v1', model='test', api_key=key)
+    await client.client.aclose()
+    client.client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    monkeypatch.setattr(llm, 'LLMClient', lambda: client)
+    monkeypatch.setattr(settings, 'llm_profiles', [{'api_key': other_key}])
+    with pytest.raises(RuntimeError if finish == 'length' else ValueError):
+        await llm.generate_structured([{'role': 'user', 'content': 'Return JSON.'}],
+                                      diagnostics_dir=tmp_path, retry_invalid=False)
+    assert len(requests) == (1 if transport == 'sse' else 2)
+    captures = list(tmp_path.glob('llm-response-*.json'))
+    assert len(captures) == 1
+    captured_text = captures[0].read_text(encoding='utf-8')
+    assert key not in captured_text and other_key not in captured_text
+    assert key not in caplog.text and other_key not in caplog.text
+    captured = json.loads(captured_text)
+    assert captured['outcome'] == 'rejected'
+    assert captured['transport']['kind'] == transport
+    assert captured['transport']['finish_reason'] == finish
+    assert captured['json_error']['line'] == 1
+    if transport == 'sse':
+        assert any(line.startswith('data:') for line in captured['transport']['raw_lines'])
+    else:
+        assert 'choices' in json.loads(captured['transport']['raw_body'])
+
+
+async def test_structured_diagnostic_records_parse_success_without_approving_content(monkeypatch, tmp_path):
+    from calliope.agent import llm
+
+    router = _FakeRouter(content='{"shots":[]}', reject_response_format=False)
+    client = LLMClient(base_url='https://test.invalid/v1', model='test', api_key='')
+    await client.client.aclose()
+    client.client = httpx.AsyncClient(transport=httpx.MockTransport(router))
+    monkeypatch.setattr(llm, 'LLMClient', lambda: client)
+    assert await llm.generate_structured([], diagnostics_dir=tmp_path) == {'shots': []}
+    captured = json.loads(next(tmp_path.glob('llm-response-*.json')).read_text(encoding='utf-8'))
+    assert captured['outcome'] == 'parsed'
+    assert captured['response_text'] == '{"shots":[]}'
+    assert captured['transport']['finish_reason'] == 'stop'
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('status', [429, 503])
 async def test_streaming_provider_error_keeps_its_status_and_readable_body(status):

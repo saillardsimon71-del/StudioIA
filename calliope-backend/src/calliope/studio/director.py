@@ -368,6 +368,13 @@ async def prepare(project_id, internal=False):
                 "type": "object", "properties": {key: value_schema for key in casting},
                 "required": casting, "additionalProperties": False,
             }
+        schema = {
+            "$defs": schema.pop("$defs", {}),
+            "type": "object", "additionalProperties": False, "required": ["shots"],
+            "properties": {"shots": {
+                "type": "array", "minItems": 1, "maxItems": 1, "items": schema,
+            }},
+        }
         source = scrub({
             "memory": memory,
             "plan": {key: plan[key] for key in (
@@ -411,13 +418,22 @@ async def prepare(project_id, internal=False):
                              "Schema: " + json.dumps(schema)},
                             {"role": "user", "content": json.dumps(source, ensure_ascii=False)},
                         ],
-                        temperature=0.2, max_tokens=6000, json_mode=True, required_keys=("shots",),
+                        temperature=0.2, max_tokens=6000, json_mode=True, retry_invalid=False,
+                        diagnostics_dir=(settings.assets_dir / str(project_id)
+                                         / "studio" / "diagnostics"),
                     )
                 except (ValueError, RuntimeError) as exc:
                     raise HTTPException(
                         422, f"Plan {index + 1}/{len(shots)} : {service.safe_error(exc)} "
                         "Les contrats déjà préparés sont conservés pour la prochaine tentative.",
                     ) from None
+            if isinstance(response, dict) and "shots" not in response:
+                try:
+                    validate_contract(response, memory["entities"])
+                except ValueError:
+                    pass
+                else:
+                    response = {"shots": [response]}
             values = response.get("shots") if isinstance(response, dict) else None
             value = values[0] if isinstance(values, list) and len(values) == 1 else None
             try:

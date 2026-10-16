@@ -588,6 +588,55 @@ async def test_preparation_repairs_invalid_positions_for_only_the_affected_shot(
 
 
 @pytest.mark.asyncio
+async def test_preparation_reuses_a_valid_unwrapped_provider_contract_without_regenerating(client, monkeypatch):
+    from calliope.studio import director
+    import jsonschema
+
+    project = persisted_episode(client, monkeypatch)
+    original = service.board(project)
+    calls = []
+
+    async def provider(messages, **options):
+        source = json.loads(messages[-1]['content'])
+        shot = source['shots'][0]
+        schema = json.loads(messages[0]['content'].split('Schema: ', 1)[1])
+        value = contract()
+        value['duration_sec'] = shot['duration_sec']
+        value['dialogue'] = [{'speaker': 'keeper', 'text': shot['dialogue'],
+                              'start_sec': 0., 'end_sec': shot['duration_sec']}]
+        jsonschema.validate({'shots': [value]}, schema)
+        assert 'shots' not in options.get('required_keys', ())
+        assert options['retry_invalid'] is False
+        calls.append(shot['id'])
+        return value
+
+    monkeypatch.setattr(director, 'generate_structured', provider)
+    result = await director.prepare(project)
+    expected_ids = [s['id'] for scene in original['scenes'] for s in scene['shots']]
+    assert calls == expected_ids
+    assert result['enabled'] and not result['approved']
+    assert [s['id'] for s in result['shots']] == expected_ids
+
+
+@pytest.mark.asyncio
+async def test_preparation_never_accepts_an_unwrapped_fragment(client, monkeypatch):
+    from calliope.studio import director
+
+    project = persisted_episode(client, monkeypatch)
+    calls = []
+
+    async def fragment(*args, **kwargs):
+        calls.append(1)
+        return {'summary': 'An incomplete nested fragment.', 'casting': ['keeper']}
+
+    monkeypatch.setattr(director, 'generate_structured', fragment)
+    with pytest.raises(service.HTTPException):
+        await director.prepare(project)
+    assert len(calls) == 3
+    assert not director.state(project)['enabled']
+
+
+@pytest.mark.asyncio
 async def test_preparation_bounds_semantic_repairs_and_never_invents_missing_positions(client, monkeypatch):
     from calliope.studio import director
 
