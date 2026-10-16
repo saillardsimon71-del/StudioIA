@@ -72,6 +72,43 @@ def test_contract_rejects_unknown_speaker_timing_and_blank(client, prepared):
             validate_contract(contract() | change, context['entities'])
 
 
+def test_initializing_director_keeps_source_action_ownership(client, monkeypatch):
+    from calliope.studio import director
+    from tests.test_studio_midroll import insert, story
+
+    plan = insert(story())
+    plan['scenes'][0]['shots'][0]['dialogue_turns'] = [
+        {'speaker': 'keeper', 'text': 'Line 0.',
+         'action': 'Keeper raises the radio.', 'reaction': 'Keeper lowers the radio.'}]
+    project = persisted_episode(client, monkeypatch, plan)
+    shots = service.board(project)['scenes'][0]['shots']
+    values = [contract() | {'dialogue': [contract()['dialogue'][0] | {'text': shot['dialogue']}]}
+              for shot in shots]
+    director.initialize(project, values)
+    with service.database() as conn:
+        context = service.shot_context(conn, shots[0]['id'])
+    assert context['shot']['source_direction']['dialogue_turns'][0]['action'] == 'Keeper raises the radio.'
+    assert context['shot']['source_direction']['dialogue_turns'][0]['reaction'] == 'Keeper lowers the radio.'
+
+
+def test_native_short_episode_is_blocked_before_storyboard_approval_and_gpu(client, monkeypatch):
+    from calliope.studio import director
+    from tests.test_studio_native_contract import native_plan
+
+    project = persisted_episode(client, monkeypatch, native_plan())
+    shots = service.board(project)['scenes'][0]['shots']
+    values = [contract() | {'dialogue': [contract()['dialogue'][0] | {'text': shot['dialogue']}]}
+              for shot in shots]
+    for value in values:
+        value['initial_state']['case'] = value['final_state']['case'] = 'Closed on the desk.'
+    director.initialize(project, values)
+    current = director.state(project)
+    with pytest.raises(service.HTTPException) as failed:
+        director.approve(project, current['storyboard_hash'])
+    assert 'durée' in failed.value.detail.lower()
+    assert any('durée' in error.lower() for error in director.preflight(project)['errors'])
+
+
 @pytest.mark.asyncio
 async def test_canonical_prop_references_survive_prepare_package_and_revision(client, monkeypatch):
     from calliope.studio import director
@@ -599,6 +636,102 @@ async def test_preparation_batches_contracts_and_resumes_validated_drafts(client
     assert board['production']['stage'] == 'review'
     assert board['production']['error'] is None
     assert all(not s['takes'] for scene in board['scenes'] for s in scene['shots'])
+
+
+@pytest.mark.asyncio
+async def test_preparation_scopes_each_take_and_locks_exact_dialogue_schema(client, monkeypatch):
+    import jsonschema
+    from calliope.studio import director
+    from tests.test_studio_midroll import insert, story
+
+    plan = insert(story())
+    first = plan['scenes'][0]['shots'][0]
+    first.update(description='Keeper speaks, then REPLY_FROM_NEXT_TAKE.',
+                 prompt='Keeper speaks, then REPLY_FROM_NEXT_TAKE.',
+                 dialogue_turns=[{'speaker': 'keeper', 'text': 'Line 0.',
+                                  'action': 'Keeper raises the radio.',
+                                  'reaction': 'Keeper waits with a closed mouth.'}])
+    plan['scenes'][0]['shots'][1]['dialogue_turns'] = [
+        {'speaker': 'keeper', 'text': 'Line 1.'}]
+    project = persisted_episode(client, monkeypatch, plan)
+    before = service.board(project)
+    calls = []
+
+    async def realize(messages, **options):
+        source = json.loads(messages[-1]['content'])
+        shot = source['shots'][0]
+        schema = json.loads(messages[0]['content'].split('Schema: ', 1)[1])
+        if not calls:
+            assert shot['description'] == shot['prompt'] == (
+                'Keeper raises the radio. Keeper waits with a closed mouth.')
+            assert 'dialogue_turns' not in source['next_direction']
+            assert 'Line 1.' not in messages[-1]['content']
+        elif source['previous_contract']:
+            assert 'dialogue' not in source['previous_contract']
+        value = contract() | {'duration_sec': shot['duration_sec'], 'dialogue': [
+            {'speaker': 'keeper', 'text': shot['dialogue'],
+             'start_sec': 0., 'end_sec': shot['duration_sec']}]}
+        jsonschema.validate({'shots': [value]}, schema)
+        for lines in ([], value['dialogue'] * 2,
+                      [value['dialogue'][0] | {'text': 'A different line.'}],
+                      [value['dialogue'][0] | {'speaker': 'visitor'}]):
+            with pytest.raises(jsonschema.ValidationError):
+                jsonschema.validate({'shots': [value | {'dialogue': lines}]}, schema)
+        calls.append(shot['id'])
+        return {'shots': [value]}
+
+    monkeypatch.setattr(director, 'generate_structured', realize)
+    result = await director.prepare(project)
+    assert result['enabled'] and not result['approved']
+    assert [entry['contract']['dialogue'][0]['text'] for entry in result['shots']] == [
+        shot['dialogue'] for scene in before['scenes'] for shot in scene['shots']]
+
+
+@pytest.mark.asyncio
+async def test_native_preparation_locks_owned_actions_and_prop_states(client, monkeypatch):
+    import jsonschema
+    from calliope.studio import director
+    from tests.test_studio_native_contract import native_plan
+
+    plan = native_plan()
+    first = plan['scenes'][0]['shots'][0]
+    first.update(action='Keeper points at the case.', dialogue_turns=[{
+        'speaker': 'keeper', 'text': 'Line 0.', 'action': 'Keeper raises his hand.',
+        'reaction': 'Keeper lowers his hand.'}])
+    project = persisted_episode(client, monkeypatch, plan)
+    calls = []
+
+    async def realize(messages, **kwargs):
+        source = json.loads(messages[-1]['content'])
+        req = source['requirements']
+        shot = source['shots'][0]
+        schema = json.loads(messages[0]['content'].split('Schema: ', 1)[1])
+        if not calls:
+            assert req['action_sequence'] == [
+                'Keeper points at the case.', 'Keeper raises his hand.', 'Keeper lowers his hand.']
+        actions = req.get('action_sequence') or ['Keeper stays still.']
+        value = contract() | {'action': req.get('action', 'Keeper stays still.'),
+                             'duration_sec': shot['duration_sec'],
+                             'chronology': [{'at_sec': i * .1, 'action': a}
+                                            for i, a in enumerate(actions)],
+                             'dialogue': [{'speaker': 'keeper', 'text': shot['dialogue'],
+                                           'start_sec': 0., 'end_sec': shot['duration_sec']}]}
+        value['initial_state'].update(req['prop_states']['initial_state'])
+        value['final_state'].update(req['prop_states']['final_state'])
+        jsonschema.validate({'shots': [value]}, schema)
+        if not calls:
+            for change in ({'action': 'Visitor opens the case in another take.'},
+                           {'chronology': [{'at_sec': 0., 'action': 'Visitor opens the case.'}]},
+                           {'final_state': value['final_state'] | {'case': 'Open on the floor.'}}):
+                with pytest.raises(jsonschema.ValidationError):
+                    jsonschema.validate({'shots': [value | change]}, schema)
+        calls.append(shot['id'])
+        return {'shots': [value]}
+
+    monkeypatch.setattr(director, 'generate_structured', realize)
+    current = await director.prepare(project)
+    assert current['enabled'] and len(calls) == 6
+    assert 'Visitor opens' not in current['shots'][0]['contract']['action']
 
 
 @pytest.mark.asyncio

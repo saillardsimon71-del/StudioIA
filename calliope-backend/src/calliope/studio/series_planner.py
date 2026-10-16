@@ -217,6 +217,11 @@ def _creative_context(context):
 
 
 async def _develop_creative_story(context, idea, objective, trace=None):
+    from calliope.studio.authored_script import authored_story
+
+    supplied = authored_story(idea, context.get('entities', []))
+    if supplied:
+        return supplied, {'source': 'operator_script', 'candidates': []}
     prompt = """Tu écris des scènes de fiction courtes, pas des résumés de concepts.
 Ecris trois petites scènes différentes pour le brief ci-dessous. Fais parler les
 personnages comme des gens qui se connaissent, se désirent, se jalousent ou se
@@ -472,17 +477,36 @@ def _validate_story_realization(story, plan, draft=None):
     expected = [{"speaker": t["speaker"], "text": t["text"].strip()}
                 for beat in story["beats"] for t in beat["dialogue_turns"]]
     actual, origins = [], []
+    previous_beat = -1
+    authored_lines = [[] for _ in story['beats']]
     for si, scene in enumerate(plan["scenes"]):
         for ti, shot in enumerate(scene["shots"]):
             if shot.get("purpose") in ("midroll", "outro"):
                 continue
             turns = shot.get("dialogue_turns") or (
                 [{"speaker": shot["speaker"], "text": shot["dialogue"]}] if shot.get("dialogue") else [])
+            if story.get('source_locked'):
+                beat_index = shot.get('source_beat_index')
+                if (type(beat_index) is not int or not previous_beat <= beat_index < len(story['beats'])
+                        or beat_index < 0 or any(
+                            {'speaker': t['speaker'], 'text': t['text'].strip()}
+                            not in story['beats'][beat_index]['dialogue_turns'] for t in turns)):
+                    raise _NativeValidationError(
+                        'source_beat_index: conserver les étapes du scénario fourni, sans les fusionner ni déplacer leurs répliques.',
+                        [['scenes', si, 'shots', ti, 'source_beat_index']])
+                authored_lines[beat_index].extend(
+                    {'speaker': t['speaker'], 'text': t['text'].strip()} for t in turns)
+                previous_beat = beat_index
             actual.extend({"speaker": t["speaker"], "text": t["text"].strip()} for t in turns)
             raw = (draft or plan)["scenes"][si]["shots"][ti]
             for index in range(len(turns)):
                 path = ["scenes", si, "shots", ti]
                 origins.append(path + ["dialogue_turns", index] if raw.get("dialogue_turns") else path)
+    if story.get('source_locked') and any(
+            lines != beat['dialogue_turns'] for lines, beat in zip(authored_lines, story['beats'])):
+        raise _NativeValidationError(
+            'Scénario fourni : une étape ou une réplique a été omise ou dupliquée.',
+            [['scenes', i, 'shots'] for i in range(len(plan['scenes']))])
     if actual != expected:
         message = ("creative_story: la préparation doit conserver les répliques, leur ordre et leurs locuteurs. "
                    f"Attendu {json.dumps(expected, ensure_ascii=False)}; reçu {json.dumps(actual, ensure_ascii=False)}.")
@@ -688,6 +712,8 @@ characters. No character aliases, abstract states, speech or action keys as prop
                 "prop_descriptions": result["render_canon"]["props"],
                 "location": result["render_canon"]["locations"].get(shot.get("location_key"), ""),
                 "characters": {key: value["name"] for key, value in result["render_canon"]["characters"].items()},
+                "dialogue_turns": shot.get("dialogue_turns") or [],
+                "source_story": result.get("creative_story"),
                 "allowed_action_refs": {key: value for key, value in actions.items() if isinstance(value, str) and value.strip()},
             }
             if not continuous:
@@ -953,6 +979,11 @@ the immutable design of every character and location. References are reviewed be
 filmable plan. The story and supplied identities are authoritative. Preserve every
 useful action, cause, reward and consequence. Preserve EVERY exact spoken line,
 its speaker and order. Do not write a new story or the software's promotion.
+When creative_story.source_locked is true, this is an already authored script:
+each take must declare source_beat_index, the zero-based index of its source beat.
+Never merge distinct authored beats or move their actions to an earlier reply.
+Preserve each beat's initial action, exact line and consequence in that order.
+You may split a beat into useful takes sharing its index, without repeating events.
 
 LANGUAGES: every image/video direction, visual canon, voice description and state
 is natural ENGLISH. Only exact speech retains its language. French source actions
@@ -1129,6 +1160,13 @@ Keep exact source words, voices, roles and useful actions. Never add dialogue to
                 result = _normalize_native_keys(result)
             if native and (not isinstance(result, dict) or result.get("prompt_contract_version") != 2):
                 raise ValueError("prompt_contract_version: le nouveau scénario doit utiliser le contrat 2.")
+            if native and creative_story.get('source_locked'):
+                try:
+                    _validate_story_realization(creative_story, result, result)
+                except (TypeError, KeyError, AttributeError):
+                    raise _NativeValidationError(
+                        'Scénario fourni : structure de scènes et de répliques invalide.',
+                        [['scenes']]) from None
             missing = []
             if native and isinstance(result.get("scenes"), list):
                 for si, scene in enumerate(result["scenes"]):
@@ -1144,10 +1182,12 @@ Keep exact source words, voices, roles and useful actions. Never add dialogue to
                         len(path) >= 5 and path[0] == "scenes" and path[2] == "shots"
                         and path[4] in ("start_state", "end_state", "state_changes") for path in exc.paths):
                     raise
+                result['creative_story'] = copy.deepcopy(creative_story)
                 result = await prepare_native_states(result, trace)
                 states_prepared = True
                 plan = normalize_plan(copy.deepcopy(result), context | {"target_seconds": target})
             if native and missing and not states_prepared:
+                result['creative_story'] = copy.deepcopy(creative_story)
                 result = await prepare_native_states(result, trace)
                 states_prepared = True
                 plan = normalize_plan(copy.deepcopy(result), context | {"target_seconds": target})
@@ -1950,7 +1990,7 @@ def normalize_plan(result, context):
         target = float(context["target_seconds"])
         tolerance = max(2.0, target * 0.1)
         if total_duration < target - tolerance:
-            if version == 2:
+            if version == 2 and not context.get('studio_director'):
                 review = result.get("editorial_review")
                 if not isinstance(review, dict):
                     review = {}
@@ -1961,12 +2001,16 @@ def normalize_plan(result, context):
                     review["risks"] = (risks + "\n" + warning).strip()
                 result["editorial_review"] = review
             else:
-                raise ValueError(
+                message = (
                     f"Le scénario ne remplit que {total_duration:g} s utiles sur "
                     f"les {target:g} s du format : l'histoire est trop courte. "
                     "Développez l'événement ou ajoutez une action/réaction utile, "
                     "sans jamais étirer un plan existant."
                 )
+                if version == 2:
+                    raise _NativeValidationError(message, [
+                        ['scenes', i, 'shots'] for i in range(len(result['scenes']))])
+                raise ValueError(message)
         if total_duration > target + tolerance:
             raise ValueError(
                 f"La durée utile du scénario ({total_duration:g} s) dépasse la "

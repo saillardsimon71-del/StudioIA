@@ -152,7 +152,7 @@ def save_episode_plan(project_id, plan):
                                                 'language', 'purpose', 'dialogue_turns',
                                                 'soundscape', 'screen_text', 'blocking',
                                                 'listener_keys', 'prop_keys', 'start_state',
-                                                'end_state', 'cut_reason')
+                                                'end_state', 'cut_reason', 'source_beat_index')
                                     if key in shot
                                 },
                                 "character_keys": shot.get("character_keys", []),

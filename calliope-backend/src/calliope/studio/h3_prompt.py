@@ -216,8 +216,15 @@ def compile_video_prompt(shot, context=None, first_frame=False, video_profile="f
             timed_actions = {validate_h3_prose(beat['action']) for beat in contract['chronology']}
             if validate_h3_prose(shot.get('prompt') or '') in timed_actions | {action}:
                 shot['prompt'] = ''
-            if action in timed_actions:
+            if action in timed_actions or action == ' '.join(
+                    validate_h3_prose(beat['action']) for beat in contract['chronology']):
                 action = ''
+            if validate_h3_prose(shot.get('reaction') or '') in timed_actions:
+                shot['reaction'] = ''
+            shot['dialogue_turns'] = [turn | {
+                field: '' for field in ('action', 'reaction')
+                if validate_h3_prose(turn.get(field) or '') in timed_actions
+            } for turn in shot.get('dialogue_turns', [])]
         timing = ' '.join(
             f"At {beat['at_sec']:g} seconds: {validate_h3_prose(beat['action'])}."
             for beat in contract['chronology']

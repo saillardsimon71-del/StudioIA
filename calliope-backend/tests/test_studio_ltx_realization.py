@@ -65,6 +65,23 @@ def test_h3_conversation_remains_a_multi_speaker_take(monkeypatch):
     assert len(plan['scenes'][0]['shots'][0]['dialogue_turns']) == 3
 
 
+def test_split_takes_do_not_copy_the_whole_exchange_into_render_directions():
+    source = conversation()
+    original = copy.deepcopy(source)
+    shot = source['scenes'][0]['shots'][0]
+    shot.update(description='The visitor opens then closes the case.',
+                prompt='The visitor opens then closes the case.')
+    shots = prepare_ltx_plan(source)['scenes'][0]['shots']
+    assert 'opens the case' not in shots[0]['prompt']
+    assert 'closes the case' not in shots[0]['prompt']
+    assert 'Visitor opens the case.' in shots[1]['prompt']
+    assert 'Visitor closes the case.' not in shots[1]['prompt']
+    assert 'Visitor closes the case.' in shots[2]['prompt']
+    assert all(s['description'] == s['prompt'] for s in shots)
+    assert sum(s['duration_sec'] for s in shots) == pytest.approx(
+        original['scenes'][0]['shots'][0]['duration_sec'], abs=.1)
+
+
 def test_ltx_keeps_authored_timed_overlays_and_requests_review_instead_of_moving_them(monkeypatch):
     monkeypatch.setattr(settings, 'studio_video_profile', 'ltx')
     source = conversation()

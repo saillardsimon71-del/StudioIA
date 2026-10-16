@@ -143,6 +143,25 @@ def test_ltx_director_keeps_one_action_and_one_exact_line_in_foreground():
     assert 'exactly once' in prompt
 
 
+def test_ltx_director_renders_each_owned_event_once_even_with_source_annotations():
+    actions = ['Keeper raises the radio.', 'Keeper lowers the radio.']
+    line = 'Je vous écoute.'
+    context = {'language': 'fr', 'director_contract': {
+        'action': ' '.join(actions), 'positions': {'keeper': 'left'},
+        'eyelines': {'keeper': 'towards the radio'},
+        'chronology': [{'at_sec': .2 + i, 'action': action}
+                       for i, action in enumerate(actions)],
+        'dialogue': [{'speaker': 'keeper', 'text': line, 'start_sec': .2, 'end_sec': 1.5}],
+    }}
+    shot = {'character_keys': ['keeper'], 'audio_mode': 'native',
+            'prompt': ' '.join(actions), 'action': ' '.join(actions), 'reaction': actions[-1],
+            'dialogue_turns': [{'speaker': 'keeper', 'text': line,
+                                'action': actions[0], 'reaction': actions[-1]}]}
+    prompt = h3_prompt.compile_video_prompt(shot, context, True, 'ltx')
+    assert all(prompt.count(action) == 1 for action in actions)
+    assert prompt.count(f'"{line}"') == 1
+
+
 def test_ltx_brisk_exchange_uses_concurrent_reactions_and_brief_gaps():
     context = {'language': 'fr', 'directing_profile': {'dialogue_density': 'brisk', 'silences': 'brief'}}
     shot = {'character_keys': ['momo', 'potiron'], 'audio_mode': 'native',

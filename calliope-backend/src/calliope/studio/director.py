@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from calliope.config import settings
 from calliope.studio import service
 from calliope.studio.director_contracts import ROLE, Budget, ShotContract
+from calliope.studio.ltx_realization import action_sequence
 from calliope.studio.series_planner import generate_structured
 from calliope.studio.visual_identity import file_hash
 
@@ -264,6 +265,11 @@ def initialize(project_id, contracts):
 
 def apply_contract(conn, shot_id, value):
     context = service.shot_context(conn, shot_id)["shot"]
+    context.setdefault('source_direction', {
+        key: context[key] for key in (
+            'action', 'reaction', 'dialogue_turns', 'start_state', 'end_state', 'source_beat_index')
+        if key in context
+    })
     context.update(
         character_keys=value["casting"],
         location_key=value["location"],
@@ -363,6 +369,16 @@ async def prepare(project_id, internal=False):
             "continuation_state": previous["final_state"]
             if previous and shot["continue_from_previous"] else None,
         }
+        if plan.get('prompt_contract_version') == 2:
+            actions = action_sequence(direction)
+            if actions:
+                requirements.update(action=' '.join(actions), action_sequence=actions)
+            requirements['prop_states'] = {
+                field: {key: value for key, value in direction.get(source_field, {}).items()
+                        if key in props}
+                for field, source_field in (
+                    ('initial_state', 'start_state'), ('final_state', 'end_state'))
+            }
         schema = ShotContract.model_json_schema()
         for field in ("casting", "location", "duration_sec"):
             schema["properties"][field]["const"] = requirements[field]
@@ -372,6 +388,31 @@ async def prepare(project_id, internal=False):
                 "type": "object", "properties": {key: value_schema for key in casting},
                 "required": casting, "additionalProperties": False,
             }
+        schema["properties"]["dialogue"] = {
+            "type": "array", "minItems": len(expected), "maxItems": len(expected),
+            "items": False,
+        }
+        if expected:
+            schema["properties"]["dialogue"]["prefixItems"] = [
+                {"allOf": [{"$ref": "#/$defs/Line"}],
+                 "properties": {key: {"const": line[key]} for key in ("speaker", "text")}}
+                for line in expected
+            ]
+        if 'action_sequence' in requirements:
+            schema['properties']['action']['const'] = requirements['action']
+            schema['properties']['chronology'] = {
+                'type': 'array', 'minItems': len(requirements['action_sequence']),
+                'maxItems': len(requirements['action_sequence']), 'items': False,
+                'prefixItems': [
+                    {'allOf': [{'$ref': '#/$defs/Beat'}],
+                     'properties': {'action': {'const': action}}}
+                    for action in requirements['action_sequence']
+                ],
+            }
+        for field, values in requirements.get('prop_states', {}).items():
+            schema['properties'][field]['properties'] = {
+                key: {'const': value} for key, value in values.items()}
+            schema['properties'][field]['required'] = list(values)
         schema = {
             "$defs": schema.pop("$defs", {}),
             "type": "object", "additionalProperties": False, "required": ["shots"],
@@ -393,6 +434,21 @@ async def prepare(project_id, internal=False):
             ),
         })
         request_hash = digest(source)
+        # Keep the cache tied to the full inputs, including existing validated drafts.
+        scoped = ' '.join(action_sequence(direction))
+        if direction.get("dialogue_turns") and scoped:
+            source["shots"][0].update(description=scrub(scoped), prompt=scrub(scoped))
+        if previous:
+            source["previous_contract"] = {
+                key: source["previous_contract"][key] for key in (
+                    "location", "casting", "final_state", "framing", "positions", "eyelines",
+                )
+            }
+        if source["next_direction"]:
+            source["next_direction"] = {
+                key: value for key, value in source["next_direction"].items()
+                if key in ("location_key", "character_keys", "start_state", "framing", "blocking")
+            }
         with service.database() as conn:
             draft = conn.execute(
                 "SELECT contract_json FROM studio_director_drafts "
@@ -415,6 +471,14 @@ async def prepare(project_id, internal=False):
                              "Cover required_state_keys in initial_state and final_state, using "
                              "only allowed_state_keys. Include casting and location in references. "
                              "Preserve exact dialogue, speakers, casting, location and duration. "
+                             "requirements.dialogue is the exhaustive ordered list for THIS take; "
+                             "copy its speakers and text verbatim, adding only start/end times. "
+                             "When action_sequence is supplied, copy requirements.action verbatim "
+                             "and include each supplied action once in chronology, in order, "
+                             "adding only at_sec times. Do not expand or rewrite these events. "
+                             "Copy prop_states exactly; choose consistent character poses. "
+                             "All other characters stay silent. Previous/next data are spatial "
+                             "continuity only, never permission to add a reply to this take. "
                              "Time dialogue without overlaps and keep chronological beats sorted "
                              "and within duration. Use previous_contract and next_direction for "
                              "continuity. If invalid_contract and validation_error are supplied, "
@@ -449,9 +513,26 @@ async def prepare(project_id, internal=False):
                     wanted = set(requirements[field]) if field == "casting" else requirements[field]
                     if actual != wanted:
                         raise ValueError(f"{field}: respecter la valeur fournie dans requirements.")
+                if 'action_sequence' in requirements and (
+                        valid['action'] != requirements['action'] or
+                        [beat['action'] for beat in valid['chronology']]
+                        != requirements['action_sequence']):
+                    raise ValueError(
+                        'action_sequence: conserver les actions fournies, '
+                        'une fois et dans leur ordre.')
+                for field, values in requirements.get('prop_states', {}).items():
+                    if any(valid[field].get(key) != value for key, value in values.items()):
+                        raise ValueError(
+                            f'{field}: conserver exactement les états des objets fournis.')
                 if [{"speaker": t["speaker"], "text": t["text"]}
                         for t in valid["dialogue"]] != expected:
-                    raise ValueError("dialogue: conserver les locuteurs et paroles exacts.")
+                    actual = [{"speaker": t["speaker"], "text": t["text"]}
+                              for t in valid["dialogue"]]
+                    raise ValueError(
+                        "dialogue: conserver les locuteurs et paroles exacts. "
+                        "Attendu: " + json.dumps(expected, ensure_ascii=False)
+                        + "; reçu: " + json.dumps(actual, ensure_ascii=False)
+                    )
                 for field in ("initial_state", "final_state"):
                     if not set(requirements["required_state_keys"]) <= valid[field].keys():
                         raise ValueError(f"{field}: couvrir tous les required_state_keys.")
@@ -467,7 +548,8 @@ async def prepare(project_id, internal=False):
                 directory = settings.assets_dir / str(project_id) / "studio" / "diagnostics"
                 directory.mkdir(parents=True, exist_ok=True)
                 (directory / f"director-{shot['id']}-{uuid.uuid4().hex}.json").write_text(
-                    json.dumps(scrub({"response": response, "validation_error": error}),
+                    json.dumps(scrub({"response": response, "requirements": requirements,
+                                      "validation_error": error}),
                                ensure_ascii=False, indent=2), encoding="utf-8",
                 )
                 if attempt == 2:
@@ -517,9 +599,32 @@ def approve(project_id, expected_hash):
     return state(project_id)
 
 
-def validate_live(conn, project_id, current):
+def validate_live(conn, project_id, current, require_ready=True):
+    from calliope.studio.authored_script import authored_story
+
+    shots = live_shots(conn, project_id)
+    episode = conn.execute(
+        'SELECT context_json,plan_json,idea FROM studio_episodes WHERE project_id=?',
+        (project_id,),
+    ).fetchone()
+    frozen, plan = json.loads(episode['context_json']), json.loads(episode['plan_json'])
+    if require_ready and plan.get('prompt_contract_version') == 2:
+        seconds = sum(shot['duration_sec'] for shot in shots)
+        target = float(frozen.get('target_seconds', 65))
+        if abs(seconds - target) > max(2., target * .1):
+            raise HTTPException(
+                422, f'Durée prévue {seconds:g} s, cible {target:g} s : '
+                'repréparez le découpage sans ajouter de pauses de remplissage.')
+        try:
+            supplied = authored_story(episode['idea'], frozen.get('entities', []))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        if supplied and not plan.get('creative_story', {}).get('source_locked'):
+            raise HTTPException(
+                422, 'Ce scénario fourni a été réécrit par une ancienne préparation. '
+                "Recommencez cet épisode depuis son idée originale ; ses données seront archivées.")
     previous = None
-    for entry, shot in zip(current["shots"], live_shots(conn, project_id)):
+    for entry, shot in zip(current["shots"], shots):
         context = service.shot_context(conn, shot["id"])
         try:
             contract = validate_contract(
@@ -1084,7 +1189,7 @@ async def revise(project_id, expected_hash, shot_ids, instruction, contracts=Non
                 (shot_id,),
             )
             conn.execute("UPDATE clips SET clip_path=NULL WHERE id=?", (shot_id,))
-        validate_live(conn, project_id, _state(conn, project_id))
+        validate_live(conn, project_id, _state(conn, project_id), require_ready=False)
         if story_changed:
             events = [
                 shot["description"]

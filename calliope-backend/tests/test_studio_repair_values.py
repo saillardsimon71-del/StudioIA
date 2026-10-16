@@ -40,6 +40,24 @@ async def test_state_compiler_receives_still_for_independent_takes_only(monkeypa
     assert requests[1]["inherited_state"] == {"case": "Closed on the desk."}
 
 
+@pytest.mark.asyncio
+async def test_state_compiler_receives_story_and_spoken_facts(monkeypatch):
+    requests = []
+    draft = technical_plan()
+    draft['creative_story'] = creative_story()
+    draft['scenes'][0]['shots'][0]['dialogue_turns'] = [
+        {'speaker': 'keeper', 'text': 'Ce coffre est déjà ouvert.'}]
+
+    async def generate(messages, **options):
+        requests.append(json.loads(messages[-1]['content']))
+        return closed_case_state_values(messages)
+
+    monkeypatch.setattr(series_planner, 'generate_structured', generate)
+    await series_planner.prepare_native_states(draft)
+    assert requests[0]['source_story'] == draft['creative_story']
+    assert requests[0]['dialogue_turns'][0]['text'] == 'Ce coffre est déjà ouvert.'
+
+
 @pytest.mark.parametrize("bad_field,bad_value", [("render_canon", None), ("dialogue_turns", 1)])
 def test_structural_defects_are_reported_before_missing_states(bad_field, bad_value):
     draft = split_scene_plan()

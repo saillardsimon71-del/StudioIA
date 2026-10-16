@@ -2,6 +2,14 @@ import copy
 from itertools import groupby
 
 
+def action_sequence(shot):
+    actions = [shot.get('action', '')]
+    actions += [turn.get(field, '') for turn in shot.get('dialogue_turns', [])
+                for field in ('action', 'reaction')]
+    actions.append(shot.get('reaction', ''))
+    return list(dict.fromkeys(value.strip() for value in actions if value and value.strip()))
+
+
 def prepare_ltx_plan(plan):
     plan = copy.deepcopy(plan)
     audio = plan.get('audio') or {}
@@ -66,6 +74,8 @@ def prepare_ltx_plan(plan):
                     part['state_changes'].append(change | {'action_ref': ref})
                     state[change['key']] = change['to']
                 part['end_state'] = copy.deepcopy(state)
+                scoped = ' '.join(action_sequence(part))
+                part.update(description=scoped or part['dialogue'], prompt=scoped)
                 prepared.append(part)
                 new_index += 1
             old_index += 1
