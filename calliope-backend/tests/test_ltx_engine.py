@@ -119,3 +119,37 @@ def test_ltx_image_dialogue_uses_the_image_style_and_one_voice_cue_per_speaker()
     assert prompt.index("Fiston recoils") > prompt.index('"Tu pars ce soir."')
     assert "Fixed wide shot" in prompt and shot["framing"] in prompt
     assert "Flat watercolor painting" in compile_ltx_prompt(shot, context, first_frame=False)
+
+
+def test_ltx_director_keeps_one_action_and_one_exact_line_in_foreground():
+    action = 'Momo points at his tray while speaking.'
+    line = 'Ce plateau est à moi.'
+    sound = 'Audible ventilation hum and distant metal dishes beneath the voice.'
+    context = {'language': 'fr', 'director_contract': {
+        'action': action, 'positions': {'momo': 'left of the counter'},
+        'eyelines': {'momo': 'towards the cook'},
+        'chronology': [{'at_sec': .2, 'action': action}],
+        'dialogue': [{'speaker': 'momo', 'text': line, 'start_sec': .2, 'end_sec': 1.8}],
+    }}
+    shot = {'character_keys': ['momo'], 'audio_mode': 'native', 'prompt': action,
+            'action': action, 'soundscape': sound,
+            'dialogue_turns': [{'speaker': 'momo', 'text': line}]}
+    prompt = h3_prompt.compile_video_prompt(shot, context, first_frame=True, video_profile='ltx')
+    assert prompt.count(action) == 1
+    assert 'At 0.2 seconds' in prompt
+    assert prompt.count(f'"{line}"') == 1
+    assert sound in prompt
+    assert 'foreground' in prompt
+    assert 'exactly once' in prompt
+
+
+def test_ltx_brisk_exchange_uses_concurrent_reactions_and_brief_gaps():
+    context = {'language': 'fr', 'directing_profile': {'dialogue_density': 'brisk', 'silences': 'brief'}}
+    shot = {'character_keys': ['momo', 'potiron'], 'audio_mode': 'native',
+            'dialogue_turns': [{'speaker': 'momo', 'text': 'À moi.'},
+                               {'speaker': 'potiron', 'text': "D'accord !"}]}
+    prompt = h3_prompt.compile_video_prompt(shot, context, first_frame=True, video_profile='ltx')
+    assert 'previous line ends' in prompt
+    assert 'while speaking' in prompt
+    assert 'facial expressions' in prompt
+    assert prompt.index('"À moi."') < prompt.index('"D\'accord !"')

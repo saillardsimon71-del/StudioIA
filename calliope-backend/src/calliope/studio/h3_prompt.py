@@ -211,11 +211,20 @@ def compile_video_prompt(shot, context=None, first_frame=False, video_profile="f
     contract = context.get('director_contract')
     if contract:
         shot = (context.get('shot') or {}) | shot
-        timing = ' '.join(f"At {beat['at_sec']:g} seconds: {validate_h3_prose(beat['action'])}."
-                          for beat in contract['chronology'])
+        action = validate_h3_prose(shot.get('action') or contract['action'])
+        if video_profile == 'ltx':
+            timed_actions = {validate_h3_prose(beat['action']) for beat in contract['chronology']}
+            if validate_h3_prose(shot.get('prompt') or '') in timed_actions | {action}:
+                shot['prompt'] = ''
+            if action in timed_actions:
+                action = ''
+        timing = ' '.join(
+            f"At {beat['at_sec']:g} seconds: {validate_h3_prose(beat['action'])}."
+            for beat in contract['chronology']
+        )
         geography = ' '.join(f"{key}: {validate_h3_prose(position)}; looking {validate_h3_prose(contract['eyelines'][key])}."
                               for key, position in contract['positions'].items())
-        shot['action'] = validate_h3_prose(shot.get('action') or contract['action']) + ' ' + geography + ' Visual timing: ' + timing
+        shot['action'] = action + ' ' + geography + (' Visual timing: ' + timing if timing else '')
         turns = shot.get('dialogue_turns') or []
         shot['dialogue_turns'] = [turn | {'action': (turn.get('action') or '') +
             f" The following line is spoken between {contract['dialogue'][i]['start_sec']:g} and "

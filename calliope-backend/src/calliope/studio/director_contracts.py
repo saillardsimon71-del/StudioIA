@@ -101,4 +101,11 @@ Only dialogue is spoken; camera, prompts and sound instructions are never speech
 Keep one filmable action or intelligible exchange per take. Never promise exact
 speech, speaker identity or visual verification from generation alone. Mark
 unverified evidence for operator review. Preserve every unrequested shot.
+Default to a lively natural exchange: start the first line promptly, keep breaths
+between replies brief, and perform motivated gestures while speaking rather than
+waiting for a separate silent action. Explicit dramatic pauses remain intentional.
+Use expressive faces and small purposeful hand, head or shoulder movements that
+respect the characters, geography, props and continuity. Avoid idle held poses.
+Specify audible nonverbal location ambience and concrete physical sounds beneath
+clear foreground speech. No invented background words or extra speaking roles.
 """
