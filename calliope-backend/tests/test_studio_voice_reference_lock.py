@@ -1,6 +1,7 @@
 """Offline invariants for per-series voice-reference caching and hash locks."""
 
 import hashlib
+import json
 
 import pytest
 
@@ -77,3 +78,43 @@ def test_asr_not_configured_never_means_spoken_words_verified(monkeypatch, tmp_p
         update={"studio_asr_checkpoint": ""},
     ))
     assert tts._matches("La porte est fermée.", tmp_path / "synthetic.wav", "fr") is False
+
+
+def test_published_voice_canon_uses_export_snapshot_not_draft(tmp_path, monkeypatch):
+    monkeypatch.setattr(tts, "settings", tts.settings.model_copy(update={"assets_dir": tmp_path}))
+
+    class FakeConn:
+        def execute(self, sql, params):
+            assert "x.revision=e.canon_revision" in sql
+            assert params == (30, 44)
+            return self
+
+        def fetchall(self):
+            return [{"snapshot_json": json.dumps({"clips": [
+                {"purpose": "", "dialogue_turns": [
+                    {"speaker": "durio", "text": "Bonjour."},
+                    {"speaker": "momo", "text": "Pourquoi ?"},
+                ]},
+                {"purpose": "outro", "dialogue_turns": [
+                    {"speaker": "announcer", "text": "Suivez."},
+                ]},
+                {"purpose": "", "dialogue": "", "state": {"speaker": "poire"}},
+            ]})}]
+
+    speakers = tts._published_series_speakers(FakeConn(), 30, 44)
+    assert speakers == {"durio", "momo"}
+
+    directory = tmp_path / "ep44" / "studio" / "takes" / "tts-5"
+    turns = [{"speaker": "durio", "text": "Je reviens."}]
+    with pytest.raises(RuntimeError, match="Voix canonique de durio introuvable"):
+        tts._ensure_canonical_voice_sources(turns, directory, 30, speakers)
+
+    # New characters are not blocked by an old character's canonical voice.
+    tts._ensure_canonical_voice_sources(
+        [{"speaker": "poire", "text": "Salut."}], directory, 30, speakers
+    )
+
+    path = tts._voice_reference_path("durio", directory, series_id=30)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"manual-reference-from-previous-film")
+    tts._ensure_canonical_voice_sources(turns, directory, 30, speakers)
