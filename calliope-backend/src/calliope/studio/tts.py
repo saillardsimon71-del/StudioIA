@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -61,21 +62,109 @@ def mux_video(video, tts_audio, output, native_gain):
 
 def _matches(expected, path, language):
     if not settings.studio_asr_checkpoint:
-        return True
+        # An unavailable ASR is not proof that the words match.
+        return False
     from calliope.studio import transcription
     result = transcription.transcribe_dialogue(str(path), settings.studio_asr_checkpoint, language)
     verdict = transcription.assess_transcript_v2(expected, result, language=language)
     return verdict.get("status") == "ok"
 
-def _reference_for(key, voice, name, engine, directory):
-    cache = directory.parent.parent / "tts-voices"
-    cache.mkdir(parents=True, exist_ok=True)
-    path = cache / f"{key}.wav"
-    if path.is_file() and path.stat().st_size > 0:
+def _voice_reference_path(key, directory, series_id=None):
+    # A project-scoped cache changes across episodes. Use one reference store
+    # for a series, while preserving the former location for standalone projects.
+    cache = (settings.assets_dir / "series" / str(series_id) / "tts-voices"
+             if series_id is not None else directory.parent.parent / "tts-voices")
+    return cache / f"{key}.wav"
+
+
+def _reference_digest(path):
+    if not path.is_file() or path.stat().st_size == 0:
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _reference_hashes(turns, directory, series_id=None):
+    speakers = sorted({str(turn.get("speaker") or "").strip() for turn in turns
+                       if str(turn.get("text") or "").strip()})
+    return {key: _reference_digest(_voice_reference_path(key, directory, series_id))
+            for key in speakers}
+
+
+def _published_series_speakers(conn, series_id, current_project_id):
+    """Names that already spoke in the *published* canonical series exports.
+
+    Draft episodes, old attempts and unexported shots do not define voice canon.
+    """
+    if series_id is None:
+        return set()
+    rows = conn.execute(
+        "SELECT x.snapshot_json FROM studio_exports x "
+        "JOIN studio_episodes e ON e.project_id=x.project_id "
+        "WHERE e.series_id=? AND e.project_id<>? AND e.canon_revision IS NOT NULL "
+        "AND x.revision=e.canon_revision AND x.output_path IS NOT NULL",
+        (series_id, current_project_id),
+    ).fetchall()
+    speakers = set()
+    for row in rows:
+        snapshot = json.loads(row["snapshot_json"] or "{}")
+        for clip in snapshot.get("clips", []):
+            if clip.get("purpose") in ("midroll", "outro"):
+                continue
+            state = clip.get("state") or {}
+            turns = clip.get("dialogue_turns") or state.get("dialogue_turns") or []
+            for turn in turns:
+                if isinstance(turn, dict) and str(turn.get("text") or "").strip():
+                    if turn.get("speaker"):
+                        speakers.add(str(turn["speaker"]).strip())
+            if not turns and str(clip.get("dialogue") or "").strip():
+                speaker = state.get("speaker")
+                if speaker:
+                    speakers.add(str(speaker).strip())
+    return speakers
+
+
+def _ensure_canonical_voice_sources(turns, directory, series_id, published_speakers):
+    """Do not invent a replacement voice for a previously published character."""
+    if series_id is None or not published_speakers:
+        return
+    speakers = {str(turn.get("speaker") or "").strip() for turn in turns
+                if str(turn.get("text") or "").strip()}
+    for speaker in sorted(speakers & published_speakers):
+        path = _voice_reference_path(speaker, directory, series_id)
+        if not _reference_digest(path):
+            raise RuntimeError(
+                f"Voix canonique de {speaker} introuvable pour la série {series_id}. "
+                "Importez d'abord sa référence WAV validée de l'épisode publié "
+                "dans le dossier tts-voices de la série. "
+                "Aucun nouvel échantillon vocal ne sera généré automatiquement."
+            )
+
+
+def _reference_for(key, voice, name, engine, directory, *, series_id=None):
+    path = _voice_reference_path(key, directory, series_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock = path.with_suffix(".sha256")
+    fingerprint = _reference_digest(path)
+    if lock.is_file():
+        expected = lock.read_text(encoding="utf-8").strip()
+        if not fingerprint or fingerprint != expected:
+            raise RuntimeError(
+                f"Référence vocale {key} absente ou modifiée : restaurer le WAV approuvé "
+                "avant tout doublage. Aucune nouvelle voix ne sera générée."
+            )
+    if fingerprint:
+        if not lock.is_file():
+            # An existing operator-supplied WAV is adopted unchanged.
+            lock.write_text(fingerprint + "\n", encoding="utf-8")
         return path.read_bytes()
+    if path.exists():
+        raise RuntimeError(f"Référence vocale vide pour {key} : correction manuelle requise.")
     text = f"Je suis {name}. Voici ma voix, claire et bien articulee, pour cette histoire."
     audio = engine.synthesize(text, voice, 2.0, 10)
+    if not audio:
+        raise RuntimeError(f"Référence vocale non produite pour {key}.")
     path.write_bytes(audio)
+    lock.write_text(hashlib.sha256(audio).hexdigest() + "\n", encoding="utf-8")
     return audio
 
 def apply_to_shot(shot):
@@ -86,6 +175,12 @@ def apply_to_shot(shot):
         return shot
     with service.database() as conn:
         context = service.shot_context(conn, shot["id"])
+        episode = conn.execute(
+            "SELECT series_id FROM studio_episodes WHERE project_id=?",
+            (shot["project_id"],),
+        ).fetchone()
+        series_id = episode["series_id"] if episode else None
+        published_speakers = _published_series_speakers(conn, series_id, shot["project_id"])
         metadata = json.loads(conn.execute(
             "SELECT metadata_json FROM studio_takes WHERE id=?", (take["id"],)
         ).fetchone()[0] or "{}")
@@ -96,21 +191,31 @@ def apply_to_shot(shot):
     voices = {e["key"]: e.get("voice_description") or e.get("description") or ""
               for e in context.get("entities", [])}
     names = {e["key"]: e.get("name") or e["key"] for e in context.get("entities", [])}
+    previous = metadata.get("tts") or {}
+    source_path = previous.get("source_path") or take["output_path"]
+    directory = Path(source_path).parent / f"tts-{take['id']}"
     signature = {
         "dialogue": turns, "voices": voices,
         "app": settings.studio_tts_modal_app, "function": settings.studio_tts_modal_function,
         "cfg": settings.studio_tts_cfg, "timesteps": settings.studio_tts_timesteps,
         "native_gain": settings.studio_tts_native_gain,
+        "series_id": series_id,
+        "reference_sha256": _reference_hashes(turns, directory, series_id),
     }
-    previous = metadata.get("tts") or {}
     if previous.get("signature") == signature and Path(take["output_path"]).is_file():
         return shot
-    source_path = previous.get("source_path") or take["output_path"]
+    # Fail before hydration or any paid synthesis when a returning speaker
+    # cannot be matched to an operator-approved reference from the prior film.
+    _ensure_canonical_voice_sources(turns, directory, series_id, published_speakers)
+    if not settings.studio_asr_checkpoint or not Path(settings.studio_asr_checkpoint).is_file():
+        raise RuntimeError(
+            "Post-doublage bloqué avant tout appel TTS payant : "
+            "checkpoint ASR local requis pour vérifier les paroles."
+        )
     engine = ModalTTSEngine(settings.studio_tts_modal_app, settings.studio_tts_modal_function)
     available = engine.check_available()
     if not available["ok"]:
         raise RuntimeError(available["message"])
-    directory = Path(source_path).parent / f"tts-{take['id']}"
     directory.mkdir(parents=True, exist_ok=True)
     language = str(context.get("language") or "fr")
     attempts = max(1, int(settings.studio_tts_turn_retries))
@@ -121,7 +226,10 @@ def apply_to_shot(shot):
             continue
         speaker = str(turn.get("speaker") or "").strip()
         voice = voice_for(speaker, voices.get(speaker))
-        reference = _reference_for(speaker, voice, names.get(speaker) or speaker, engine, directory)
+        reference = _reference_for(
+            speaker, voice, names.get(speaker) or speaker, engine, directory,
+            series_id=series_id,
+        )
         best = None
         for attempt in range(attempts):
             cfg = settings.studio_tts_cfg if attempt % 2 == 0 else 1.6
@@ -147,6 +255,9 @@ def apply_to_shot(shot):
     metadata.update(inspect_media(muxed))
     for key in ("dialogue_qc", "transcription_cache", "director_qc_review"):
         metadata.pop(key, None)
+    # Pin the exact reference WAVs used, not just the voice labels. A changed
+    # voice file must never be hidden by an apparently matching TTS cache.
+    signature["reference_sha256"] = _reference_hashes(turns, directory, series_id)
     metadata["tts"] = {"source_path": source_path, "signature": signature}
     with service.database() as conn:
         conn.execute("UPDATE studio_takes SET output_path=?, metadata_json=? WHERE id=?",

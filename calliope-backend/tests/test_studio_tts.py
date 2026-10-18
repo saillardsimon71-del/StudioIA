@@ -79,7 +79,13 @@ def test_apply_to_shot_uses_tts_engine(client, prepared, monkeypatch, tmp_path, 
             return wav_bytes()
 
     monkeypatch.setattr(tts, "ModalTTSEngine", FakeEngine)
-    monkeypatch.setattr(tts, "settings", tts.settings.model_copy(update={"studio_tts_enabled": True}))
+    # An existing local checkpoint is simulated; the actual ASR invocation is
+    # deliberately mocked via _matches, so no model is loaded or downloaded.
+    checkpoint = tmp_path / "fake-asr.pt"
+    checkpoint.write_bytes(b"mock")
+    monkeypatch.setattr(tts, "settings", tts.settings.model_copy(update={
+        "studio_tts_enabled": True, "studio_asr_checkpoint": str(checkpoint),
+    }))
     monkeypatch.setattr(tts, "_matches", lambda *args: matches)
     if not matches:
         with pytest.raises(RuntimeError, match="valid"):
@@ -116,3 +122,26 @@ def test_tts_rejects_repeated_speech_before_muxing(monkeypatch, tmp_path):
     monkeypatch.setattr(tts, "settings", tts.settings.model_copy(update={"studio_asr_checkpoint": "local.pt"}))
     monkeypatch.setattr(transcription, "transcribe_dialogue", lambda *args: transcript)
     assert not tts._matches(expected, tmp_path / "speech.wav", "fr")
+
+
+def test_post_dub_without_asr_stops_before_remote_tts(client, prepared, monkeypatch, tmp_path):
+    from calliope.studio import service, tts
+
+    project, shots = prepared
+    take = service.store_upload(shots[0]["id"], video_bytes(tmp_path, audio=True), "video")
+    service.select_take(take["id"])
+    shot = next(s for scene in service.board(project)["scenes"]
+                for s in scene["shots"] if s["id"] == shots[0]["id"])
+
+    class ForbiddenEngine:
+        def __init__(self, *args, **kwargs):
+            pytest.fail("Paid TTS must never start before local ASR preflight")
+
+    monkeypatch.setattr(tts, "ModalTTSEngine", ForbiddenEngine)
+    monkeypatch.setattr(tts, "settings", tts.settings.model_copy(update={
+        "studio_tts_enabled": True, "studio_asr_checkpoint": "",
+    }))
+    with pytest.raises(RuntimeError, match="checkpoint ASR local requis"):
+        tts.apply_to_shot(shot)
+
+    assert service.board(project)["scenes"][0]["shots"][0]["selected_video_id"] == take["id"]
