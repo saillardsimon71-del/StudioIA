@@ -97,6 +97,7 @@ class ShotUpdate(BaseModel):
     framing: str | None = Field(default=None, max_length=5000)
     camera: str | None = Field(default=None, max_length=5000)
     blocking: str | None = Field(default=None, max_length=5000)
+    post_dub_turns: list[int] | None = Field(default=None, max_length=30)
 
 
 class GenerateRequest(BaseModel):

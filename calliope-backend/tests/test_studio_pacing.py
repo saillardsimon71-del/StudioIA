@@ -840,11 +840,12 @@ def test_quiet_audio_is_a_review_diagnostic_without_a_new_take(
     )
     assert len(spawns) == 3
     board = service.board(project_id)
-    assert board["production"]["status"] == "done"
+    assert board["production"]["status"] == "paused"
     shot = board["scenes"][0]["shots"][0]
-    assert shot["approved"] is True
+    assert shot["approved"] is False
     assert shot["takes"][0]["metadata"]["dialogue_qc"]["status"] == "inaudible"
-    assert board["exports"]
+    assert not board["exports"]
+    assert "sans validation humaine" in board["production"]["message"]
     response = client.post(
         f"/api/studio/shots/{board['scenes'][0]['shots'][0]['id']}/approve",
         json={'approved': True},

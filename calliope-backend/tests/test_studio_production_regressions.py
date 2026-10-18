@@ -178,7 +178,7 @@ def test_pause_prevents_the_next_shot_from_overwriting_paused_state(client, monk
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["unknown", "missing", "extra", "inaudible", "ok"])
 @pytest.mark.parametrize("approved", [False, True])
-async def test_dialogue_assessment_does_not_block_or_rerender_a_completed_take(
+async def test_dialogue_assessment_never_rerenders_and_only_approves_ok_takes(
     client, monkeypatch, status, approved
 ):
     previous = queue_manager.paused
@@ -209,6 +209,9 @@ async def test_dialogue_assessment_does_not_block_or_rerender_a_completed_take(
         monkeypatch.setattr(production, 'generate_take', generate)
         job = queue_manager.get_job(created['job_id'])
         await production.render_shot(job, shot, lambda: False)
-        assert decisions == [(shot['id'], True)]
+        # Un QC non concluant ne relance pas de rendu et ne vaut jamais
+        # approbation : la prise reste pour la revue humaine.
+        expected = [(shot['id'], True)] if status == 'ok' else []
+        assert decisions == expected
     finally:
         queue_manager.paused = previous

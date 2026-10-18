@@ -76,6 +76,61 @@ def inspect_media(path: Path) -> dict:
     }
 
 
+def inspect_audio(path: Path) -> dict:
+    """Caractéristiques de livraison de la piste audio."""
+    path = Path(path)
+    if not path.is_file():
+        raise ValueError(f"Vidéo introuvable: {path}")
+    result = subprocess.run(
+        [
+            _binary("ffprobe"), "-v", "error",
+            "-show_entries", "format=duration:stream=codec_type,sample_rate,channels,duration",
+            "-of", "json", str(path),
+        ],
+        capture_output=True,
+        **_PROCESS_OPTIONS,
+    )
+    if result.returncode or result.stderr.strip():
+        detail = result.stderr.decode("utf-8", "replace")[-1000:]
+        raise ValueError(f"Audio illisible: {path}. {detail}")
+    data = json.loads(result.stdout)
+    audio = next(
+        (stream for stream in data.get("streams", [])
+         if stream.get("codec_type") == "audio"),
+        None,
+    )
+    if not audio:
+        raise ValueError("Le MP4 final ne contient aucune piste audio.")
+    return {
+        "sample_rate": int(audio.get("sample_rate") or 0),
+        "channels": int(audio.get("channels") or 0),
+        "audio_duration_sec": float(audio.get("duration") or 0),
+        "video_duration_sec": float(data.get("format", {}).get("duration") or 0),
+    }
+
+
+def verify_delivery(path: Path, sample_rate: int = 48000, channels: int = 2) -> dict:
+    """Refuse un MP4 livrable hors norme (96 kHz, mono, audio tronqué).
+
+    Cette vérification a été ajoutée après un assemblage manuel sorti en
+    96 kHz et dont l'audio s'arrêtait avant l'image.
+    """
+    audio = inspect_audio(path)
+    errors = []
+    if audio["sample_rate"] != sample_rate:
+        errors.append(f"fréquence {audio['sample_rate']} Hz au lieu de {sample_rate} Hz")
+    if audio["channels"] != channels:
+        errors.append(f"{audio['channels']} canal(aux) au lieu de {channels}")
+    if audio["video_duration_sec"] - audio["audio_duration_sec"] > 0.25:
+        errors.append(
+            f"audio plus court que l'image de "
+            f"{audio['video_duration_sec'] - audio['audio_duration_sec']:.2f} s"
+        )
+    if errors:
+        raise ValueError("Livraison refusée: " + "; ".join(errors) + ".")
+    return audio
+
+
 def _check_cancel(cancel_check):
     if cancel_check and cancel_check():
         raise InterruptedError("Export annulé")
@@ -418,6 +473,8 @@ async def assemble(
         if overlays:
             metadata["screen_text"] = overlays
         metadata["audio"] = frozen.get("audio", {"enabled": False})
+        delivery = await asyncio.to_thread(verify_delivery, ready)
+        metadata["delivery"] = delivery
         _check_cancel(cancel_check)
         ready.replace(destination)
     await _progress(progress_callback, 1, "Film exporté")

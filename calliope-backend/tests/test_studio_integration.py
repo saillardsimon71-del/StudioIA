@@ -92,7 +92,7 @@ def test_ambiguous_submission_cannot_resume(client):
 
 
 @pytest.mark.asyncio
-async def test_retained_take_keeps_qc_without_rerender_or_blocking_approval(monkeypatch):
+async def test_retained_take_keeps_qc_without_rerender_or_auto_approval(monkeypatch):
     from calliope.studio import production
 
     shot = {
@@ -118,7 +118,9 @@ async def test_retained_take_keeps_qc_without_rerender_or_blocking_approval(monk
     monkeypatch.setattr(production, "generate_take", generate)
     monkeypatch.setattr(service, "approve_shot", lambda *args: approved.append(args))
     await production.render_shot({"id": 1}, shot, lambda: False)
-    assert checked == [9] and attempts == [] and approved == [(9, True)]
+    assert checked == [9] and attempts == []
+    # La prise est conservée mais un QC "missing" ne vaut pas approbation.
+    assert approved == []
 
 
 @pytest.mark.asyncio

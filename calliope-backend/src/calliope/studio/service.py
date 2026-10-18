@@ -312,7 +312,7 @@ def public_shot(conn, shot_id):
     clip["purpose"] = context.get("purpose", "")
     clip.update({key: context[key] for key in (
         "prop_keys", "start_state", "end_state", "cut_reason", "action", "reaction",
-        "framing", "camera", "blocking"
+        "framing", "camera", "blocking", "post_dub_turns"
     ) if key in context})
     clip["prompt_contract_version"] = shot_context(conn, shot_id)["prompt_contract_version"]
     if clip["continue_from_previous"]:
@@ -617,7 +617,7 @@ def update_shot(project_id, shot_id, data):
         context_data = shot_context(conn, shot_id)["shot"]
         context_fields = ("dialogue_turns", "soundscape", "screen_text", "prop_keys",
                           "start_state", "end_state", "cut_reason", "action", "reaction",
-                          "framing", "camera", "blocking")
+                          "framing", "camera", "blocking", "post_dub_turns")
         for key in context_fields:
             if key in data:
                 context_data[key] = data[key]
