@@ -147,6 +147,16 @@ class _StoryRealizationError(_NativeValidationError):
     pass
 
 
+# When dialogue counts diverge this much, there is no reliable scene-level
+# destination for a "REPAIR VALUES ONLY" request. Retrying would risk
+# overwriting valid scenes and spending further model calls.
+MAX_TARGETED_DIALOGUE_COUNT_DRIFT = 2
+
+
+class _UnrecoverableStoryRealizationError(_StoryRealizationError):
+    """A large structural loss/gain cannot be repaired by local field updates."""
+
+
 class _NarrativeDurationError(_NativeValidationError):
     pass
 
@@ -539,6 +549,14 @@ def _validate_story_realization(story, plan, draft=None):
         message = ("creative_story: la préparation doit conserver les répliques, leur ordre et leurs locuteurs. "
                    f"Attendu {json.dumps(expected, ensure_ascii=False)}; reçu {json.dumps(actual, ensure_ascii=False)}.")
         if len(actual) != len(expected):
+            drift = abs(len(expected) - len(actual))
+            if drift > MAX_TARGETED_DIALOGUE_COUNT_DRIFT:
+                raise _UnrecoverableStoryRealizationError(
+                    f"{message} Arrêt sans réparation automatique : "
+                    f"{drift} répliques manquantes ou supplémentaires, "
+                    "aucune destination de correction locale fiable.",
+                    [],
+                )
             raise _StoryRealizationError(
                 message, [['scenes', i, 'shots'] for i in range(len(plan['scenes']))]
             )
@@ -1297,6 +1315,10 @@ Keep exact source words, voices, roles and useful actions. Never add dialogue to
         except ValueError as exc:
             validation_error = str(exc)
             logger.warning("Planner validation failed attempt=%s: %s", attempt + 1, exc)
+            if isinstance(exc, _UnrecoverableStoryRealizationError):
+                # Do not convert a collapsed plan into whole-scene replacement
+                # requests. The originating draft remains available in trace.
+                raise
             if (native and attempt < 2 and duration_failure
                     and isinstance(exc, _StoryRealizationError)
                     and not creative_story.get('source_locked')):
