@@ -90,6 +90,56 @@ def _reference_hashes(turns, directory, series_id=None):
             for key in speakers}
 
 
+def _published_series_speakers(conn, series_id, current_project_id):
+    """Names that already spoke in the *published* canonical series exports.
+
+    Draft episodes, old attempts and unexported shots do not define voice canon.
+    """
+    if series_id is None:
+        return set()
+    rows = conn.execute(
+        "SELECT x.snapshot_json FROM studio_exports x "
+        "JOIN studio_episodes e ON e.project_id=x.project_id "
+        "WHERE e.series_id=? AND e.project_id<>? AND e.canon_revision IS NOT NULL "
+        "AND x.revision=e.canon_revision AND x.output_path IS NOT NULL",
+        (series_id, current_project_id),
+    ).fetchall()
+    speakers = set()
+    for row in rows:
+        snapshot = json.loads(row["snapshot_json"] or "{}")
+        for clip in snapshot.get("clips", []):
+            if clip.get("purpose") in ("midroll", "outro"):
+                continue
+            state = clip.get("state") or {}
+            turns = clip.get("dialogue_turns") or state.get("dialogue_turns") or []
+            for turn in turns:
+                if isinstance(turn, dict) and str(turn.get("text") or "").strip():
+                    if turn.get("speaker"):
+                        speakers.add(str(turn["speaker"]).strip())
+            if not turns and str(clip.get("dialogue") or "").strip():
+                speaker = state.get("speaker")
+                if speaker:
+                    speakers.add(str(speaker).strip())
+    return speakers
+
+
+def _ensure_canonical_voice_sources(turns, directory, series_id, published_speakers):
+    """Do not invent a replacement voice for a previously published character."""
+    if series_id is None or not published_speakers:
+        return
+    speakers = {str(turn.get("speaker") or "").strip() for turn in turns
+                if str(turn.get("text") or "").strip()}
+    for speaker in sorted(speakers & published_speakers):
+        path = _voice_reference_path(speaker, directory, series_id)
+        if not _reference_digest(path):
+            raise RuntimeError(
+                f"Voix canonique de {speaker} introuvable pour la série {series_id}. "
+                "Importez d'abord sa référence WAV validée de l'épisode publié "
+                "dans le dossier tts-voices de la série. "
+                "Aucun nouvel échantillon vocal ne sera généré automatiquement."
+            )
+
+
 def _reference_for(key, voice, name, engine, directory, *, series_id=None):
     path = _voice_reference_path(key, directory, series_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -130,6 +180,7 @@ def apply_to_shot(shot):
             (shot["project_id"],),
         ).fetchone()
         series_id = episode["series_id"] if episode else None
+        published_speakers = _published_series_speakers(conn, series_id, shot["project_id"])
         metadata = json.loads(conn.execute(
             "SELECT metadata_json FROM studio_takes WHERE id=?", (take["id"],)
         ).fetchone()[0] or "{}")
@@ -153,6 +204,9 @@ def apply_to_shot(shot):
     }
     if previous.get("signature") == signature and Path(take["output_path"]).is_file():
         return shot
+    # Fail before hydration or any paid synthesis when a returning speaker
+    # cannot be matched to an operator-approved reference from the prior film.
+    _ensure_canonical_voice_sources(turns, directory, series_id, published_speakers)
     if not settings.studio_asr_checkpoint or not Path(settings.studio_asr_checkpoint).is_file():
         raise RuntimeError(
             "Post-doublage bloqué avant tout appel TTS payant : "
