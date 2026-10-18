@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from calliope.agent.llm import generate_structured as _generate_structured
 from calliope.config import settings
 from calliope.studio.audio import AudioSettings
+from calliope.studio.director_contracts import MAX_SPEECH_WORDS_PER_SEC, speech_word_count
 from calliope.studio.h3_prompt import (
     LANGUAGES,
     dialogue_language,
@@ -142,6 +143,14 @@ class _NativeValidationError(ValueError):
         self.paths = paths
 
 
+class _StoryRealizationError(_NativeValidationError):
+    pass
+
+
+class _NarrativeDurationError(_NativeValidationError):
+    pass
+
+
 def _native_repair_fields(draft, paths):
     fields = []
     for path in paths:
@@ -203,6 +212,10 @@ def _apply_native_updates(draft, response):
 
 def _creative_context(context):
     result = copy.deepcopy(context)
+    rhythm = {key: value for key, value in (context.get('directing_profile') or {}).items()
+              if key in ('dialogue_density', 'reactions', 'active_listening', 'silences')}
+    if rhythm:
+        result['narrative_rhythm'] = rhythm
     for key in ('id', 'created_at', 'updated_at', 'archived', 'aspect_ratio',
                 'directing_profile', 'speaker_ids', '_planner_trace', 'prepare_only', 'prompt_contract_version',
                 'creative_candidates'):
@@ -256,7 +269,7 @@ fragments n'est imposé. Aucun gag ni cliffhanger obligatoire. Ne commente pas l
 qualité de tes scènes, joue-les. Chaque piste est un épisode complet adapté au
 target_seconds fourni, avec ses échanges réellement prononcés et sa fin jouée.
 Ce n'est pas un petit gag que le rédacteur devra étirer ensuite. Le temps indiqué
-est celui du récit sans l'incitation ajoutée ailleurs. N'allonge pas les pauses
+est celui du récit. N'ajoute aucune incitation promotionnelle. N'allonge pas les pauses
 pour remplir : développe ce que les personnages tentent et ce qui leur arrive.
 Retourne uniquement un JSON {"candidates":[{"id":"A","title":"...","scene":"..."},
 {"id":"B","title":"...","scene":"..."},{"id":"C","title":"...","scene":"..."}]}.
@@ -304,7 +317,13 @@ de rendu, pas de métrique, pas de conseil marketing."""
     return story, {'candidates': candidates, 'selection': selection}
 
 
-async def _write_creative_story(context, idea, objective, trace=None):
+async def _write_creative_story(context, idea, objective, trace=None, *, previous_story=None, revision_note=None):
+    from calliope.studio.planner import WORDS_PER_SEC
+
+    profile = context.get('directing_profile') or {}
+    density = profile.get('dialogue_density',
+                          'brisk' if profile.get('preset') == 'fast_dialogue_social_fiction' else 'natural')
+    spoken_rate = 3.0 if density == 'brisk' else WORDS_PER_SEC
     prompt = """CREATIVE STORY : écris une scène de série courte qui mérite d'être regardée.
 Tu es son auteur. Trouve une vraie idée et fais vivre les personnages. idea et
 objective sont la demande actuelle, prioritaire sur les pistes de series_intent.
@@ -314,6 +333,12 @@ Invente librement les situations et les mots, en conservant les
 personnages, leurs relations, les faits antérieurs et les règles de leur univers.
 Respecte les événements, conditions de départ et répliques que l'utilisateur
 exige explicitement. Une condition de départ imposée existe dès l'ouverture.
+Fais exister toutes les séquences et tous les lieux explicitement demandés dans
+idea : ne réduis pas un épisode avec des préparatifs et un rendez-vous à sa seule
+dispute d'ouverture. Développe les actions et les conséquences utiles à la durée.
+Si previous_story et revision_note sont fournis, tu reprends ton propre brouillon
+pour corriger ce défaut. Tu restes l'auteur des ajouts et des dialogues ; respecte
+le brief actuel, les faits du canon et les paroles imposées par l'utilisateur.
 
 Quelqu'un découvre cette série sans contexte. Dès l'ouverture, un événement
 concret et une réplique adressée à un autre personnage lui font comprendre
@@ -335,7 +360,7 @@ Les décisions ont des conséquences visibles, l'embrouille évolue et aboutit �
 une vraie chute ou récompense. Celle-ci peut ouvrir un problème précis pour la
 suite. Garde les actions utiles à cette idée, faciles à suivre.
 Une scène courte et forte vaut mieux qu'une idée mince étirée pour remplir.
-Le logiciel ajoute l'incitation séparément ; le temps indiqué est celui du récit.
+Le temps indiqué est celui du récit. N'ajoute aucune incitation promotionnelle.
 
 Retourne uniquement un objet JSON. Écris d'abord title et beats, la scène jouée :
 beats:[{action,dialogue_turns:[{speaker,text}],consequence}]. Un beat est un
@@ -380,12 +405,10 @@ raison concrète du choix et faiblesse traitée dans la scène finale. Ces notes
 éditoriales ne sont ni des paroles ni des instructions de rendu.
 """
     if "target_seconds" in context:
-        from calliope.studio.planner import WORDS_PER_SEC
-
         target = float(context["target_seconds"])
         prompt += (
             f"\nTemps utile du récit : {target:g} secondes, actions et réactions incluses. "
-            f"La capacité indicative avant les actions est d'environ {int(target * WORDS_PER_SEC)} mots prononcés au total, "
+            f"La capacité indicative avant les actions est d'environ {int(target * spoken_rate)} mots prononcés au total, "
             "pas par personnage ou événement. Vise en dessous pour laisser jouer la scène. "
             "Choisis une scène compacte avec des échanges vifs et laisse de la place aux gestes utiles. "
             "Conserve les répliques imposées ; coupe le remplissage plutôt que leur sens."
@@ -397,7 +420,9 @@ raison concrète du choix et faiblesse traitée dans la scène finale. Ces notes
     messages = [{"role": "system", "content": prompt}, {"role": "user", "content":
         json.dumps({"series": story_context, "series_intent": series_intent,
                     "idea": idea, "objective": objective,
-                    **({'creative_candidates': candidates} if candidates else {})}, ensure_ascii=False)}]
+                    **({'creative_candidates': candidates} if candidates else {}),
+                    **({'previous_story': previous_story, 'revision_note': revision_note}
+                       if previous_story is not None else {})}, ensure_ascii=False)}]
     token = uuid.uuid4().hex
     for attempt in range(3):
         request = copy.deepcopy(messages)
@@ -446,15 +471,13 @@ raison concrète du choix et faiblesse traitée dans la scène finale. Ces notes
                         raise ValueError(f"creative_story.beats[{index}]: déplacer la didascalie hors des paroles.")
                     validate_h3_prose(turn["text"])
             if "target_seconds" in context:
-                from calliope.studio.planner import WORDS_PER_SEC
-
                 words = sum(len(turn["text"].split()) for beat in beats for turn in beat["dialogue_turns"])
                 target = float(context["target_seconds"])
-                if words / WORDS_PER_SEC > target + max(2.0, target * 0.1):
+                if words / spoken_rate > target + max(2.0, target * 0.1):
                     raise ValueError(
-                        f"creative_story: {words} mots prononcés, durée de parole estimée {words / WORDS_PER_SEC:.1f} s "
+                        f"creative_story: {words} mots prononcés, durée de parole estimée {words / spoken_rate:.1f} s "
                         f"pour {target:g} s disponibles, avant les actions et réactions. "
-                        f"Vise moins de {int(target * WORDS_PER_SEC)} mots prononcés au total. "
+                        f"Vise moins de {int(target * spoken_rate)} mots prononcés au total. "
                         "Raccourcir les répliques sans supprimer les lignes imposées ni la récompense narrative."
                     )
             return result
@@ -479,6 +502,7 @@ def _validate_story_realization(story, plan, draft=None):
     actual, origins = [], []
     previous_beat = -1
     authored_lines = [[] for _ in story['beats']]
+    invalid_indices = []
     for si, scene in enumerate(plan["scenes"]):
         for ti, shot in enumerate(scene["shots"]):
             if shot.get("purpose") in ("midroll", "outro"):
@@ -491,17 +515,21 @@ def _validate_story_realization(story, plan, draft=None):
                         or beat_index < 0 or any(
                             {'speaker': t['speaker'], 'text': t['text'].strip()}
                             not in story['beats'][beat_index]['dialogue_turns'] for t in turns)):
-                    raise _NativeValidationError(
-                        'source_beat_index: conserver les étapes du scénario fourni, sans les fusionner ni déplacer leurs répliques.',
-                        [['scenes', si, 'shots', ti, 'source_beat_index']])
-                authored_lines[beat_index].extend(
-                    {'speaker': t['speaker'], 'text': t['text'].strip()} for t in turns)
-                previous_beat = beat_index
+                    invalid_indices.append(['scenes', si, 'shots', ti, 'source_beat_index'])
+                else:
+                    authored_lines[beat_index].extend(
+                        {'speaker': t['speaker'], 'text': t['text'].strip()} for t in turns)
+                    previous_beat = beat_index
             actual.extend({"speaker": t["speaker"], "text": t["text"].strip()} for t in turns)
             raw = (draft or plan)["scenes"][si]["shots"][ti]
             for index in range(len(turns)):
                 path = ["scenes", si, "shots", ti]
                 origins.append(path + ["dialogue_turns", index] if raw.get("dialogue_turns") else path)
+    if invalid_indices:
+        raise _NativeValidationError(
+            'source_beat_index: conserver les étapes du scénario fourni, sans les fusionner ni déplacer leurs répliques. '
+            'Corriger tous les indices signalés ensemble : entiers à partir de zéro dans creative_story.beats ; '
+            'une suite silencieuse conserve son étape source.', invalid_indices)
     if story.get('source_locked') and any(
             lines != beat['dialogue_turns'] for lines, beat in zip(authored_lines, story['beats'])):
         raise _NativeValidationError(
@@ -511,13 +539,15 @@ def _validate_story_realization(story, plan, draft=None):
         message = ("creative_story: la préparation doit conserver les répliques, leur ordre et leurs locuteurs. "
                    f"Attendu {json.dumps(expected, ensure_ascii=False)}; reçu {json.dumps(actual, ensure_ascii=False)}.")
         if len(actual) != len(expected):
-            raise ValueError(message)
+            raise _StoryRealizationError(
+                message, [['scenes', i, 'shots'] for i in range(len(plan['scenes']))]
+            )
         paths = []
         for wanted, received, path in zip(expected, actual, origins):
             for field in ("speaker", "text"):
                 if wanted[field] != received[field]:
                     paths.append(path + ["dialogue" if field == "text" and path[-2] == "shots" else field])
-        raise _NativeValidationError(message, paths)
+        raise _StoryRealizationError(message, paths)
 
 
 def _validate_initial_states(plan):
@@ -825,10 +855,9 @@ async def plan_episode(context, idea, objective):
 the only canon. Preserve identities, wardrobe, relationships, geography and
 unresolved events. Follow its genre, language and explicit brief.
 Write the story before dividing it into generated takes. Total useful STORY
-time should be near target_seconds (the software's central aside is budgeted
-separately). Each take lasts 1-15 seconds, one decimal, only as long as its
+time should be near target_seconds. Each take lasts 1-15 seconds, one decimal, only as long as its
 useful exchange, action or reaction needs. The number of takes is free; provide
-at least two narrative takes so the central aside can be inserted at a boundary.
+at least two narrative takes for the useful events of the story.
 A speaker change is not a reason to cut. Include speakers and listeners in the
 same composition when the scene benefits from it. Declare ALL visible characters
 in character_keys and silent conversational partners in listener_keys.
@@ -928,7 +957,7 @@ action order; use [] when nothing changes. Each change's from must match the cur
 state and action must exactly equal its owning shot action/reaction or dialogue
 turn action/reaction. Do not invent an action just to justify an object reset.
 For an independent take, explain the useful cut or ellipse in cut_reason.
-The software inserts a single central aside. Never write its promotional speech.
+Never write promotional speech or a call to action.
 OUTPUT LANGUAGES: render_canon and ALL realization fields are English, even when
 the input brief or a validation error is French. This includes prompt, image_prompt,
 blocking, framing, camera, action, reaction, soundscape and state values. French is
@@ -969,6 +998,11 @@ the immutable design of every character and location. References are reviewed be
     ]
     episode_target = float(context.get("target_seconds", 65))
     target = max(5.0, episode_target - _midroll_spec(context)["duration_sec"])
+    duration_instruction = (
+        f"{target:g} seconds of story, with no promotional speech or CTA."
+        if public_context["directing_profile"]["cta_placement"] == "none" else
+        f"{target:g} seconds of story plus an automatic {_midroll_spec(context)['duration_sec']:g}-second midroll, near {episode_target:g} seconds total."
+    )
     public_context["target_seconds"] = target
     native = context.get("prompt_contract_version") == 2
     creative_story, creative_workshop = (
@@ -978,10 +1012,12 @@ the immutable design of every character and location. References are reviewed be
         prompt = """REALIZATION ONLY. Translate creative_story into the studio's native
 filmable plan. The story and supplied identities are authoritative. Preserve every
 useful action, cause, reward and consequence. Preserve EVERY exact spoken line,
-its speaker and order. Do not write a new story or the software's promotion.
+its speaker and order. Do not write a new story or promotional speech.
 When creative_story.source_locked is true, this is an already authored script:
 each take must declare source_beat_index, the zero-based index of its source beat.
 Never merge distinct authored beats or move their actions to an earlier reply.
+Include source_beat_index on EVERY take, including silent consequences. A silent
+continuation of the final beat keeps that beat's index; never invent another beat.
 Preserve each beat's initial action, exact line and consequence in that order.
 You may split a beat into useful takes sharing its index, without repeating events.
 
@@ -991,7 +1027,7 @@ must be translated, never copied as render directions. Operator titles and revie
 are French. No H3 tags or stage directions inside speech.
 
 Cut the story freely into useful 1-15 second takes, durations to one decimal, total
-near target_seconds. At least two narrative takes; software places the promotion. Speaker
+near target_seconds. At least two narrative takes; no promotional speech. Speaker
 changes do not require cuts. Respect the brief's wide framing and depth when asked,
 and its geography, visible participants, eyelines and responsive performances.
 image_prompt is the SINGLE complete initial composition: name who is where,
@@ -1028,6 +1064,9 @@ Assign each physical event to exactly one action field. Do not summarize the who
 take in shot.action and repeat those events in dialogue_turns. A starting situation
 belongs in the still and staging, not in an action that enacts it again.
 Choose duration from the actual spoken exchange and indispensable visible movement.
+Allow natural expressive speech around 3 words/second, never over 4.2 words/second
+in a shot. Allocate that speech time before gestures or pauses. Preserve every
+source line and its speaker; rebalance shot durations rather than rush the dialogue.
 A short line does not need a long listening pose to fill the episode's target time.
 For brisk dialogue, keep lead-in gestures brief and let the speaker react while speaking.
 Direct each line as an attempt to affect the interlocutor: its emotional delivery
@@ -1073,7 +1112,7 @@ Return ONLY this JSON structure, with complete fields and freely chosen scene/ta
 "locations":{"location_key":"English stable architecture and furniture"},
 "props":{"prop_key":"English stable object shape, size and features"}},
 "scenes":[{"heading":"","blocking":"English geography","shots":[{
-"description":"Operator beat","prompt":"English current context","image_prompt":"English t=0 still",
+"description":"Operator beat","source_beat_index":0,"prompt":"English current context","image_prompt":"English t=0 still",
 "character_keys":["character_key"],"listener_keys":[],"location_key":"location_key",
 "prop_keys":["prop_key"],"start_state":{"prop_key":"English initial state ONLY when required"},
 "state_changes":[],"continue_from_previous":true,"cut_reason":"Useful cut or ellipse",
@@ -1082,7 +1121,18 @@ Return ONLY this JSON structure, with complete fields and freely chosen scene/ta
 "action":"English action during this line","reaction":"English reaction after this line"}],
 "action":"English action accompanying the opening exchange or silent beat","reaction":"English final event",
 "blocking":"English positions","framing":"English composition","camera":"English movement",
-"soundscape":"English nonverbal sounds","screen_text":[]}]}],"audio":{"music":"none"}}
+"soundscape":"English nonverbal sounds","screen_text":[]}]}],
+"audio":{"enabled":true,"music":"none","voice_gain_db":0,"ducking":true,
+"ambience":"none","ambience_gain_db":-34,"sfx":[],"holds":[]}}
+
+Choose the export sound mix as well as each take's native soundscape. Keep speech
+clear and use a quiet nonverbal ambience suited to the location when appropriate.
+Supported ambience: none, room, wind, rain, cafe, night, city, forest.
+Supported effects: click, beep, impact, boom, whoosh, riser, door, footstep, pop,
+boing, scratch. Each sfx cue has effect, shot_index (zero-based narrative take),
+at_sec and gain_db. Add cues only for visible meaningful events, without duplicating
+native effects. Use holds only for motivated silences, with shot_index, at_sec,
+duration_sec and drop_db. Keep music="none"; only the user can import music.
 
 Use audio_mode=silent, no speaker and no dialogue for silent takes. For exact labels
 use screen_text with software-rendered text/value and normalized coordinates; leave
@@ -1118,6 +1168,9 @@ Keep exact source words, voices, roles and useful actions. Never add dialogue to
                     **({"creative_story": creative_story} if native else {}),
                     "target_seconds": target,
                     "ending": (
+                        "No promotional speech, CTA or marketing overlay. The entire target duration "
+                        "belongs to the story. End on its payoff and any narrative consequence."
+                        if public_context["directing_profile"]["cta_placement"] == "none" else
                         "The software appends the spoken promotion AFTER the complete story. "
                         "Do not write that promotion or interrupt the story for it. Keep the "
                         "story ending for the payoff and the next episode's consequence."
@@ -1138,6 +1191,8 @@ Keep exact source words, voices, roles and useful actions. Never add dialogue to
     result = None
     repair_fields = []
     states_prepared = False
+    initial_messages = copy.deepcopy(messages)
+    duration_failure = None
     for attempt in range(3):
         request_messages = copy.deepcopy(messages)
         response = None
@@ -1145,16 +1200,17 @@ Keep exact source words, voices, roles and useful actions. Never add dialogue to
         applied = False
         try:
             states_prepared = False
+            repairing = native and bool(repair_fields)
             response = await generate_structured(
                 messages,
                 temperature=0.45,
                 max_tokens=max(12000 if context.get("prompt_contract_version") == 2 else 4096,
                                min(16000, estimated_shots * 650 + 2000)),
                 role='planner' if native else None,
-                **({"required_keys": ("values",) if attempt else ("prompt_contract_version", "scenes")}
+                **({"required_keys": ("values",) if repairing else ("prompt_contract_version", "scenes")}
                    if native else {}),
             )
-            result = _apply_native_values(result, [field["path"] for field in repair_fields], response) if native and attempt else response
+            result = _apply_native_values(result, [field["path"] for field in repair_fields], response) if repairing else response
             applied = True
             if isinstance(result, dict) and result.get("prompt_contract_version") == 2:
                 result = _normalize_native_keys(result)
@@ -1167,6 +1223,38 @@ Keep exact source words, voices, roles and useful actions. Never add dialogue to
                     raise _NativeValidationError(
                         'Scénario fourni : structure de scènes et de répliques invalide.',
                         [['scenes']]) from None
+            multi_speaker = False
+            if native and settings.studio_video_profile == 'ltx' and isinstance(result, dict):
+                for scene in result.get('scenes') or []:
+                    if not isinstance(scene, dict):
+                        continue
+                    for shot in scene.get('shots') or []:
+                        if not isinstance(shot, dict):
+                            continue
+                        turns = shot.get('dialogue_turns')
+                        if not isinstance(turns, list):
+                            continue
+                        speakers = {
+                            turn.get('speaker') for turn in turns
+                            if isinstance(turn, dict) and isinstance(turn.get('speaker'), str)
+                        }
+                        if len(speakers) > 1:
+                            multi_speaker = True
+                            break
+                    if multi_speaker:
+                        break
+            if multi_speaker:
+                shots = [
+                    shot for scene in result.get('scenes') or [] if isinstance(scene, dict)
+                    for shot in scene.get('shots') or [] if isinstance(shot, dict)
+                ]
+                if any('state_changes' not in shot for shot in shots):
+                    result['creative_story'] = copy.deepcopy(creative_story)
+                    result = await prepare_native_states(result, trace)
+                    states_prepared = True
+                from calliope.studio.ltx_realization import prepare_ltx_plan
+
+                result = prepare_ltx_plan(result)
             missing = []
             if native and isinstance(result.get("scenes"), list):
                 for si, scene in enumerate(result["scenes"]):
@@ -1209,6 +1297,27 @@ Keep exact source words, voices, roles and useful actions. Never add dialogue to
         except ValueError as exc:
             validation_error = str(exc)
             logger.warning("Planner validation failed attempt=%s: %s", attempt + 1, exc)
+            if (native and attempt < 2 and duration_failure
+                    and isinstance(exc, _StoryRealizationError)
+                    and not creative_story.get('source_locked')):
+                creative_story = await _write_creative_story(
+                    public_context, idea, objective, trace,
+                    previous_story=creative_story,
+                    revision_note=(
+                        duration_failure + " La réparation technique a changé les paroles. "
+                        "Reprends l'écriture pour remplir la durée avec des événements utiles, "
+                        "en couvrant toutes les séquences et tous les lieux demandés dans idea. "
+                        "N'ajoute ni pauses de remplissage ni incitation promotionnelle."
+                    ),
+                )
+                messages = copy.deepcopy(initial_messages)
+                request = json.loads(messages[1]['content'])
+                request['creative_story'] = creative_story
+                messages[1]['content'] = json.dumps(request, ensure_ascii=False)
+                result, repair_fields, duration_failure = None, [], None
+                continue
+            if isinstance(exc, _NarrativeDurationError):
+                duration_failure = str(exc)
             if attempt == 2:
                 raise
             if native:
@@ -1226,6 +1335,8 @@ Use every supplied id exactly once. A value may be text, a number, boolean,
 object or array as required by that field. Return no destinations, other keys,
 whole episode or unrelated edits. Software applies values to their retained
 destinations and validates the whole plan again.
+For source_beat_index return an integer from the zero-based creative_story.beats
+list. Match the exact speaker and line; a silent continuation keeps its source beat.
 For a requested render_canon.props description, return one plain English string,
 never an object with name, description or identity. Props map keys to strings.
 Preserve silent events too: an empty dialogue turn is a silent action, not a
@@ -1251,7 +1362,7 @@ into from. Use a reference to an existing nonempty action, never action prose.
                     {"role": "user", "content": json.dumps({
                         "validation_error": str(exc), "repair_fields": repair_fields,
                         "task": "Repair only the requested values.",
-                        "duration": f"{target:g} seconds of story plus an automatic {_midroll_spec(context)['duration_sec']:g}-second midroll, near {episode_target:g} seconds total.",
+                        "duration": duration_instruction,
                     }, ensure_ascii=False)},
                 ])
                 continue
@@ -1265,8 +1376,7 @@ into from. Use a reference to an existing nonempty action, never action prose.
                             f"{'Return targeted updates for the current draft. ' if native else 'Repair the complete JSON episode. '}"
                             f"Keep free per-shot durations; adjust the cutting or the "
                             f"dialogue so the useful total stays near {target} seconds "
-                            f"of story plus an automatic {_midroll_spec(context)['duration_sec']:g}-second midroll "
-                            f"for an episode near {episode_target:g} seconds, "
+                            f"of story. {duration_instruction} "
                             "without stretching any shot. "
                             "Preserve the story and series canon. Shorten dialogue if needed. "
                             "Repair the identified field, preserving unaffected shots. "
@@ -1339,6 +1449,8 @@ def canonical_key(value, entities, kind):
 def _midroll_spec(context):
     from calliope.studio.planner import beat_duration
 
+    if directing_profile(context.get("directing_profile"))["cta_placement"] == "none":
+        return {"dialogue": "", "duration_sec": 0.0}
     label = dialogue_language(context.get("language"))
     language = next(code for code, name in LANGUAGES.items() if name == label)
     dialogue = FRENCH_MIDROLL if language == "fr" else MIDROLL_DIALOGUES[language]
@@ -1462,6 +1574,18 @@ def insert_midroll(plan, context):
             old_index += 1
         if shots:
             scenes.append(scene | {"shots": shots})
+    if directing_profile(context.get("directing_profile"))["cta_placement"] == "none":
+        plan["scenes"] = scenes
+        config = plan.get("audio") or {}
+        for kind in ("sfx", "holds"):
+            if kind in config:
+                config[kind] = [
+                    cue | {"shot_index": positions[cue.get("shot_index", 0)]}
+                    for cue in config[kind] if cue.get("shot_index", 0) in positions
+                ]
+        if plan.get("prompt_contract_version") == 2:
+            plan["speaker_ids"] = _speaker_ids_for_plan(plan)
+        return plan
     if len(story) < 2:
         raise ValueError(
             "Prévoir au moins deux plans narratifs pour intégrer l'incitation au milieu."
@@ -1767,6 +1891,7 @@ def normalize_plan(result, context):
             "une action, pas une réplique sans locuteur.", reference_paths
         )
     total_duration = 0
+    speech_errors, speech_paths = [], []
     display_values = dict(context.get("display_values") or {})
     if not result["scenes"]:
         raise ValueError("L'épisode doit contenir au moins une scène.")
@@ -1795,6 +1920,13 @@ def normalize_plan(result, context):
             except (TypeError, ValueError):
                 duration = 0
             if not 1 <= duration <= 15:
+                if version == 2:
+                    raise _NativeValidationError(
+                        f"scenes[{scene_index}].shots[{shot_index}].duration_sec: "
+                        "chaque prise doit durer entre 1 et 15 secondes. "
+                        "Découper l'échange en prises utiles en conservant les paroles, leur ordre "
+                        "et les locuteurs ; ne pas étirer les silences ni réécrire le scénario.",
+                        [["scenes", scene_index, "shots"]])
                 raise ValueError("Chaque plan doit viser une durée utile entre 1 et 15 secondes.")
             duration = round(duration, 1)
             turns = shot.get("dialogue_turns") or []
@@ -1809,6 +1941,13 @@ def normalize_plan(result, context):
                 if turns
                 else str(shot.get("dialogue") or "").strip()
             )
+            words = speech_word_count(dialogue)
+            if version == 2 and words > duration * MAX_SPEECH_WORDS_PER_SEC + 1e-6:
+                speech_errors.append(
+                    f'scenes[{scene_index}].shots[{shot_index}]: parole trop rapide '
+                    f'({words} mots en {duration:g} s), au moins '
+                    f'{words / MAX_SPEECH_WORDS_PER_SEC:.2f} s nécessaires.')
+                speech_paths.append(['scenes', scene_index, 'shots', shot_index, 'duration_sec'])
             speaker = canonical_key(shot.get("speaker"), all_entities, "character")
             if turns:
                 voices = {t["speaker"] for t in turns}
@@ -1986,10 +2125,14 @@ def normalize_plan(result, context):
                     raise ValueError("Une directive de réalisation est invalide.")
                 if field in shot:
                     validate_h3_prose(shot[field])
+    if speech_errors:
+        raise _NativeValidationError(
+            '\n'.join(speech_errors) + '\nRééquilibrez les durées sans changer les paroles, '
+            'leur ordre ni leurs locuteurs. Conservez la durée totale visée.', speech_paths)
     if "target_seconds" in context:
         target = float(context["target_seconds"])
         tolerance = max(2.0, target * 0.1)
-        if total_duration < target - tolerance:
+        if total_duration < target - tolerance - 1e-6:
             if version == 2 and not context.get('studio_director'):
                 review = result.get("editorial_review")
                 if not isinstance(review, dict):
@@ -2008,15 +2151,19 @@ def normalize_plan(result, context):
                     "sans jamais étirer un plan existant."
                 )
                 if version == 2:
-                    raise _NativeValidationError(message, [
+                    raise _NarrativeDurationError(message, [
                         ['scenes', i, 'shots'] for i in range(len(result['scenes']))])
                 raise ValueError(message)
-        if total_duration > target + tolerance:
-            raise ValueError(
+        if total_duration > target + tolerance + 1e-6:
+            message = (
                 f"La durée utile du scénario ({total_duration:g} s) dépasse la "
                 f"durée demandée ({target:g} s). Ajustez le découpage ou les "
                 "répliques, sans étirer les plans."
             )
+            if version == 2:
+                raise _NarrativeDurationError(message, [
+                    ['scenes', i, 'shots'] for i in range(len(result['scenes']))])
+            raise ValueError(message)
     raw_audio = result.get("audio") or {}
     if isinstance(raw_audio, dict):
         for cue in raw_audio.get("sfx") or []:

@@ -1,0 +1,172 @@
+"""Rendu V2 de l'episode 2 : six plans longs, cuts maitrises."""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import json
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "calliope-backend" / "src"))
+
+from calliope.config import settings  # noqa: E402
+from calliope.engines.modal_h3 import ModalH3Engine, build_request  # noqa: E402
+
+OUT = ROOT / "work" / "publish-ep44-v2" / "renders"
+ASSETS = ROOT / "calliope-backend" / "data" / "assets" / "44" / "studio" / "uploads"
+
+SHOTS = [
+    (
+        "a-cantine", ASSETS / "c0ba17534dc045f991a667280299bb38.png", 15.0,
+        "A single continuous cinematic medium-wide two-shot in the prison cafeteria, "
+        "slight high angle. Locked camera, no cuts, no zoom, no camera movement. "
+        "Durio, the giant durian-headed inmate in an orange jumpsuit, stands on the left, "
+        "leaning over a metal table. Momo, the mango-headed inmate in an orange jumpsuit "
+        "with rectangular black sunglasses, sits on the right, back straight, hands on "
+        "his knees. He already wears the sunglasses at the start and keeps them on for "
+        "the whole shot. They face each other and keep eye contact; neither looks at the "
+        "camera or the floor. Durio says in a very deep, raspy, furious French voice: "
+        "\"Hier, tu m'as humilié devant tout le monde.\" Momo answers calmly in a cold, "
+        "quiet French voice: \"Non. Tu t'es humilié tout seul. Moi, j'ai juste regardé.\" "
+        "Durio leans closer, furious: \"Les gardiens t'ont pas expliqué pourquoi j'étais "
+        "ici ?\" Momo: \"Si. Et ils m'ont expliqué pourquoi tu y es. C'est plus "
+        "intéressant.\" Durio points at the floor: \"Ce soir, 20h30, la cour. On règle ça "
+        "devant tout le monde.\" Momo: \"J'y serai. Ramène du monde. Tu en auras besoin.\" "
+        "After the last line, Durio straightens up, turns and leaves frame left. Momo "
+        "stays seated, calm, and watches him go. Inmates in the background recoil and "
+        "exchange looks. Cold fluorescent light, metal tables, steam. No text, no "
+        "narrator, no extra dialogue.",
+    ),
+    (
+        "b-cell-durio", ASSETS / "cea50171fa1f46d484a44b3183a7ad7a.png", 5.0,
+        "A single continuous cinematic medium shot in a small prison cell. Locked camera, "
+        "no cuts, no zoom. Durio, the giant durian-headed inmate in an orange jumpsuit, "
+        "stands facing a cracked concrete wall, side profile. He punches the wall once "
+        "with his bare fist, breathing hard, then turns his head slightly and says in a "
+        "very deep, raspy French voice: \"Ses lunettes vont pas me faire peur.\" He stares "
+        "at the wall, jaw clenched. Bare cell, metal bunk, cold light. No text, no "
+        "narrator, no extra dialogue.",
+    ),
+    (
+        "c-cell-momo", ASSETS / "86c7fe95466c49269ccb772761d03e6d.png", 5.0,
+        "A single continuous cinematic medium shot in Momo's prison cell. Locked camera, "
+        "no cuts, no zoom. Momo, the mango-headed inmate in an orange jumpsuit and "
+        "rectangular black sunglasses, sits cross-legged on his bunk, writing in a small "
+        "notebook. A small closed metal box sits on the blanket beside him. He closes the "
+        "notebook, looks up at the cell door and says in a calm, cold French voice: "
+        "\"20h30. Il va encore croire que c'est lui qui a eu l'idée.\" He smiles slightly. "
+        "Bare cell, metal door, cold light. No text, no narrator, no extra dialogue.",
+    ),
+    (
+        "d-corridor", ASSETS / "157c96445bd344ef820fcfde48a49ce9.png", 14.0,
+        "A single continuous cinematic tracking shot in a narrow prison corridor. The "
+        "camera moves backward in front of Poire and Pêche, no cuts, no zoom. Poire, a "
+        "pear-headed inmate in an orange jumpsuit, carries an empty metal tray and speaks "
+        "quickly in a high, breathless French voice. Pêche, a peach-headed inmate in an "
+        "orange jumpsuit, walks beside her with a tray, calm and skeptical, and answers "
+        "in a medium-low French voice. They speak in low voices while walking toward the "
+        "camera: Poire: \"Écoute ça. Ce soir, Durio et Momo se battent.\" Pêche: \"Pour de "
+        "vrai ?\" Poire: \"Non, à 20h30. Mais Momo aurait déjà fait disparaître un "
+        "détenu.\" Pêche: \"Qui ça ?\" Poire: \"Personne sait. Le type a changé de bloc. "
+        "Ou de tête. J'ai pas tout compris.\" Pêche: \"Et le gardien ?\" Poire: \"Quel "
+        "gardien ?\" Pêche: \"Le gardien qui l'accompagne.\" They keep walking, exchange a "
+        "look, Pêche almost drops her tray. Cold corridor, cell bars, fluorescent light. "
+        "No text, no narrator, no extra dialogue.",
+    ),
+    (
+        "e-yard-wide", ASSETS / "f9fb7a143a1747caa443f0d6587b9e2f.png", 6.0,
+        "A single continuous cinematic wide shot in the prison yard at night. Locked "
+        "camera, no cuts, no zoom. A circle of inmates in orange jumpsuits has formed. "
+        "Durio enters the circle, chest out, fists clenched, acclaimed by the crowd. "
+        "Momo arrives alone, hands in his pockets, and stops opposite Durio. They face "
+        "each other, eyes locked; the crowd falls silent. Durio and Momo stay still, "
+        "staring at each other. No dialogue. Cold floodlights, wet concrete, chain-link "
+        "fence. No text, no narrator.",
+    ),
+    (
+        "f-yard-reveal", ASSETS / "430b73f581274f628fa1be3bf0a28600.png", 15.0,
+        "A single continuous cinematic medium two-shot in the prison yard at night. "
+        "Locked camera, no cuts, no zoom. Durio and Momo face each other at the center of "
+        "the circle, eyes locked; neither looks at the camera or the floor. Momo takes a "
+        "small metal box from his pocket, opens it and holds up a photo. Durio looks at "
+        "the photo, then at Momo, and freezes; he does not punch, lunge or throw anything. "
+        "Momo says in a calm, cold French voice: \"Cette nuit, ta porte n'était pas "
+        "verrouillée.\" Durio: \"Tu n'as pas osé.\" Momo: \"Si. J'ai même pris le temps de "
+        "faire une photo.\" Durio: \"Qu'est-ce que tu veux ?\" Momo: \"Savoir pourquoi tu "
+        "es ici. Et pourquoi tu es si pressé de te battre.\" Momo puts his sunglasses back "
+        "on: \"20h30. Et cette fois, regarde bien qui tu tapes.\" End on both faces, eyes "
+        "locked. The crowd is silent in the background. No zoom, no punch, no walking "
+        "away, no extra dialogue, no text, no narrator.",
+    ),
+]
+
+
+def seed_for(name: str) -> int:
+    return int.from_bytes(hashlib.sha256(f"ep44v2-{name}".encode()).digest()[:8], "big")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--only", default="")
+    args = parser.parse_args()
+    engine = ModalH3Engine(settings.studio_modal_app, settings.studio_modal_function)
+    timeline = []
+    for name, image, duration, prompt in SHOTS:
+        if args.only and not any(part in name for part in args.only.split(",")):
+            continue
+        target = OUT / name
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "prompt.txt").write_text(prompt, encoding="utf-8")
+        payload = build_request(
+            prompt=prompt, duration_sec=duration, aspect_ratio="9:16",
+            seed=seed_for(name), image_path=image, audio_mode="native",
+            trace_id=f"ep44v2_{name}".replace("-", "_")[:64],
+            video_profile="ltx",
+        )
+        safe = {key: value for key, value in payload.items() if key != "image_base64"}
+        safe["image_path"] = str(image)
+        (target / "request.json").write_text(
+            json.dumps(safe, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+        print(f"[{name}] {len(prompt.split())} mots, {payload['frames']} frames", flush=True)
+        if args.dry_run:
+            continue
+        if args.resume and (target / "video.mp4").is_file():
+            print(f"[{name}] conserve", flush=True)
+            timeline.append({"name": name, "duration": duration,
+                             "path": str(target / "video.mp4")})
+            continue
+        call_id = engine.spawn(payload)
+        print(f"[{name}] modal_call={call_id}", flush=True)
+        result = None
+        deadline = time.time() + 3600
+        while result is None:
+            result = engine.poll(call_id)
+            if result is not None:
+                break
+            if engine.remote_terminal:
+                raise RuntimeError(f"[{name}] termine sans resultat")
+            if time.time() > deadline:
+                raise TimeoutError(name)
+            time.sleep(5)
+        (target / "video.mp4").write_bytes(base64.b64decode(result["video_base64"]))
+        (target / "metadata.json").write_text(
+            json.dumps(result.get("metadata") or {}, indent=2), encoding="utf-8",
+        )
+        timeline.append({"name": name, "duration": duration,
+                         "path": str(target / "video.mp4")})
+        (OUT / "timeline.json").write_text(
+            json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+        print(f"[{name}] termine", flush=True)
+
+
+if __name__ == "__main__":
+    main()
+

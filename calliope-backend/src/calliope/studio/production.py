@@ -220,6 +220,8 @@ def ensure_midroll(project_id):
         if not episode:
             return
         context = json.loads(episode["context_json"])
+        if directing_profile(context.get("directing_profile"))["cta_placement"] == "none":
+            return
         by_key = {e["key"]: e for e in series.entities(conn, episode["series_id"])}
         by_key.update({e["key"]: e for e in context.get("entities", [])})
         context["entities"] = list(by_key.values())
@@ -470,12 +472,48 @@ def reusable_video(shot):
     return chosen
 
 
+def apply_loudness(verdict, loudness):
+    """Ajoute la mesure EBU R128 sans transformer un pic natif en defaut de parole.
+
+    Un pic proche de 0 dBFS est normal pour l'audio natif et l'export le
+    normalise deja (-23 LUFS / -1 dBTP). Seul un niveau inexploitable bloque.
+    """
+    if not loudness:
+        return verdict
+    verdict["loudness"] = loudness
+    if (
+        verdict.get("status") in ("ok", "unknown")
+        and loudness["integrated_lufs"] < -30
+    ):
+        verdict.update(
+            status="audio_level",
+            reason=f"Loudness trop faible ({loudness['integrated_lufs']:.1f} LUFS).",
+        )
+    return verdict
+
+
 async def assess_take(shot):
     """Enregistre un diagnostic de parole pour la relecture de la prise."""
     from calliope.studio import pacing, transcription
     from calliope.studio.h3_prompt import spoken_dialogue
 
     take = selected_video(shot)
+    metadata = (take or {}).get("metadata") or {}
+    override = metadata.get("dialogue_qc_override")
+    if take and override:
+        # Une validation supervisee enregistree ne doit pas etre ecrasee par
+        # la re-evaluation automatique qui precede l'export.
+        verdict = dict(metadata.get("dialogue_qc") or {})
+        verdict["status"] = "unknown"
+        verdict["reason"] = override.get("reason") or "Validation supervisee."
+        metadata["dialogue_qc"] = verdict
+        with service.database() as conn:
+            conn.execute(
+                "UPDATE studio_takes SET metadata_json=? WHERE id=?",
+                (json.dumps(metadata), take["id"]),
+            )
+            conn.commit()
+        return verdict
     with service.database() as conn:
         context = service.shot_context(conn, shot["id"])
     dialogue = spoken_dialogue(shot | context.get("shot", {}), context)
@@ -549,36 +587,64 @@ async def assess_take(shot):
             "transcript": transcript,
             "activity": voice,
         }
+    with service.database() as conn:
+        request_row = conn.execute(
+            "SELECT request_json FROM studio_takes WHERE id=?", (take["id"],)
+        ).fetchone()
+    request_data = json.loads(request_row[0] or "{}") if request_row else {}
+    timing_check = not (
+        request_data.get("video_profile") == "ltx"
+        and int(request_data.get("prompt_compiler_version") or 0) >= 3
+    )
+    turns = []
+    contract_lines = (context.get("director_contract") or {}).get("dialogue") or []
+    for index, turn in enumerate(context.get("shot", {}).get("dialogue_turns") or []):
+        line = contract_lines[index] if index < len(contract_lines) else {}
+        turns.append({
+            **turn,
+            "start_sec": line.get("start_sec"),
+            "end_sec": line.get("end_sec"),
+        })
+    legacy = transcription.assess_transcript(dialogue, transcript, language=language)
     verdict = pacing.assess_dialogue(dialogue, shot["duration_sec"], probe, voice)
     if verdict["status"] not in ("missing", "inaudible"):
-        verdict = transcription.assess_transcript(dialogue, transcript, language=language)
-    if context.get("shot", {}).get("dialogue_turns") and verdict["status"] not in (
+        if legacy.get("status") == "ok" and legacy.get("trim_end_limit_sec") is not None:
+            verdict = legacy
+        else:
+            verdict = transcription.assess_transcript_v2(
+                dialogue, transcript, language=language
+            )
+    if turns and verdict["status"] not in (
         "missing",
         "extra",
         "inaudible",
+        "unknown",
     ):
-        turns = transcription.assess_turns(
-            context["shot"]["dialogue_turns"], transcript, language=language
+        turns_verdict = transcription.assess_turns_v2(
+            turns, transcript, language=language, check_timing=timing_check
         )
-        verdict["turns"] = turns.get("turns", [])
-        verdict["speaker_identity_status"] = turns["speaker_identity_status"]
-        if turns["status"] == "missing":
-            verdict.update(status="missing", reason=turns["reason"])
+        verdict["turns"] = turns_verdict.get("turns", [])
+        verdict["speaker_identity_status"] = turns_verdict.get(
+            "speaker_identity_status", "unverified"
+        )
+        verdict["speaker_identity_reason"] = turns_verdict.get("speaker_identity_reason", "")
+        verdict["timing_drift_sec"] = turns_verdict.get("timing_drift_sec")
+        verdict["mean_word_probability"] = turns_verdict.get("mean_word_probability")
+        if turns_verdict["status"] != "ok":
+            verdict.update(status=turns_verdict["status"], reason=turns_verdict["reason"])
     verdict.setdefault("voice", (
         transcript.get("speech_intervals") if transcript.get("status") == "ok" else None
     ))
+    loudness = await asyncio.to_thread(pacing.measure_loudness, take["output_path"])
+    apply_loudness(verdict, loudness)
+    compiled = request_data.get("prompt") or take.get("prompt", "")
+    diagnosis = transcription.assess_prompt_recitation(
+        dialogue, transcript, compiled, language=language
+    )
+    if diagnosis:
+        verdict.update(status="extra", reason=diagnosis["reason"])
+        verdict["diagnostic"] = diagnosis
     metadata["dialogue_qc"] = verdict
-    if verdict["status"] == "extra":
-        with service.database() as conn:
-            request_row = conn.execute(
-                "SELECT request_json FROM studio_takes WHERE id=?", (take["id"],)
-            ).fetchone()
-        compiled = json.loads(request_row[0] or "{}").get("prompt") or take.get("prompt", "")
-        diagnosis = transcription.assess_prompt_recitation(
-            dialogue, transcript, compiled, language=language
-        )
-        if diagnosis:
-            metadata["dialogue_qc"]["diagnostic"] = diagnosis
     service.render_event(
         take["id"],
         "DONE",
@@ -787,8 +853,10 @@ async def render_shot(job, initial, should_stop):
     shot = load_shot(initial["id"])
     chosen = reusable_video(shot)
     from calliope.studio import director
-    with service.database() as conn:
-        uses_director = director.enabled(conn, job['project_id']) if job.get('project_id') else False
+    uses_director = False
+    if job.get('project_id'):
+        with service.database() as conn:
+            uses_director = director.enabled(conn, job['project_id'])
     if uses_director and chosen and shot['approved']:
         return
     if not chosen:
@@ -806,8 +874,25 @@ async def render_shot(job, initial, should_stop):
             raise ProductionPausedError() from None
     if job.get('video_ready') and not uses_director:
         job['video_ready']()
+    if settings.studio_tts_enabled and shot.get("selected_video_id"):
+        from calliope.studio import tts
+        shot = await asyncio.to_thread(tts.apply_to_shot, shot)
     verdict = await assess_take(shot)
     if uses_director:
+        retries = 0
+        while (
+            verdict
+            and verdict.get("status") in ("extra", "missing", "inaudible")
+            and retries < settings.studio_director_auto_retries
+        ):
+            retries += 1
+            shot = await generate_take(
+                job, load_shot(shot["id"]), "video", should_stop, attempt=retries
+            )
+            if settings.studio_tts_enabled and shot.get("selected_video_id"):
+                from calliope.studio import tts
+                shot = await asyncio.to_thread(tts.apply_to_shot, shot)
+            verdict = await assess_take(shot)
         if verdict and verdict['status'] == 'ok':
             trim_take(shot, verdict.get('voice'), verdict.get('trim_end_limit_sec'))
         with service.database() as conn:
@@ -854,11 +939,12 @@ async def render_videos(job, shots, should_stop):
     concurrency = settings.studio_video_concurrency
     from calliope.studio import director
     director_mode = False
-    with service.database() as conn:
-        if job.get('project_id') and director.enabled(conn, job['project_id']):
-            director_mode = True
-            concurrency = 1
-            shots = [s for s in shots if not s['approved']]
+    if job.get('project_id'):
+        with service.database() as conn:
+            if director.enabled(conn, job['project_id']):
+                director_mode = True
+                concurrency = 1
+                shots = [s for s in shots if not s['approved']]
     if not shots:
         return
     semaphore = asyncio.Semaphore(concurrency)

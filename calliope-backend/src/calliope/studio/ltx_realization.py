@@ -13,17 +13,25 @@ def action_sequence(shot):
 def prepare_ltx_plan(plan):
     plan = copy.deepcopy(plan)
     audio = plan.get('audio') or {}
-    timed = {cue['shot_index'] for field in ('sfx', 'holds') for cue in audio.get(field, [])}
     positions, old_index, new_index = {}, 0, 0
     for scene in plan['scenes']:
         prepared = []
         for shot in scene['shots']:
-            positions[old_index] = new_index
+            positions[old_index] = [(new_index, 0.0)]
             turns = shot.get('dialogue_turns') or []
             groups = [list(group) for _, group in groupby(enumerate(turns), lambda pair: pair[1]['speaker'])]
             split = len(groups) > 1 and shot.get('purpose') not in ('midroll', 'outro')
-            if split and (shot.get('screen_text') or old_index in timed or (
-                    'state_changes' not in shot and shot.get('start_state') != shot.get('end_state'))):
+            if plan.get('post_dub') or shot.get('post_dub'):
+                # Le post-doublage porte les voix : on garde le plan long,
+                # sans couper à chaque changement de locuteur.
+                split = False
+            if split and (
+                shot.get('screen_text')
+                or (
+                    'state_changes' not in shot
+                    and shot.get('start_state') != shot.get('end_state')
+                )
+            ):
                 review = plan.setdefault('editorial_review', {})
                 warning = 'LTX : échange à plusieurs voix avec effets synchronisés à vérifier dans les prises.'
                 if warning not in review.get('risks', ''):
@@ -47,6 +55,8 @@ def prepare_ltx_plan(plan):
                 changes.append(change | {'action_ref': actions[cursor][0]})
             weights = [max(1, sum(len(t['text'].split()) for _, t in group)) for group in groups]
             state = copy.deepcopy(shot.get('start_state') or {})
+            positions[old_index] = []
+            elapsed = 0.0
             for group_index, indexed in enumerate(groups):
                 offset = indexed[0][0]
                 group = [turn for _, turn in indexed]
@@ -76,11 +86,20 @@ def prepare_ltx_plan(plan):
                 part['end_state'] = copy.deepcopy(state)
                 scoped = ' '.join(action_sequence(part))
                 part.update(description=scoped or part['dialogue'], prompt=scoped)
+                positions[old_index].append((new_index, elapsed))
+                elapsed += part['duration_sec']
                 prepared.append(part)
                 new_index += 1
             old_index += 1
         scene['shots'] = prepared
     for field in ('sfx', 'holds'):
         for cue in audio.get(field, []):
-            cue['shot_index'] = positions.get(cue['shot_index'], cue['shot_index'])
+            parts = positions.get(cue['shot_index'])
+            if parts:
+                at_sec = cue.get('at_sec', 0)
+                index, start = next(
+                    (part for part in reversed(parts) if part[1] <= at_sec), parts[0]
+                )
+                cue['shot_index'] = index
+                cue['at_sec'] = round(at_sec - start, 6)
     return plan

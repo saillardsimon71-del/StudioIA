@@ -138,6 +138,9 @@ def test_video_request_preserves_dialogue_without_spoken_instructions(client, mo
     ).json()
     take = result["takes"][0]
     prompt = take["prompt"]
+    assert take["engine"] == (
+        "LTX-2.5 Distilled" if video_profile == "ltx" else "MiniMax H3 / FastH3 V2"
+    )
     assert visual_prompt in prompt
     assert "say exactly" not in prompt
     assert "Spoken dialogue" not in prompt
@@ -150,7 +153,12 @@ def test_video_request_preserves_dialogue_without_spoken_instructions(client, mo
         saved = conn.execute(
             "SELECT request_json FROM studio_takes WHERE id=?", (take["id"],)
         ).fetchone()[0]
-    assert json.loads(saved)["prompt"] == prompt
+    saved_request = json.loads(saved)
+    assert saved_request["prompt"] == prompt
+    if video_profile == "ltx":
+        assert saved_request["prompt_compiler_version"] == 3
+    else:
+        assert "prompt_compiler_version" not in saved_request
 
 
 def test_rerender_keeps_selected_video_and_request_is_idempotent(client, tmp_path):
@@ -430,9 +438,14 @@ async def test_cancelled_running_take_stops_original_call(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_changed_image_endpoint_never_receives_new_credentials(monkeypatch):
+@pytest.mark.parametrize(
+    "dry_run, message",
+    [(False, "Images manuelles uniquement"), (True, "a changé")],
+)
+async def test_changed_image_endpoint_never_receives_new_credentials(monkeypatch, dry_run, message):
     from calliope.studio import service
 
+    monkeypatch.setattr(settings, "dry_run", dry_run)
     monkeypatch.setattr(settings, "studio_image_base_url", "https://current.example/v1")
     monkeypatch.setattr(settings, "studio_image_api_key", "new-endpoint-secret")
 
@@ -440,7 +453,7 @@ async def test_changed_image_endpoint_never_receives_new_credentials(monkeypatch
         pytest.fail("Aucune connexion ne doit être créée pour l'ancien service.")
 
     monkeypatch.setattr(service.httpx, "AsyncClient", forbidden)
-    with pytest.raises(ValueError, match="a changé"):
+    with pytest.raises(ValueError, match=message):
         await service._generate_image({"image_base_url": "https://previous.example/v1"})
 
 

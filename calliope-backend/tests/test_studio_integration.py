@@ -703,6 +703,13 @@ def test_export_checks_legacy_approved_takes_without_generating(
     monkeypatch.setattr(transcription, "assess_transcript", lambda *args, **kwargs: {
         "status": qc_status, "reason": "Diagnostic de parole à vérifier.",
     })
+    monkeypatch.setattr(transcription, "assess_transcript_v2", lambda *args, **kwargs: {
+        "status": qc_status, "reason": "Diagnostic de parole à vérifier.",
+    })
+    monkeypatch.setattr(transcription, "assess_turns_v2", lambda *args, **kwargs: {
+        "status": "ok", "reason": "", "turns": [],
+        "speaker_identity_status": "unverified",
+    })
     monkeypatch.setattr(
         ModalH3Engine, "spawn", lambda *args: pytest.fail("export generated a take")
     )

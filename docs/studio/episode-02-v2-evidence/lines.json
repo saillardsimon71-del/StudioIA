@@ -1,0 +1,156 @@
+[
+  {
+    "id": "a1",
+    "speaker": "durio",
+    "text": "Hier, tu m'as humilié devant tout le monde.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\a1.wav",
+    "duration": 1.578
+  },
+  {
+    "id": "a2",
+    "speaker": "momo",
+    "text": "Non. Tu t'es humilié tout seul. Moi, j'ai juste regardé.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\a2.wav",
+    "duration": 2.4
+  },
+  {
+    "id": "a3",
+    "speaker": "durio",
+    "text": "Les gardiens t'ont pas expliqué pourquoi j'étais ici ?",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\a3.wav",
+    "duration": 1.534
+  },
+  {
+    "id": "a4",
+    "speaker": "momo",
+    "text": "Si. Et ils m'ont expliqué pourquoi tu y es. C'est plus intéressant.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\a4.wav",
+    "duration": 2.274
+  },
+  {
+    "id": "a5",
+    "speaker": "durio",
+    "text": "Ce soir, 20h30, la cour. On règle ça devant tout le monde.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\a5.wav",
+    "duration": 3.674
+  },
+  {
+    "id": "a6",
+    "speaker": "momo",
+    "text": "Je serai là. Ramène du monde. Tu en auras besoin.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\a6.wav",
+    "duration": 2.651
+  },
+  {
+    "id": "b1",
+    "speaker": "durio",
+    "text": "Ses lunettes vont pas me faire peur.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\b1.wav",
+    "duration": 1.099
+  },
+  {
+    "id": "c1",
+    "speaker": "momo",
+    "text": "20h30. Il va encore croire que c'est lui qui a eu l'idée.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\c1.wav",
+    "duration": 2.19
+  },
+  {
+    "id": "d1",
+    "speaker": "poire",
+    "text": "Écoute ça. Ce soir, Durio et Momo se battent.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\d1.wav",
+    "duration": 2.179
+  },
+  {
+    "id": "d2",
+    "speaker": "peche",
+    "text": "Pour de vrai ?",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\d2.wav",
+    "duration": 0.973
+  },
+  {
+    "id": "d3",
+    "speaker": "poire",
+    "text": "Non, à 20h30. Mais Momo aurait déjà fait disparaître un détenu.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\d3.wav",
+    "duration": 2.672
+  },
+  {
+    "id": "d4",
+    "speaker": "peche",
+    "text": "Qui ça ?",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\d4.wav",
+    "duration": 1.03
+  },
+  {
+    "id": "d5",
+    "speaker": "poire",
+    "text": "Personne sait. Le type a changé de bloc. Ou de tête. J'ai pas tout compris.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\d5.wav",
+    "duration": 3.303
+  },
+  {
+    "id": "d6",
+    "speaker": "peche",
+    "text": "Et le gardien ?",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\d6.wav",
+    "duration": 1.354
+  },
+  {
+    "id": "d7",
+    "speaker": "poire",
+    "text": "Quel gardien ?",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\d7.wav",
+    "duration": 0.847
+  },
+  {
+    "id": "d8",
+    "speaker": "peche",
+    "text": "Le gardien qui l'accompagne.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\d8.wav",
+    "duration": 1.189
+  },
+  {
+    "id": "f1",
+    "speaker": "momo",
+    "text": "Cette nuit, ta porte n'était pas verrouillée.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\f1.wav",
+    "duration": 1.865
+  },
+  {
+    "id": "f2",
+    "speaker": "durio",
+    "text": "Tu n'as pas osé.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\f2.wav",
+    "duration": 1.172
+  },
+  {
+    "id": "f3",
+    "speaker": "momo",
+    "text": "Si. J'ai même pris le temps de faire une photo.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\f3.wav",
+    "duration": 1.829
+  },
+  {
+    "id": "f4",
+    "speaker": "durio",
+    "text": "Explique-moi. Qu'est-ce que tu veux ?",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\f4.wav",
+    "duration": 1.581
+  },
+  {
+    "id": "f5",
+    "speaker": "momo",
+    "text": "Savoir pourquoi tu es ici. Et pourquoi tu es si pressé de te battre.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\f5.wav",
+    "duration": 3.197
+  },
+  {
+    "id": "f6",
+    "speaker": "momo",
+    "text": "20h30. Et cette fois, fais attention à qui tu tapes.",
+    "path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\work\\publish-ep44-v2\\tts\\f6.wav",
+    "duration": 2.877
+  }
+]

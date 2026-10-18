@@ -57,6 +57,9 @@ class AudioSettings(BaseModel):
     voice_gain_db: float = Field(default=-5, ge=-24, le=6)
     tempo: int = Field(default=72, ge=40, le=160)
     ducking: bool = True
+    loudnorm: bool = True
+    loudness_target_lufs: float = Field(default=-23, ge=-40, le=-5)
+    true_peak_db: float = Field(default=-1, ge=-9, le=0)
     ambience: Literal["none", "room", "wind", "rain", "cafe", "night", "city", "forest"] = (
         "none"
     )

@@ -49,3 +49,33 @@ La compilation conserve le cadrage, s'appuie sur l'image pour le style en I2V et
 - [Génération officielle en deux étapes](https://docs.ltx.io/open-source-model/usage-guides/two-stage-generation/) : modèle distillé, 8 étapes puis raffinement ; augmenter le CFG ne constitue pas une amélioration générale de qualité.
 - [Modèle LTX-2.5](https://huggingface.co/Lightricks/LTX-2.5), révision `49b093a39c19169a8a81721dcc541e07e945232f`.
 - [ComfyUI](https://github.com/Comfy-Org/ComfyUI/tree/d49e888586dd8ae012c0667b33466b815fee07f7), révision utilisée dans les essais et le worker. PyTorch 2.8.0 CUDA 12.8 conservé pendant l'installation.
+
+## Compilateur v3 — 17 octobre 2026
+
+Le compilateur LTX utilise désormais `ltx_prompt_v3.py` :
+
+- prose visuelle fluide, présent, dialogue **entre guillemets** avec locuteur et langue en prose ;
+- aucun `<d>`, `[French]`, `SPOKEN LINES`, `Visual timing`, `not spoken` ni clé de blocking brute ;
+- aucun timing absolu (`start_sec`/`end_sec`/`at_sec`) dans le prompt : le contrat reste une estimation de montage ;
+- action dédupliquée, cible 180 mots, plafond 200 ;
+- un seul locuteur actif recommandé par prise ; les autres personnages sont décrits comme silencieux ;
+- en I2V/continuation, ancrages courts d'identité (nom + apparence tronquée) pour éviter la duplication de personnages ;
+- **recette validée sur l'épisode 43** : pour un échange à deux locuteurs, utiliser B v3.1 (deux locuteurs dans la même prise) avec une durée **+1 à 2 s** pour laisser sortir le dernier tour. Le split mono-locuteur reste un secours quand un tour est tronqué, pas la recette par défaut.
+- **limite connue** : le modèle natif ne garantit pas des timbres distincts entre prises séparées. Si le casting vocal est critique, prévoir un post-doublage/voice conversion ; le QC doit le signaler.
+
+Un linter (`lint_ltx_prompt`) bloque l'envoi GPU si le prompt contient une balise H3, un timing absolu, une clé de blocking brute, des guillemets impairs ou plus de 200 mots.
+
+Les plans LTX multi-locuteurs sont découpés en continuations mono-locuteur par `prepare_ltx_plan`, y compris lorsqu'ils portent des SFX synchronisés. Les overlays `screen_text` bloquent encore le split pour ne pas déplacer un événement synchronisé.
+
+Le QC associé (`assess_transcript_v2`, `assess_turns_v2`) mesure le WER, les mots hors script, la couverture par tour, la dérive temporelle et la loudness EBU R128. `speaker_identity_status` reste `unverified` tant que pyannote/ECAPA n'est pas installé.
+
+Voir `docs/studio/AUDIT-2026-10-17.md` pour les preuves et les résultats des ablations.
+
+## Prises longues et post-doublage ciblé — 17 octobre 2026
+
+- LTX accepte jusqu'à **361 frames / 15,04 s**. Une scène de dialogue ne doit donc pas être découpée en une prise par réplique.
+- `post_dub=True` sur un plan empêche `prepare_ltx_plan` de le séparer par locuteur : le plan reste continu, le dialogue est réattribué en post.
+- `tts.py` peut remplacer le dialogue natif tour par tour (`build_timeline`, `mux_video`) ; les références vocales sont mises en cache.
+- Pour une scène déjà bonne en natif, ne post-doubler que les tours fautifs (ex. une réplique Momo prononcée par la voix de Durio), pas toute la scène.
+- `editorial.validate_plan` bloque les montages à plus d'une coupe par 8 s, les plans < 2,5 s et les CTA > 4 s.
+- Recette épisode 1 v2 : **5 plans, 4 coupes, 42,2 s** ; A natif exact, B/C hybrides, CTA TTS 1,85 s. Voir `docs/studio/EPISODE-01-V2.md`.

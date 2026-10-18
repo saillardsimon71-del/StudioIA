@@ -1,0 +1,2 @@
+# Preserve original bytes and hashes in the production evidence archive.
+docs/studio/episode-02-v2-evidence/** -text whitespace=-blank-at-eof,cr-at-eol

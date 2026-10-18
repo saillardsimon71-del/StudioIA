@@ -196,6 +196,14 @@ class Settings(BaseSettings):
     studio_video_concurrency: int = Field(1, ge=1, le=2)
     studio_render_timeout_sec: float = Field(5400, ge=1, le=86400)
     studio_asr_checkpoint: str = ""
+    studio_director_auto_retries: int = Field(2, ge=0, le=5)
+    studio_tts_enabled: bool = False
+    studio_tts_modal_app: str = "studio-ia-voxcpm"
+    studio_tts_modal_function: str = "synthesize"
+    studio_tts_native_gain: float = Field(0.0, ge=0, le=1)
+    studio_tts_cfg: float = 2.0
+    studio_tts_timesteps: int = Field(10, ge=1, le=30)
+    studio_tts_turn_retries: int = Field(4, ge=1, le=6)
     # Comfy is HTTP-only (upload / prompt / history / view). No local input/output dirs.
 
     queue_concurrency: int = 1
@@ -543,6 +551,14 @@ class Settings(BaseSettings):
             "studio_image_provider": self.studio_image_provider,
             "studio_render_timeout_sec": self.studio_render_timeout_sec,
             "studio_asr_checkpoint": self.studio_asr_checkpoint,
+            "studio_director_auto_retries": self.studio_director_auto_retries,
+            "studio_tts_enabled": self.studio_tts_enabled,
+            "studio_tts_modal_app": self.studio_tts_modal_app,
+            "studio_tts_modal_function": self.studio_tts_modal_function,
+            "studio_tts_native_gain": self.studio_tts_native_gain,
+            "studio_tts_cfg": self.studio_tts_cfg,
+            "studio_tts_timesteps": self.studio_tts_timesteps,
+            "studio_tts_turn_retries": self.studio_tts_turn_retries,
             "queue_poll_interval_sec": self.queue_poll_interval_sec,
             "queue_poll_timeout_sec": self.queue_poll_timeout_sec,
             "queue_max_retries": self.queue_max_retries,
@@ -659,6 +675,14 @@ class Settings(BaseSettings):
             "studio_video_concurrency": self.studio_video_concurrency,
             "studio_render_timeout_sec": self.studio_render_timeout_sec,
             "studio_asr_checkpoint": self.studio_asr_checkpoint,
+            "studio_director_auto_retries": self.studio_director_auto_retries,
+            "studio_tts_enabled": self.studio_tts_enabled,
+            "studio_tts_modal_app": self.studio_tts_modal_app,
+            "studio_tts_modal_function": self.studio_tts_modal_function,
+            "studio_tts_native_gain": self.studio_tts_native_gain,
+            "studio_tts_cfg": self.studio_tts_cfg,
+            "studio_tts_timesteps": self.studio_tts_timesteps,
+            "studio_tts_turn_retries": self.studio_tts_turn_retries,
             "queue_concurrency": self.queue_concurrency,
             "queue_poll_interval_sec": self.queue_poll_interval_sec,
             "queue_poll_timeout_sec": self.queue_poll_timeout_sec,

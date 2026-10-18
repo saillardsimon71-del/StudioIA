@@ -110,10 +110,11 @@ def test_ltx_image_dialogue_uses_the_image_style_and_one_voice_cue_per_speaker()
             ]}
     prompt = compile_ltx_prompt(shot, context, first_frame=True)
     assert "Flat watercolor painting" not in prompt
-    assert prompt.count("Deep masculine voice") == 1
-    assert prompt.count("Bright young adult voice") == 1
-    assert "Warm feminine voice" not in prompt
-    assert "Maman" in prompt and "green dress" in prompt
+    assert prompt.count("low, resonant") == 1
+    assert prompt.count("bright, youthful") == 1
+    assert "warm, feminine" not in prompt
+    assert "Maman" in prompt
+    assert "green dress" in prompt
     assert prompt.index('"Fais tes valises !"') < prompt.index('"Et puis quoi encore ?"') < prompt.index('"Tu pars ce soir."')
     assert prompt.index("Papa points at the suitcase") < prompt.index('"Fais tes valises !"')
     assert prompt.index("Fiston recoils") > prompt.index('"Tu pars ce soir."')
@@ -136,7 +137,9 @@ def test_ltx_director_keeps_one_action_and_one_exact_line_in_foreground():
             'dialogue_turns': [{'speaker': 'momo', 'text': line}]}
     prompt = h3_prompt.compile_video_prompt(shot, context, first_frame=True, video_profile='ltx')
     assert prompt.count(action) == 1
-    assert 'At 0.2 seconds' in prompt
+    # LTX ne reçoit plus de timing absolu : le contrat reste une estimation.
+    assert 'At 0.2 seconds' not in prompt
+    assert 'between 0.2 and 1.8 seconds' not in prompt
     assert prompt.count(f'"{line}"') == 1
     assert sound in prompt
     assert 'foreground' in prompt

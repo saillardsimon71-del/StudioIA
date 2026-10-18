@@ -1,0 +1,18 @@
+{
+  "contract_version": 1,
+  "prompt": "A single continuous cinematic medium-wide two-shot in the prison cafeteria, slight high angle. Locked camera, no cuts, no zoom, no camera movement. Durio, the giant durian-headed inmate in an orange jumpsuit, stands on the left, leaning over a metal table. Momo, the mango-headed inmate in an orange jumpsuit with rectangular black sunglasses, sits on the right, back straight, hands on his knees. He already wears the sunglasses at the start and keeps them on for the whole shot. They face each other and keep eye contact; neither looks at the camera or the floor. Durio says in a very deep, raspy, furious French voice: \"Hier, tu m'as humilié devant tout le monde.\" Momo answers calmly in a cold, quiet French voice: \"Non. Tu t'es humilié tout seul. Moi, j'ai juste regardé.\" Durio leans closer, furious: \"Les gardiens t'ont pas expliqué pourquoi j'étais ici ?\" Momo: \"Si. Et ils m'ont expliqué pourquoi tu y es. C'est plus intéressant.\" Durio points at the floor: \"Ce soir, 20h30, la cour. On règle ça devant tout le monde.\" Momo: \"J'y serai. Ramène du monde. Tu en auras besoin.\" After the last line, Durio straightens up, turns and leaves frame left. Momo stays seated, calm, and watches him go. Inmates in the background recoil and exchange looks. Cold fluorescent light, metal tables, steam. No text, no narrator, no extra dialogue.",
+  "requested_duration_sec": 15.0,
+  "duration_sec": 15.041666666666666,
+  "aspect_ratio": "9:16",
+  "width": 768,
+  "height": 1344,
+  "fps": 24,
+  "frames": 361,
+  "steps": 8,
+  "video_profile": "ltx",
+  "seed": 6895783276998716029,
+  "audio_mode": "native",
+  "continuity_mode": "image",
+  "trace_id": "ep44v2_a_cantine",
+  "image_path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\calliope-backend\\data\\assets\\44\\studio\\uploads\\c0ba17534dc045f991a667280299bb38.png"
+}

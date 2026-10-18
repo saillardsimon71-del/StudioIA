@@ -1,0 +1,208 @@
+"""Assemblage V2 : TTS cale sur les timings natifs, ambiance propre, fondus."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "calliope-backend" / "src"))
+
+from calliope.studio import tts  # noqa: E402
+
+WORK = ROOT / "work" / "publish-ep44-v2"
+RENDERS = WORK / "renders"
+AUDIO = WORK / "audio"
+SEG = WORK / "segments"
+TTS = WORK / "tts"
+FADE = 4 / 24
+
+SHOTS = [
+    ("a-cantine", 15.041667, "tts",
+     [("a1", 0.0), ("a2", 1.88), ("a3", 4.02), ("a4", 5.88),
+      ("a5", 8.52), ("a6", 11.94)],
+     {"room": -36, "sfx": [(0.4, -12, 70)]}),
+    ("b-cell-durio", 5.041667, "tts", [("b1", 0.3)],
+     {"room": -38, "sfx": [(0.6, -10, 55)]}),
+    ("c-cell-momo", 5.041667, "tts", [("c1", 1.0)], {"room": -38}),
+    ("d-corridor", 14.041667, "native", [], {}),
+    ("e-yard-wide", 6.041667, "native", [], {}),
+    ("f-yard-reveal", 15.041667, "tts",
+     [("f1", 0.2), ("f2", 2.1), ("f3", 3.36), ("f4", 5.82),
+      ("f5", 6.55), ("f6", 11.1)],
+     {"room": -38, "crowd": True, "sfx": [(0.8, -20, 1200)]}),
+]
+
+
+def run(args) -> None:
+    try:
+        subprocess.run(args, check=True, capture_output=True)
+    except subprocess.CalledProcessError as exc:
+        print((exc.stderr or b"").decode("utf-8", "replace"), flush=True)
+        raise
+
+
+def room_tone(duration: float, target: Path) -> Path:
+    run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+         f"anoisesrc=color=brown:amplitude=0.03:d={duration:.3f}",
+         "-af", "highpass=f=80,lowpass=f=2500,volume=-36dB,aresample=48000",
+         "-ac", "1", "-c:a", "pcm_s16le", str(target)])
+    return target
+
+
+def thud(duration: float, frequency: float, target: Path) -> Path:
+    run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+         f"sine=frequency={frequency}:duration={duration}",
+         "-af", f"afade=t=out:st=0:d={duration},aresample=48000",
+         "-ac", "1", "-c:a", "pcm_s16le", str(target)])
+    return target
+
+
+def mix_layers(duration: float, layers, target: Path) -> Path:
+    args = ["ffmpeg", "-y", "-v", "error"]
+    for path, _, _ in layers:
+        args += ["-i", str(path)]
+    filters, labels = [], []
+    for index, (_, delay, gain) in enumerate(layers):
+        filters.append(
+            f"[{index}:a]aformat=channel_layouts=mono,adelay={int(delay * 1000)}|"
+            f"{int(delay * 1000)},volume={gain}dB[a{index}]"
+        )
+        labels.append(f"[a{index}]")
+    filters.append("".join(labels) + f"amix=inputs={len(labels)}:normalize=0:duration=longest[m]")
+    filters.append(f"[m]atrim=0:{duration:.3f},apad,atrim=0:{duration:.3f}[out]")
+    args += ["-filter_complex", ";".join(filters), "-map", "[out]",
+             "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "1", str(target)]
+    run(args)
+    return target
+
+
+def tts_dialogue(name: str, duration: float, spec):
+    manifest = {item["id"]: item for item in json.loads(
+        (WORK / "lines.json").read_text(encoding="utf-8")
+    )}
+    entries, prev_end = [], 0.0
+    for line_id, native_start in spec:
+        item = manifest[line_id]
+        start = max(float(native_start), prev_end + 0.08)
+        entries.append((Path(item["path"]), start))
+        prev_end = start + float(item["duration"])
+        print(f"  {line_id} @ {start:.2f}s -> {prev_end:.2f}s", flush=True)
+    if prev_end > duration + 0.02:
+        raise SystemExit(f"{name}: dialogue trop long ({prev_end:.2f} > {duration:.2f})")
+    target = AUDIO / f"{name}-dialogue.wav"
+    tts.build_timeline(entries, duration, target)
+    return target
+
+
+def native_audio(name: str, duration: float) -> Path:
+    source = RENDERS / name / "video.mp4"
+    target = AUDIO / f"{name}-native.wav"
+    run(["ffmpeg", "-y", "-v", "error", "-i", str(source), "-vn",
+         "-af", "afftdn=nf=-30,highpass=f=80,aresample=48000",
+         "-ac", "1", "-ar", "48000", "-t", f"{duration:.3f}",
+         "-c:a", "pcm_s16le", str(target)])
+    return target
+
+
+def crowd_bed(duration: float, target: Path) -> Path:
+    source = AUDIO / "e-yard-wide-native.wav"
+    run(["ffmpeg", "-y", "-v", "error", "-stream_loop", "-1", "-i", str(source),
+         "-t", f"{duration:.3f}", "-af", "volume=-20dB,aresample=48000",
+         "-ac", "1", "-c:a", "pcm_s16le", str(target)])
+    return target
+
+
+def build_shot(name: str, duration: float, kind: str, spec, options) -> Path:
+    print(f"[{name}] audio", flush=True)
+    if kind == "native":
+        audio = native_audio(name, duration)
+        audio_filter = ("afftdn=nf=-30,highpass=f=80,"
+                        "loudnorm=I=-18:TP=-1.5:LRA=11,aresample=48000")
+    else:
+        dialogue = tts_dialogue(name, duration, spec)
+        layers = [(dialogue, 0.0, 0.0)]
+        if options.get("room") is not None:
+            room = room_tone(duration, AUDIO / f"{name}-room.wav")
+            layers.append((room, 0.0, 0.0))
+        if options.get("crowd"):
+            crowd = crowd_bed(duration, AUDIO / f"{name}-crowd.wav")
+            layers.append((crowd, 0.0, 0.0))
+        for index, (at, gain, frequency) in enumerate(options.get("sfx", [])):
+            sfx = thud(0.25, frequency, AUDIO / f"{name}-sfx-{index}.wav")
+            layers.append((sfx, at, gain))
+        audio = mix_layers(duration, layers, AUDIO / f"{name}-mix.wav")
+        audio_filter = "loudnorm=I=-18:TP=-1.5:LRA=11,aresample=48000"
+    return mux_segment(name, RENDERS / name / "video.mp4", audio, duration, audio_filter)
+
+
+def mux_segment(name: str, video: Path, audio: Path, duration: float, audio_filter: str) -> Path:
+    target = SEG / f"{name}.mp4"
+    run(["ffmpeg", "-y", "-v", "error", "-i", str(video), "-i", str(audio),
+         "-map", "0:v:0", "-map", "1:a:0",
+         "-vf", "scale=1080:1920:flags=lanczos,fps=24,format=yuv420p,setsar=1",
+         "-af", audio_filter, "-t", f"{duration:.3f}",
+         "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+         "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+         "-movflags", "+faststart", str(target)])
+    print(f"[{name}] segment {target.name}", flush=True)
+    return target
+
+
+def assemble() -> None:
+    durations = [duration for _, duration, _, _, _ in SHOTS]
+    segments = [SEG / f"{name}.mp4" for name, _, _, _, _ in SHOTS]
+    offsets, running = [], 0.0
+    for index in range(len(segments) - 1):
+        running += durations[index]
+        offsets.append(running - (index + 1) * FADE)
+    total = sum(durations) - (len(segments) - 1) * FADE
+    filters = [
+        f"[{index}:v]settb=AVTB,setpts=PTS-STARTPTS[v{index}]"
+        for index in range(len(segments))
+    ]
+    previous = "[v0]"
+    for index in range(len(segments) - 1):
+        target = "[vout]" if index == len(segments) - 2 else f"[vx{index}]"
+        filters.append(
+            f"{previous}[v{index + 1}]xfade=transition=fade:duration={FADE:.6f}:"
+            f"offset={offsets[index]:.6f}{target}"
+        )
+        previous = target
+    previous = "[0:a]"
+    for index in range(len(segments) - 1):
+        target = "[aout]" if index == len(segments) - 2 else f"[ax{index}]"
+        filters.append(
+            f"{previous}[{index + 1}:a]acrossfade=d={FADE:.6f}:c1=tri:c2=tri{target}"
+        )
+        previous = target
+    filters.append(
+        "[aout]highpass=f=80,lowpass=f=16000,"
+        "loudnorm=I=-14:TP=-1.5:LRA=9,alimiter=limit=0.95,"
+        f"afade=t=in:st=0:d=0.2,afade=t=out:st={total - 0.3:.3f}:d=0.3[afinal]"
+    )
+    args = ["ffmpeg", "-y", "-v", "error"]
+    for segment in segments:
+        args += ["-i", str(segment)]
+    output = WORK / "EPISODE-02-V2.mp4"
+    args += ["-filter_complex", ";".join(filters), "-map", "[vout]", "-map", "[afinal]",
+             "-t", f"{total:.3f}", "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+             "-pix_fmt", "yuv420p", "-r", "24", "-c:a", "aac", "-b:a", "192k",
+             "-ac", "2", "-movflags", "+faststart", str(output)]
+    run(args)
+    print("FINAL", output, round(total, 3), flush=True)
+
+
+def main() -> None:
+    AUDIO.mkdir(parents=True, exist_ok=True)
+    SEG.mkdir(parents=True, exist_ok=True)
+    for name, duration, kind, spec, options in SHOTS:
+        build_shot(name, duration, kind, spec, options)
+    assemble()
+
+
+if __name__ == "__main__":
+    main()
+

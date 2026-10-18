@@ -245,6 +245,15 @@ async def assemble(
                 command += ["-ss", f"{trim_start:.9f}"]
             command += ["-i", clip["path"]]
             native_audio = clip["audio_mode"] == "native" and probe["has_audio"]
+            audio_filter = "aresample=48000"
+            audio_config = frozen.get("audio", {})
+            if native_audio and audio_config.get("loudnorm", True):
+                target = float(audio_config.get("loudness_target_lufs", -23))
+                peak = float(audio_config.get("true_peak_db", -1))
+                audio_filter += (
+                    f",loudnorm=I={target:g}:TP={peak:g}:LRA=11,aresample=48000"
+                )
+            audio_filter += ",apad,asetpts=PTS-STARTPTS"
             overlay_filter = ""
             if clip.get("screen_text"):
                 from calliope.studio.screen_text import write_overlay
@@ -294,7 +303,7 @@ async def assemble(
                 "0:a:0" if native_audio else "1:a:0",
                 *video_options,
                 "-af",
-                "aresample=48000,apad,asetpts=PTS-STARTPTS",
+                audio_filter,
                 "-t",
                 f"{duration:.9f}",
                 "-c:v",

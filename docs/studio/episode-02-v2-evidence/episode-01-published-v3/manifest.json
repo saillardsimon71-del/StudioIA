@@ -1,0 +1,56 @@
+{
+  "title": "T'as touché au mauvais plateau — Épisode 1 V3",
+  "duration_sec": 43.136,
+  "shots": 5,
+  "cuts": 4,
+  "cta_sec": 3.4,
+  "audio_strategy": "WAV de scène + post-dub ciblé, assemblage sans trim AAC",
+  "cuts_detail": [
+    {
+      "at_sec": 14.04,
+      "from": "comptoir",
+      "to": "cantine",
+      "reason": "changement de lieu/action"
+    },
+    {
+      "at_sec": 25.08,
+      "from": "cantine large",
+      "to": "table medium",
+      "reason": "retournement, nouveau cadrage"
+    },
+    {
+      "at_sec": 36.13,
+      "from": "table",
+      "to": "cliffhanger",
+      "reason": "Momo se lève, réaction de Durio"
+    },
+    {
+      "at_sec": 38.83,
+      "from": "cliffhanger",
+      "to": "CTA",
+      "reason": "fin de scène"
+    }
+  ],
+  "speaker_map": {
+    "a": "natif Durio/Potiron (exact)",
+    "b": "natif Durio continu (lignes 7 et 8)",
+    "c": "TTS Momo (réplique 9) + natif Durio/Momo",
+    "d": "silence",
+    "e": "TTS Durio"
+  },
+  "post_dub_turns": [
+    "c1",
+    "e1"
+  ],
+  "speaker_identity_status": "vérifié par affectation de voix (TTS) et transcription native (A/C)",
+  "editorial": {
+    "ok": true,
+    "cuts_per_10s": 0.95,
+    "max_cta_sec": 4.0
+  },
+  "residual_risks": [
+    "C : vidéo medium refaite, audio Durio/Momo de la prise précédente, lip-sync approximatif.",
+    "E : source TTS exacte, ASR du mix parfois instable.",
+    "ASR du mix B peut hésiter entre « qui », « qu'il » et « qu'ils » ; la prise native porte la réplique."
+  ]
+}

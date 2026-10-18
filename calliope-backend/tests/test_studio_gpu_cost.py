@@ -99,6 +99,17 @@ async def test_batch_retains_loaded_models_until_last_take_and_releases_on_failu
 
 
 @pytest.mark.asyncio
+async def test_batch_without_a_project_does_not_open_the_database(monkeypatch):
+    from calliope.studio import production
+
+    def forbidden():
+        pytest.fail('No project was supplied; no Director lookup is needed')
+
+    monkeypatch.setattr(production.service, 'database', forbidden)
+    await production.render_videos({'id': 42}, [], lambda: False)
+
+
+@pytest.mark.asyncio
 async def test_gpu_control_failure_does_not_fail_an_existing_render(client, monkeypatch):
     from calliope.studio import service
     from calliope.engines.modal_h3 import ModalH3Engine

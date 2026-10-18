@@ -465,3 +465,187 @@ def assess_transcript(expected, transcript, language=None):
         return {"status": "missing",
                 "reason": "Réplique absente ou divergence majeure du transcript."}
     return {"status": "unknown", "reason": "Comparaison de la réplique incertaine."}
+
+
+
+def _levenshtein(left, right):
+    previous = list(range(len(right) + 1))
+    for i, value in enumerate(left, start=1):
+        current = [i]
+        for j, other in enumerate(right, start=1):
+            current.append(min(
+                previous[j] + 1,
+                current[j - 1] + 1,
+                previous[j - 1] + (value != other),
+            ))
+        previous = current
+    return previous[-1]
+
+
+def _speech_alignment(turns, transcript, language=None):
+    """Aligne les tours attendus sur les mots horodatÃ©s du transcript."""
+    turn_tokens = [_tokens(turn.get("text"), language) for turn in turns]
+    flat = [token for words in turn_tokens for token in words]
+    heard_words = [
+        word for segment in transcript.get("segments") or []
+        for word in segment.get("words") or []
+    ]
+    token_words = [
+        (token, word) for word in heard_words for token in _tokens(word["word"], language)
+    ]
+    heard = [token for token, _ in token_words]
+    turn_of_index = [index for index, words in enumerate(turn_tokens) for _ in words]
+    matcher = SequenceMatcher(None, flat, heard, autojunk=False)
+    turn_heard = {index: [] for index in range(len(turns))}
+    matched_expected, matched_heard = set(), set()
+    for block in matcher.get_matching_blocks():
+        for delta in range(block.size):
+            expected_index = block.a + delta
+            heard_index = block.b + delta
+            matched_expected.add(expected_index)
+            matched_heard.add(heard_index)
+            turn_heard[turn_of_index[expected_index]].append(heard_index)
+    extras = [heard[index] for index in range(len(heard)) if index not in matched_heard]
+    results, max_drift, offset = [], 0.0, 0
+    for index, (turn, words) in enumerate(zip(turns, turn_tokens)):
+        coverage = (
+            sum(token in matched_expected for token in range(offset, offset + len(words)))
+            / max(1, len(words))
+        )
+        indexes = turn_heard[index]
+        interval, drift = None, None
+        if indexes:
+            first = token_words[min(indexes)][1]
+            last = token_words[max(indexes)][1]
+            if "start" in first and "end" in last:
+                interval = [float(first["start"]), float(last["end"])]
+        expected_start = turn.get("start_sec")
+        expected_end = turn.get("end_sec")
+        if interval and isinstance(expected_start, (int, float)) and isinstance(
+            expected_end, (int, float)
+        ):
+            drift = max(abs(interval[0] - expected_start), abs(interval[1] - expected_end))
+            max_drift = max(max_drift, drift)
+        results.append({
+            "turn": index,
+            "speaker": turn.get("speaker"),
+            "expected_speaker": turn.get("speaker"),
+            "expected": turn.get("text"),
+            "coverage": round(coverage, 3),
+            "status": "missing" if coverage < 0.80 and len(words) >= 3 else "ok",
+            "interval": interval,
+            "timing_drift_sec": round(drift, 3) if drift is not None else None,
+        })
+        offset += len(words)
+    probabilities = [float(word.get("probability", 0)) for word in heard_words]
+    mean_probability = sum(probabilities) / len(probabilities) if probabilities else None
+    return results, extras, mean_probability, round(max_drift, 3)
+
+
+def assess_turns_v2(turns, transcript, language=None, check_timing=True):
+    """QC strict par tour : couverture, ordre, timings et confiance."""
+    if not transcript or transcript.get("status") != "ok":
+        return {
+            "status": "unknown",
+            "reason": "Transcription indisponible.",
+            "turns": [],
+            "speaker_identity_status": "unverified",
+            "speaker_identity_reason": "Diarisation non installÃ©e.",
+        }
+    if not turns:
+        return {
+            "status": "ok",
+            "reason": "",
+            "turns": [],
+            "speaker_identity_status": "unverified",
+            "speaker_identity_reason": "Aucun tour Ã  vÃ©rifier.",
+        }
+    checks, extras, mean_probability, drift = _speech_alignment(
+        turns, transcript, language
+    )
+    missing = next((item for item in checks if item["status"] == "missing"), None)
+    if missing:
+        status = "missing"
+        reason = f"Tour de parole {missing['turn'] + 1} absent ou trop incomplet."
+    elif len(extras) > 2:
+        status = "extra"
+        reason = f"{len(extras)} mots hors script : {' '.join(extras[:8])}."
+    elif check_timing and drift > 0.40:
+        status = "timing_mismatch"
+        reason = f"DÃ©rive temporelle de {drift:.2f} s entre contrat et parole."
+    elif (
+        mean_probability is not None
+        and mean_probability < 0.80
+        and (extras or any(item["coverage"] < 0.95 for item in checks))
+    ):
+        status = "unknown"
+        reason = f"Confiance ASR faible ({mean_probability:.2f}) avec divergences."
+    else:
+        status, reason = "ok", ""
+    return {
+        "status": status,
+        "reason": reason,
+        "turns": checks,
+        "timing_drift_sec": drift,
+        "mean_word_probability": round(mean_probability, 3)
+        if mean_probability is not None else None,
+        "speaker_identity_status": "unverified",
+        "speaker_identity_reason": (
+            "Diarisation non installÃ©e : le locuteur est recopiÃ© de l'attendu."
+        ),
+    }
+
+
+def assess_transcript_v2(expected, transcript, language=None):
+    """QC strict global : WER, mots hors script, couverture et ordre."""
+    expected_tokens = _tokens(expected, language)
+    if not expected_tokens:
+        return {"status": "ok", "reason": "", "wer": 0.0, "extras": []}
+    if not transcript or transcript.get("status") != "ok":
+        return {
+            "status": "unknown",
+            "reason": (transcript or {}).get("reason") or "Transcription indisponible.",
+            "wer": None,
+            "extras": [],
+        }
+    wanted, _ = _comparison_tokens(expected_tokens)
+    heard_tokens = _tokens(transcript.get("text"), language)
+    heard, _ = _comparison_tokens(heard_tokens)
+    if not heard:
+        return {
+            "status": "missing",
+            "reason": "RÃ©plique attendue absente du transcript.",
+            "wer": 1.0,
+            "extras": [],
+        }
+    wer = _levenshtein(wanted, heard) / max(1, len(wanted))
+    matcher = SequenceMatcher(None, wanted, heard, autojunk=False)
+    matches = sum(block.size for block in matcher.get_matching_blocks())
+    extras = [
+        token
+        for tag, _, _, begin, end in matcher.get_opcodes()
+        if tag in ("insert", "replace")
+        for token in heard[begin:end]
+    ]
+    coverage = matches / max(1, len(wanted))
+    if wer == 0 and not extras:
+        status, reason = "ok", ""
+    elif len(extras) > 2:
+        status = "extra"
+        reason = f"{len(extras)} mots hors script."
+    elif coverage < 0.90:
+        status = "missing"
+        reason = f"Couverture insuffisante ({coverage:.2f})."
+    elif wer > 0.10:
+        status = "extra"
+        reason = f"WER trop Ã©levÃ© ({wer:.2f})."
+    else:
+        status, reason = "ok", ""
+    return {
+        "status": status,
+        "reason": reason,
+        "wer": round(wer, 3),
+        "extras": extras,
+        "coverage": round(coverage, 3),
+        "precision": round(matches / max(1, len(heard)), 3),
+    }

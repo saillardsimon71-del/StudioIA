@@ -377,3 +377,99 @@ def test_french_homophones_do_not_hide_recited_visual_instructions():
     )
     assert diagnostic["kind"] == "instruction_recitation"
     assert diagnostic["observed_extra"] == "Nora reste figé derrière le grand comptoir"
+
+
+def _words_transcript(text, probability=0.9, start=0.0, step=0.25):
+    words = [
+        {
+            "word": word,
+            "start": start + index * step,
+            "end": start + (index + 1) * step,
+            "probability": probability,
+        }
+        for index, word in enumerate(text.split())
+    ]
+    return {
+        "status": "ok",
+        "text": text,
+        "segments": [{"words": words}],
+        "speech_intervals": [[words[0]["start"], words[-1]["end"]]],
+    }
+
+
+def test_qc_v2_rejects_a_short_staging_insertion():
+    expected = "Remplis ça. Oui, oui, je... je fais. Plus vite. Tenez, c'est plein."
+    observed = (
+        "Remplis ça. Oui, oui, je... je fais... Devant le comptoir côté salle, "
+        "plus vite. Tenez, c'est plein."
+    )
+    verdict = transcription.assess_transcript_v2(
+        expected, _words_transcript(observed), language="fr"
+    )
+    assert verdict["status"] == "extra"
+
+
+def test_qc_v2_rejects_a_low_confidence_missing_last_turn():
+    turns = [
+        {"speaker": "durio", "text": "Remplis ça."},
+        {"speaker": "potiron", "text": "Oui, oui, je... je fais."},
+        {"speaker": "durio", "text": "Plus vite."},
+        {"speaker": "potiron", "text": "Tenez, c'est plein."},
+    ]
+    observed = "Remplis ça Oui oui je je fais Plus vite Tenez ces plans"
+    verdict = transcription.assess_turns_v2(
+        turns, _words_transcript(observed, probability=0.70), language="fr"
+    )
+    assert verdict["status"] == "missing"
+
+
+def test_qc_v2_accepts_an_exact_transcript():
+    expected = "C'est quoi, ça ? La portion."
+    verdict = transcription.assess_transcript_v2(
+        expected, _words_transcript(expected), language="fr"
+    )
+    assert verdict["status"] == "ok"
+    assert verdict["wer"] == 0.0
+
+
+def test_qc_v2_reports_a_timing_drift():
+    turns = [{
+        "speaker": "durio",
+        "text": "One two three",
+        "start_sec": 0.0,
+        "end_sec": 1.0,
+    }]
+    verdict = transcription.assess_turns_v2(
+        turns,
+        _words_transcript("One two three", start=1.5),
+        language="en",
+    )
+    assert verdict["status"] == "timing_mismatch"
+    assert verdict["timing_drift_sec"] >= 0.4
+
+
+def test_qc_v2_can_ignore_timing_drift_for_a_timing_free_prompt():
+    turns = [{
+        "speaker": "durio",
+        "text": "One two three",
+        "start_sec": 0.0,
+        "end_sec": 1.0,
+    }]
+    verdict = transcription.assess_turns_v2(
+        turns,
+        _words_transcript("One two three", start=1.5),
+        language="en",
+        check_timing=False,
+    )
+    assert verdict["status"] == "ok"
+    assert verdict["timing_drift_sec"] >= 0.4
+
+
+@pytest.mark.parametrize("text", ["C'est bon, j'ai compris.", "Abonne-toi pour la suite."])
+def test_qc_v2_aligns_multiple_tokens_to_their_original_word_times(text):
+    transcript = _words_transcript(text, start=0.5)
+    verdict = transcription.assess_turns_v2(
+        [{"speaker": "durio", "text": text}], transcript, language="fr"
+    )
+    assert verdict["status"] == "ok"
+    assert verdict["turns"][0]["interval"] == transcript["speech_intervals"][0]

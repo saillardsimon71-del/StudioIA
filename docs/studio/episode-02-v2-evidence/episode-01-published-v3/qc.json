@@ -1,0 +1,22 @@
+{
+  "status": "ready_for_human_listen",
+  "source": "EPISODE-01-V3-social.mp4",
+  "loudness": {"integrated_lufs": -14.0, "true_peak_dbfs": -4.1, "lra_lu": 6.1},
+  "lines": [
+    {"id": "a1", "speaker": "durio", "mode": "native", "status": "ok", "text": "Eh le cuistot ! Tu te fous de ma gueule ou quoi ?"},
+    {"id": "a2", "speaker": "potiron", "mode": "native", "status": "ok", "text": "C'est le menu du jour ! J'ai rien décidé, moi !"},
+    {"id": "a3", "speaker": "durio", "mode": "native", "status": "ok", "text": "Deux pauvres haricots pour un mec comme moi ? Remplis-moi ça !"},
+    {"id": "a4", "speaker": "potiron", "mode": "native", "status": "ok", "text": "Mais j'peux pas ! Après, y'en aura plus pour les autres !"},
+    {"id": "a5", "speaker": "durio", "mode": "native", "status": "ok", "text": "Les autres ? Ils ont qu'à bouffer ma lune."},
+    {"id": "a6", "speaker": "potiron", "mode": "native", "status": "ok", "text": "OK ! OK ! J'te mets tout ! Maintenant lâche-moi !"},
+    {"id": "b1", "speaker": "durio", "mode": "native", "status": "ok", "text": "Hé, le bloc B ! À partir d'aujourd'hui, ici, c'est moi qui décide qui mange !", "note": "Prise native ; l'ASR peut entendre « qu'ils/qu'il »."},
+    {"id": "b2", "speaker": "durio", "mode": "native", "status": "ok", "text": "Toi, le binoclard ! Il est à qui ton plateau, maintenant ?"},
+    {"id": "c1", "speaker": "momo", "mode": "tts", "status": "ok", "text": "À moi. Et t'as trois secondes pour dégager."},
+    {"id": "c2", "speaker": "durio", "mode": "native", "status": "ok", "text": "Ah ouais ? Un, deux... Ah merde, j'ai renversé !"},
+    {"id": "c3", "speaker": "momo", "mode": "native", "status": "ok", "text": "Les gardiens t'ont pas expliqué pourquoi j'étais ici ?"},
+    {"id": "e1", "speaker": "durio", "mode": "tts", "status": "ok", "text": "Commente GO pour recevoir le guide et abonne-toi pour la partie deux."}
+  ],
+  "speaker_inversion": "fixed_for_c1",
+  "cta_sec": 1.85,
+  "cuts": 4
+}

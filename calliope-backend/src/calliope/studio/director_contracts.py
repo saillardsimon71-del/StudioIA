@@ -4,6 +4,22 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=12000)]
 Key = Annotated[str, StringConstraints(pattern=r"^[a-z0-9_-]{1,80}$")]
+MAX_SPEECH_WORDS_PER_SEC = 4.2
+
+
+def speech_word_count(text):
+    return sum(any(char.isalnum() for char in word) for word in text.split())
+
+
+def validate_speech_timing(contract):
+    for line in contract['dialogue']:
+        words = speech_word_count(line['text'])
+        seconds = line['end_sec'] - line['start_sec']
+        if words > seconds * MAX_SPEECH_WORDS_PER_SEC + 1e-6:
+            raise ValueError(
+                f'parole trop rapide ({words} mots en {seconds:g} s). '
+                f'Prévoir au moins {words / MAX_SPEECH_WORDS_PER_SEC:.2f} s pour cette réplique, '
+                'sans changer ses paroles ni son locuteur.')
 
 
 class StrictModel(BaseModel):
@@ -38,6 +54,7 @@ class ShotContract(StrictModel):
     dialogue: list[Line] = Field(max_length=30)
     sound: Text
     duration_sec: float = Field(ge=1, le=15)
+    post_dub: bool = Field(default=False, description="Keep the shot whole; replace dialogue audio per speaker in post.")
     references: list[Key] = Field(min_length=1, max_length=60)
     continuity: list[Text] = Field(min_length=1, max_length=30)
     qc: list[Text] = Field(min_length=1, max_length=30)
@@ -104,6 +121,10 @@ unverified evidence for operator review. Preserve every unrequested shot.
 Default to a lively natural exchange: start the first line promptly, keep breaths
 between replies brief, and perform motivated gestures while speaking rather than
 waiting for a separate silent action. Explicit dramatic pauses remain intentional.
+Aim for natural expressive speech around 3 words/second; never exceed 4.2 words/second
+within any individual dialogue window. Count words containing letters or digits.
+Use available shot time for speech before shortening a line. Preserve intended pauses
+and simultaneous actions; do not squeeze long sentences into short timed windows.
 Use expressive faces and small purposeful hand, head or shoulder movements that
 respect the characters, geography, props and continuity. Avoid idle held poses.
 Specify audible nonverbal location ambience and concrete physical sounds beneath

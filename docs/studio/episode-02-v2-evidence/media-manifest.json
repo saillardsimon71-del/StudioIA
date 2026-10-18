@@ -1,0 +1,16 @@
+[
+  {
+    "role": "published_episode_1",
+    "local_path": "publish/episode-01-FINAL-V3/EPISODE-01-V3-social.mp4",
+    "bytes": 56675138,
+    "sha256": "7ab17711fc0a4aa49842108c6f2bbfe5aa81b791077085f615371234760efda3",
+    "media_in_git": false
+  },
+  {
+    "role": "rejected_episode_2_v2",
+    "local_path": "publish/episode-02-V2/EPISODE-02-V2.mp4",
+    "bytes": 69737746,
+    "sha256": "bac11f5c28a110d080d0dff0bc141876d45d9b42e0790d20b4b148342e76c2d6",
+    "media_in_git": false
+  }
+]

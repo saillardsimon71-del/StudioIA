@@ -65,14 +65,17 @@ export const director = {
     request<DirectorState>(`${path(id)}/revise`, 'POST', { expected_hash, shot_ids, instruction }),
   edit: (id: number, expected_hash: string, shots: { id: number; contract: ShotContract }[]) =>
     request<DirectorState>(`${path(id)}/contracts`, 'PATCH', { expected_hash, shots }),
-  images: (id: number, expected_hash: string, files: File[]) => {
+  images: (id: number, expected_hash: string, files: File[], shotIds?: (number | null)[]) => {
     const form = new FormData();
     form.append('expected_hash', expected_hash);
     files.forEach((file) => form.append('files', file));
+    if (shotIds) form.append('shot_ids', JSON.stringify(shotIds));
     return request<DirectorState>(`${path(id)}/images`, 'POST', form);
   },
   reviewImage: (id: number, take: number, expected_hash: string, approved: boolean) =>
     request<DirectorState>(`${path(id)}/images/${take}/review`, 'POST', { expected_hash, approved }),
+  imagePrompt: (id: number, shot: number) =>
+    request<{ shot_id: number; plan: number; prompt: string }>(`${path(id)}/shots/${shot}/image-prompt`),
   preflight: (id: number) => request<DirectorPreflight>(`${path(id)}/preflight`),
   budget: (id: number, budget: DirectorBudget) => request<DirectorState>(`${path(id)}/budget`, 'PATCH', budget),
   verify: (id: number, take: number) => request<{ audio_label: string; dialogue: { status: string; reason: string } }>(`${path(id)}/takes/${take}/verify`, 'POST'),

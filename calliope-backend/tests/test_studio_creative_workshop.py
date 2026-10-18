@@ -52,7 +52,9 @@ def test_normal_preparation_does_not_rewrite_already_validated_states(client, mo
         time.sleep(0.05)
     assert roles == ['story', 'script', 'planner']
     assert board['production']['stage'] == 'review', board['production']
-    assert sum(len(scene['shots']) for scene in board['scenes']) == 7
+    assert sum(len(scene['shots']) for scene in board['scenes']) == 6
+    assert all(shot.get('purpose') not in ('midroll', 'outro')
+               for scene in board['scenes'] for shot in scene['shots'])
     assert not any(shot['takes'] for scene in board['scenes'] for shot in scene['shots'])
 
 
@@ -72,6 +74,28 @@ async def test_accented_speaker_is_converted_without_requesting_a_story_rewrite(
     assert result['beats'][0]['dialogue_turns'][0] == {
         'speaker': 'leopard', 'text': 'Même le déjeuner ?'}
     assert original['beats'][0]['dialogue_turns'][0]['speaker'] == 'LÉOPARD'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('density,expected_calls', [('natural', 2), ('brisk', 1)])
+async def test_writer_uses_requested_rhythm_before_shortening_deepseek_dialogue(monkeypatch, density, expected_calls):
+    original = creative_story()
+    original['beats'][0]['dialogue_turns'][0]['text'] = ' '.join(f'mot{i}' for i in range(139))
+    assert sum(len(t['text'].split()) for b in original['beats'] for t in b['dialogue_turns']) == 149
+    requests = []
+
+    async def generate(messages, **options):
+        requests.append(copy.deepcopy(messages))
+        return copy.deepcopy(original if len(requests) == 1 else creative_story())
+
+    monkeypatch.setattr(series_planner, 'generate_structured', generate)
+    result = await series_planner._write_creative_story(
+        {'entities': [], 'target_seconds': 60.4, 'directing_profile': {'dialogue_density': density}},
+        'Un échange vif à la cantine.', '')
+    assert len(requests) == expected_calls
+    assert json.loads(requests[0][1]['content'])['series']['narrative_rhythm']['dialogue_density'] == density
+    if density == 'brisk':
+        assert result == original
 
 
 @pytest.mark.asyncio

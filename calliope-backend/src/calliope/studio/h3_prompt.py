@@ -25,7 +25,7 @@ class DirectingProfile(BaseModel):
     require_reference_approval: bool = False
     production_mode: Literal["automatic", "manual"] = "automatic"
     transitions: Literal["cuts", "scene_fades"] = "scene_fades"
-    cta_placement: Literal["middle", "end"] = "middle"
+    cta_placement: Literal["none", "middle", "end"] = "middle"
 
     @model_validator(mode="before")
     @classmethod
@@ -208,23 +208,14 @@ def _compile_native_prompt(shot, context, first_frame):
 
 def compile_video_prompt(shot, context=None, first_frame=False, video_profile="fast"):
     context = context or {}
+    if video_profile == "ltx":
+        from calliope.studio.ltx_prompt import compile_ltx_prompt, lint_ltx_prompt
+
+        return lint_ltx_prompt(compile_ltx_prompt(shot, context, first_frame))
     contract = context.get('director_contract')
     if contract:
         shot = (context.get('shot') or {}) | shot
         action = validate_h3_prose(shot.get('action') or contract['action'])
-        if video_profile == 'ltx':
-            timed_actions = {validate_h3_prose(beat['action']) for beat in contract['chronology']}
-            if validate_h3_prose(shot.get('prompt') or '') in timed_actions | {action}:
-                shot['prompt'] = ''
-            if action in timed_actions or action == ' '.join(
-                    validate_h3_prose(beat['action']) for beat in contract['chronology']):
-                action = ''
-            if validate_h3_prose(shot.get('reaction') or '') in timed_actions:
-                shot['reaction'] = ''
-            shot['dialogue_turns'] = [turn | {
-                field: '' for field in ('action', 'reaction')
-                if validate_h3_prose(turn.get(field) or '') in timed_actions
-            } for turn in shot.get('dialogue_turns', [])]
         timing = ' '.join(
             f"At {beat['at_sec']:g} seconds: {validate_h3_prose(beat['action'])}."
             for beat in contract['chronology']
@@ -237,9 +228,6 @@ def compile_video_prompt(shot, context=None, first_frame=False, video_profile="f
             f" The following line is spoken between {contract['dialogue'][i]['start_sec']:g} and "
             f"{contract['dialogue'][i]['end_sec']:g} seconds, once only."}
             for i, turn in enumerate(turns)]
-    if video_profile == "ltx":
-        from calliope.studio.ltx_prompt import compile_ltx_prompt
-        return compile_ltx_prompt(shot, context or {}, first_frame)
     return compile_h3_prompt(shot, context, first_frame)
 
 

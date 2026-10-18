@@ -1,0 +1,18 @@
+{
+  "contract_version": 1,
+  "prompt": "A single continuous cinematic wide shot in the prison yard at night. Locked camera, no cuts, no zoom. A circle of inmates in orange jumpsuits has formed. Durio enters the circle, chest out, fists clenched, acclaimed by the crowd. Momo arrives alone, hands in his pockets, and stops opposite Durio. They face each other, eyes locked; the crowd falls silent. Durio and Momo stay still, staring at each other. No dialogue. Cold floodlights, wet concrete, chain-link fence. No text, no narrator.",
+  "requested_duration_sec": 6.0,
+  "duration_sec": 6.041666666666667,
+  "aspect_ratio": "9:16",
+  "width": 768,
+  "height": 1344,
+  "fps": 24,
+  "frames": 145,
+  "steps": 8,
+  "video_profile": "ltx",
+  "seed": 208538941650132723,
+  "audio_mode": "native",
+  "continuity_mode": "image",
+  "trace_id": "ep44v2_e_yard_wide",
+  "image_path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\calliope-backend\\data\\assets\\44\\studio\\uploads\\f9fb7a143a1747caa443f0d6587b9e2f.png"
+}

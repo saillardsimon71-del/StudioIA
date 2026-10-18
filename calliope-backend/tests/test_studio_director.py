@@ -60,6 +60,17 @@ def approve(client, project):
     return result.json()
 
 
+@pytest.mark.parametrize("shot_id", ["invalid", {}, [], True, 1.5])
+def test_image_import_rejects_invalid_shot_ids(client, shot_id):
+    result = client.post(
+        '/api/studio/projects/1/director/images',
+        data={'expected_hash': 'unused', 'shot_ids': json.dumps([shot_id])},
+        files=[('files', ('image.png', png_bytes(), 'image/png'))],
+    )
+    assert result.status_code == 422
+    assert 'plan' in result.json()['detail'].lower()
+
+
 def test_contract_rejects_unknown_speaker_timing_and_blank(client, prepared):
     from calliope.studio.director import validate_contract
     project, shots = prepared
@@ -89,6 +100,41 @@ def test_initializing_director_keeps_source_action_ownership(client, monkeypatch
         context = service.shot_context(conn, shots[0]['id'])
     assert context['shot']['source_direction']['dialogue_turns'][0]['action'] == 'Keeper raises the radio.'
     assert context['shot']['source_direction']['dialogue_turns'][0]['reaction'] == 'Keeper lowers the radio.'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('returned_start', [{}, {'keeper': 'At the left, with the radio active.'}])
+async def test_prepare_inherits_continuation_without_reasking_deepseek_to_copy_canon(client, monkeypatch, returned_start):
+    import jsonschema
+    from calliope.studio import director
+    project = persisted_episode(client, monkeypatch)
+    shots = service.board(project)['scenes'][0]['shots']
+    service.update_shot(project, shots[1]['id'], {'continue_from_previous': True})
+    requests = []
+
+    async def generate(messages, **options):
+        requirements = json.loads(messages[1]['content'])['requirements']
+        requests.append(requirements)
+        value = contract()
+        value['duration_sec'] = requirements['duration_sec']
+        value['dialogue'] = [line | {'start_sec': 0, 'end_sec': value['duration_sec']}
+                             for line in requirements['dialogue']]
+        if requirements['continuation_state']:
+            value['initial_state'] = copy.deepcopy(returned_start)
+            schema = json.loads(messages[0]['content'].split('Schema: ', 1)[1])
+            jsonschema.validate({'shots': [value]}, schema)
+            with pytest.raises(jsonschema.ValidationError):
+                jsonschema.validate({'shots': [value | {'final_state': {}}]}, schema)
+        return {'shots': [value]}
+
+    monkeypatch.setattr(director, 'generate_structured', generate)
+    result = await director.prepare(project)
+    assert len(requests) == len(shots)
+    assert any(r['continuation_state'] for r in requests)
+    for request, entry in zip(requests, result['shots']):
+        if request['continuation_state']:
+            assert entry['contract']['initial_state'] == request['continuation_state']
+        assert entry['contract']['positions'] == contract()['positions']
 
 
 def test_native_short_episode_is_blocked_before_storyboard_approval_and_gpu(client, monkeypatch):
@@ -196,6 +242,51 @@ def test_storyboard_review_and_images_are_required_before_gpu(client, prepared):
     assert generated.status_code == 422
 
 
+@pytest.mark.parametrize('plan_index', [0, 1])
+def test_storyboard_blocks_compressed_dialogue_before_approval_and_gpu(client, prepared, plan_index):
+    from calliope.studio import director
+
+    project, _ = prepared
+    with service.database() as conn:
+        conn.execute('UPDATE clips SET order_index=-order_index WHERE project_id=?', (project,))
+        conn.commit()
+    current = state(client, project)
+    shot_id = current['shots'][plan_index]['id']
+    assert current['shots'][0]['id'] != 1
+    value = copy.deepcopy(current['shots'][plan_index]['contract'])
+    value['dialogue'][0].update(text='Tu me sers quoi avec ça ?', start_sec=0., end_sec=.5)
+    with service.database() as conn:
+        conn.execute('UPDATE studio_director_shots SET contract_json=? WHERE clip_id=?',
+                     (json.dumps(value), shot_id))
+        director.apply_contract(conn, shot_id, value)
+        conn.commit()
+    current = state(client, project)
+    approval = client.post(f'/api/studio/projects/{project}/director/approve',
+                           json={'expected_hash': current['storyboard_hash']})
+    assert approval.status_code == 422
+    assert 'parole trop rapide' in approval.json()['detail'].lower()
+    assert approval.json()['detail'].startswith(f'Plan {plan_index + 1}:')
+    check = director.preflight(project)
+    assert not check['ok']
+    assert any('parole trop rapide' in error.lower() for error in check['errors'])
+    assert any(error.startswith(f'Plan {plan_index + 1}: parole trop rapide') for error in check['errors'])
+
+
+def test_preflight_uses_storyboard_numbers_when_filtering_shots(client, prepared):
+    from calliope.studio import director
+
+    project, _ = prepared
+    with service.database() as conn:
+        conn.execute('UPDATE clips SET order_index=-order_index WHERE project_id=?', (project,))
+        conn.commit()
+    current = state(client, project)
+    target = current['shots'][-1]
+    number = len(current['shots'])
+    assert target['id'] != number
+    check = director.preflight(project, shot_ids=[target['id']])
+    assert any(error.startswith(f'Plan {number}: image') for error in check['errors'])
+
+
 def test_package_import_and_review_preserve_takes(client, prepared):
     project, shots = prepared
     approved = approve(client, project)
@@ -221,6 +312,71 @@ def test_package_import_and_review_preserve_takes(client, prepared):
     assert service.board(project)['scenes'][0]['shots'][0]['takes'][0]['id'] == take
 
 
+def test_image_prompt_endpoint_returns_copy_ready_text(client, prepared):
+    project, _ = prepared
+    current = approve(client, project)
+    independent = [(i + 1, s) for i, s in enumerate(current["shots"]) if not s["continue_from_previous"]]
+    assert independent
+    plan, shot = independent[0]
+    shot_id = shot["id"]
+    result = client.get(f"/api/studio/projects/{project}/director/shots/{shot_id}/image-prompt")
+    assert result.status_code == 200, result.text
+    body = result.json()
+    assert body["shot_id"] == shot_id
+    assert body["plan"] == plan
+    assert "Scène INDÉPENDANTE" in body["prompt"]
+    assert shot["contract"]["first_frame"] in body["prompt"]
+
+
+def test_package_uses_single_prompt_file(client, prepared):
+    project, _ = prepared
+    approve(client, project)
+    result = client.get(f"/api/studio/projects/{project}/director/package")
+    assert result.status_code == 200, result.text
+    archive = zipfile.ZipFile(io.BytesIO(result.content))
+    names = archive.namelist()
+    prompt_name = f"prompts-episode-{project}.txt"
+    assert prompt_name in names, names
+    assert not any(name.startswith("prompts/") for name in names), names
+    manifest = json.loads(archive.read("manifest.json"))
+    text = archive.read(prompt_name).decode("utf-8")
+    independent = [s for s in manifest["shots"] if not s["continuation"]]
+    assert independent
+    for shot in independent:
+        assert f"PLAN {shot["plan"]}" in text
+        assert shot["filename"] in text
+    assert [s["plan"] for s in manifest["shots"]] == list(range(1, len(manifest["shots"]) + 1))
+
+
+def test_import_images_accepts_explicit_shot_without_manifest_name(client, prepared):
+    project, _ = prepared
+    approved = approve(client, project)
+    shot_id = approved["shots"][0]["id"]
+    uploaded = client.post(f"/api/studio/projects/{project}/director/images",
+        data={"expected_hash": approved["storyboard_hash"], "shot_ids": json.dumps([shot_id])},
+        files=[("files", ("confrontation-cantine.png", png_bytes(), "image/png"))])
+    assert uploaded.status_code == 200, uploaded.text
+    current = state(client, project)
+    assert current["shots"][0]["image"]["approved"] is False
+    assert current["shots"][0]["image"]["take_id"]
+
+
+def test_import_images_rejects_unknown_plan_and_mismatched_mapping(client, prepared):
+    project, _ = prepared
+    approved = approve(client, project)
+    shot_id = approved["shots"][0]["id"]
+    result = client.post(f"/api/studio/projects/{project}/director/images",
+        data={"expected_hash": approved["storyboard_hash"], "shot_ids": json.dumps([shot_id, 999999])},
+        files=[("files", ("a.png", png_bytes(), "image/png")),
+               ("files", ("b.png", png_bytes(), "image/png"))])
+    assert result.status_code == 422
+    result = client.post(f"/api/studio/projects/{project}/director/images",
+        data={"expected_hash": approved["storyboard_hash"], "shot_ids": json.dumps([999999])},
+        files=[("files", ("c.png", png_bytes(), "image/png"))])
+    assert result.status_code == 422
+    assert not service.board(project)["scenes"][0]["shots"][0]["takes"]
+
+
 def test_invalid_batch_is_atomic_and_old_package_rejected(client, prepared):
     project, shots = prepared
     current = approve(client, project)
@@ -240,14 +396,26 @@ def test_invalid_batch_is_atomic_and_old_package_rejected(client, prepared):
 
 @pytest.mark.asyncio
 async def test_revision_keeps_unrequested_shots_and_rejects_llm_extra_ids(client, prepared, monkeypatch):
+    import jsonschema
     from calliope.studio import director
     project, shots = prepared
     before = state(client, project)
     target = before['shots'][0]
     value = copy.deepcopy(target['contract'])
     value['camera'] = 'slow push in'
-    async def generated(*args, **kwargs):
-        return {'shots': [{'id': target['id'], 'contract': value}]}
+    async def generated(messages, **options):
+        assert 'json' in messages[0]['content'].split('Schema: ', 1)[0].lower()
+        schema = json.loads(messages[0]['content'].split('Schema: ', 1)[1])
+        response = {'shots': [{'id': target['id'], 'contract': value}]}
+        jsonschema.validate(response, schema)
+        for invalid in (value, {'shots': []}, {'shots': response['shots'] * 2},
+                        {'shots': [{'id': shots[1]['id'], 'contract': value}]}):
+            with pytest.raises(jsonschema.ValidationError):
+                jsonschema.validate(invalid, schema)
+        assert options['retry_invalid'] is False
+        assert options['required_keys'] == ('shots',)
+        assert options['diagnostics_dir'].name == 'diagnostics'
+        return response
     monkeypatch.setattr(director, 'generate_structured', generated)
     result = await director.revise(project, before['storyboard_hash'], [target['id']], 'Rapproche la camera.')
     assert result['shots'][0]['contract']['camera'] == 'slow push in'
@@ -255,6 +423,48 @@ async def test_revision_keeps_unrequested_shots_and_rejects_llm_extra_ids(client
     with pytest.raises(service.HTTPException) as error:
         await director.revise(project, before['storyboard_hash'], [target['id']], 'stale')
     assert error.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_contract_replaces_the_legacy_reaction_instead_of_replaying_it(client, prepared):
+    from calliope.studio import director
+    project, shots = prepared
+    with service.database() as conn:
+        context = service.shot_context(conn, shots[0]['id'])['shot']
+        context['reaction'] = 'OBSOLETE REACTION, already covered by the contract timeline.'
+        conn.execute('UPDATE studio_shot_context SET context_json=? WHERE clip_id=?',
+                     (json.dumps(context), shots[0]['id']))
+        conn.commit()
+    current = director.state(project)
+    await director.revise(project, current['storyboard_hash'], [shots[0]['id']], '',
+        contracts=[{'id': shots[0]['id'], 'contract': current['shots'][0]['contract']}])
+    with service.database() as conn:
+        shot = service.shot_context(conn, shots[0]['id'])['shot']
+        assert shot['reaction'] == ''
+        assert shot['action'] == current['shots'][0]['contract']['action']
+
+
+@pytest.mark.asyncio
+async def test_cta_can_be_retimed_without_changing_its_words(client, prepared):
+    from calliope.studio import director
+    project, shots = prepared
+    before = approve(client, project)
+    target = next(s for s in before['shots'] if s['purpose'] in ('midroll', 'outro'))
+    value = copy.deepcopy(target['contract'])
+    value['duration_sec'] += 1
+    value['dialogue'][0]['end_sec'] += .5
+    revised = await director.revise(project, before['storyboard_hash'], [target['id']], '',
+        contracts=[{'id': target['id'], 'contract': value}])
+    assert revised['approved'] is False
+    assert next(s for s in revised['shots'] if s['id'] == target['id'])['contract'] == value
+    assert [s for s in revised['shots'] if s['id'] != target['id']] == [
+        s for s in before['shots'] if s['id'] != target['id']]
+    value['dialogue'][0]['text'] = 'A different promotion.'
+    with pytest.raises(service.HTTPException) as failed:
+        await director.revise(project, revised['storyboard_hash'], [target['id']], '',
+            contracts=[{'id': target['id'], 'contract': value}])
+    assert failed.value.status_code == 422
+    assert 'CTA' in failed.value.detail
 
 
 def test_direct_edits_invalidate_storyboard_review(client, prepared):
@@ -271,12 +481,40 @@ async def test_unverified_or_bad_take_never_auto_approves(client, prepared, monk
     shot = shots[0] | {'approved': False}
     monkeypatch.setattr(production, 'load_shot', lambda _: shot)
     monkeypatch.setattr(production, 'reusable_video', lambda _: {'id': 1})
+    monkeypatch.setattr(production, 'settings', production.settings.model_copy(update={'studio_director_auto_retries': 0}))
     async def assess(_):
         return {'status': 'extra', 'reason': 'Invented speech'}
     monkeypatch.setattr(production, 'assess_take', assess)
     with pytest.raises(production.ProductionPausedError):
         await production.render_shot({'id': 1, 'project_id': project}, shot, lambda: False)
     assert service.board(project)['scenes'][0]['shots'][0]['approved'] is False
+
+
+@pytest.mark.asyncio
+async def test_director_auto_retries_bad_audio_take(client, prepared, monkeypatch):
+    from calliope.studio import production
+    project, shots = prepared
+    shot = shots[0] | {"approved": False}
+    monkeypatch.setattr(production, "load_shot", lambda _: shot)
+    monkeypatch.setattr(production, "reusable_video", lambda _: None)
+    monkeypatch.setattr(production, "settings", production.settings.model_copy(
+        update={"studio_director_auto_retries": 2}))
+    calls = []
+    async def fake_generate(job, value, kind, should_stop, attempt=0):
+        calls.append(attempt)
+        return shot
+    monkeypatch.setattr(production, "generate_take", fake_generate)
+    verdicts = iter([
+        {"status": "extra", "reason": "Invented speech"},
+        {"status": "ok", "reason": ""},
+    ])
+    async def fake_assess(_):
+        return next(verdicts)
+    monkeypatch.setattr(production, "assess_take", fake_assess)
+    with pytest.raises(production.ProductionPausedError):
+        await production.render_shot({"id": 1, "project_id": project}, shot, lambda: False)
+    assert calls == [0, 1], "One retry after a definite audio failure"
+    assert service.board(project)["scenes"][0]["shots"][0]["approved"] is False
 
 
 def test_preflight_has_no_remote_engine_calls(client, prepared, monkeypatch):
@@ -349,11 +587,28 @@ def test_cost_reservations_block_multiple_takes_and_are_idempotent(client, prepa
 
 @pytest.mark.asyncio
 async def test_plan_to_qc_and_targeted_retake_without_gpu(client, prepared, monkeypatch, tmp_path):
-    from calliope.studio import director, production, video_preparation
+    from pathlib import Path
+    from calliope.agent import llm
+    from calliope.studio import director, production, series, video_preparation
+    from calliope.studio.export import inspect_media
     from calliope.queue.manager import queue_manager
     from tests.test_studio import video_bytes
     project, shots = prepared
+    original = state(client, project)
+    revised_contract = copy.deepcopy(original['shots'][0]['contract'])
+    revised_contract['camera'] = 'slow push in'
+    async def revise(messages, **options):
+        return {'shots': [{'id': shots[0]['id'], 'contract': revised_contract}]}
+    monkeypatch.setattr(director, 'generate_structured', revise)
+    revised = await director.revise(project, original['storyboard_hash'], [shots[0]['id']],
+                                    'Rapproche doucement la camera.')
+    assert revised['shots'][1:] == original['shots'][1:]
     current = ready_images(client, project)
+    package = client.get(f'/api/studio/projects/{project}/director/package')
+    assert package.status_code == 200
+    manifest = json.loads(zipfile.ZipFile(io.BytesIO(package.content)).read('manifest.json'))
+    assert manifest['storyboard_hash'] == current['storyboard_hash']
+    assert [entry['filename'] for entry in manifest['shots']] == [s['filename'] for s in current['shots']]
     content = video_bytes(tmp_path, audio=True)
     calls = []
     async def local_video(job, shot, kind, should_stop, attempt=0):
@@ -366,6 +621,10 @@ async def test_plan_to_qc_and_targeted_retake_without_gpu(client, prepared, monk
         return None
     async def unknown(_):
         return {'status': 'unknown', 'reason': 'ASR unavailable'}
+    async def recap(*args, **options):
+        return {'summary': 'Le gardien répond à la radio.',
+                'events': ['Le gardien répond.'], 'ongoing_plot': ''}
+    monkeypatch.setattr(llm, 'generate_structured', recap)
     monkeypatch.setattr(production, 'generate_take', local_video)
     monkeypatch.setattr(production, 'assess_take', unknown)
     monkeypatch.setattr(production, 'prepare_local_audio', no_engine)
@@ -387,10 +646,36 @@ async def test_plan_to_qc_and_targeted_retake_without_gpu(client, prepared, monk
     assert reviewed.status_code == 200, reviewed.text
     assert service.board(project)['scenes'][0]['shots'][0]['approved']
     queue_manager.mark_done(old_job, [])
+    for expected in shots[1:]:
+        series.resume(project)
+        assert await production.run_production(job, payload, lambda: False) == []
+        queue_manager.mark_done(old_job, [])
+        board = service.board(project)
+        latest = next(s for scene in board['scenes'] for s in scene['shots'] if s['id'] == expected['id'])
+        assert calls[-1] == expected['id']
+        assert latest['selected_video_id'] and not latest['approved']
+        reviewed = client.post(
+            f"/api/studio/projects/{project}/director/takes/{latest['selected_video_id']}/review",
+            json={'expected_hash': current['storyboard_hash'], 'approved': True,
+                  'visual_ok': True, 'continuity_ok': True, 'speakers_ok': True, 'audio_ok': True})
+        assert reviewed.status_code == 200, reviewed.text
+    series.resume(project)
+    outputs = await production.run_production(job, payload, lambda: False)
+    queue_manager.mark_done(old_job, outputs)
+    assert len(outputs) == 1 and Path(outputs[0]).is_file()
+    assert inspect_media(Path(outputs[0]))['has_audio'] is True
+    assert service.board(project)['production']['status'] == 'done'
+    assert calls == [shot['id'] for shot in shots], 'Reviewed takes must never be rendered again'
+    saved = {s['id']: s['selected_video_id'] for s in service.board(project)['scenes'][0]['shots']}
     retried = client.post(f"/api/studio/projects/{project}/shots/{shots[1]['id']}/retake",
                          json={'request_id': 'lifecycle-retake'})
     assert retried.status_code == 200, retried.text
-    assert retried.json()['scenes'][0]['shots'][0]['selected_video_id'] == take_id
+    retake_job = queue_manager.get_job(retried.json()['production']['job_id'])
+    assert await production.run_production(retake_job, json.loads(retake_job['payload_json']), lambda: False) == []
+    assert calls == [shot['id'] for shot in shots] + [shots[1]['id']]
+    for shot in service.board(project)['scenes'][0]['shots']:
+        if shot['id'] != shots[1]['id']:
+            assert shot['selected_video_id'] == saved[shot['id']]
 
 
 def test_bad_audio_cannot_be_approved_through_old_endpoint(client, prepared, tmp_path):
@@ -518,11 +803,25 @@ async def test_native_director_revision_can_give_a_silent_character_a_line(clien
         context = service.shot_context(conn, shots[0]['id'])
         assert context['speaker_ids']['keeper'] == 'S1'
         assert context['speaker_ids']['visitor'] == 'S2'
+        plan_row = conn.execute(
+            'SELECT plan_json FROM studio_episodes WHERE project_id=?', (project,)
+        ).fetchone()
+        plan_shot = json.loads(plan_row[0])['scenes'][0]['shots'][0]
+        assert [(turn['speaker'], turn['text']) for turn in plan_shot['dialogue_turns']] == [
+            ('visitor', 'Please listen.')
+        ]
         for profile in ('fast', 'ltx'):
             prompt = compile_video_prompt(service.public_shot(conn, shots[0]['id']), context, True, profile)
             assert 'Please listen.' in prompt
-            assert 'At 2 seconds' in prompt
-            assert 'between 2 and 3 seconds' in prompt
+            if profile == 'fast':
+                assert 'At 2 seconds' in prompt
+                assert 'between 2 and 3 seconds' in prompt
+            else:
+                # LTX ne comprend pas les timings absolus : le contrat reste
+                # une estimation de montage, pas une instruction de prompt.
+                assert 'At 2 seconds' not in prompt
+                assert 'between 2 and 3 seconds' not in prompt
+                assert 'Please listen.' in prompt
 
 
 def test_director_episode_options_do_not_change_series_canon(client, monkeypatch):
@@ -722,7 +1021,9 @@ async def test_native_preparation_locks_owned_actions_and_prop_states(client, mo
         if not calls:
             for change in ({'action': 'Visitor opens the case in another take.'},
                            {'chronology': [{'at_sec': 0., 'action': 'Visitor opens the case.'}]},
-                           {'final_state': value['final_state'] | {'case': 'Open on the floor.'}}):
+                           {'final_state': value['final_state'] | {'case': 'Open on the floor.'}},
+                           {'initial_state': req['prop_states']['initial_state']},
+                           {'final_state': req['prop_states']['final_state']}):
                 with pytest.raises(jsonschema.ValidationError):
                     jsonschema.validate({'shots': [value | change]}, schema)
         calls.append(shot['id'])

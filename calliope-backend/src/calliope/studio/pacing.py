@@ -214,3 +214,47 @@ def assess_dialogue(dialogue, beat_sec, probe_sec, voice) -> dict:
         "status": "unknown",
         "reason": "Activité sonore mesurée; mots non vérifiés sans transcription.",
     }
+
+
+
+_LOUDNESS_I = re.compile(r"I:\s*(-?\d+(?:\.\d+)?) LUFS")
+_LOUDNESS_LRA = re.compile(r"LRA:\s*(-?\d+(?:\.\d+)?) LU")
+_LOUDNESS_PEAK = re.compile(r"Peak:\s*(-?\d+(?:\.\d+)?) dBFS")
+
+
+def measure_loudness(path) -> dict | None:
+    """Mesure EBU R128 d'une prise : loudness intÃ©grÃ©e, LRA, true peak."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg or not path or not os.path.isfile(str(path)):
+        return None
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-nostats",
+        "-i",
+        str(path),
+        "-af",
+        "ebur128=peak=true",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(
+            command, capture_output=True, timeout=180, **_PROCESS_OPTIONS
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode:
+        return None
+    log = result.stderr.decode("utf-8", "replace")
+    integrated = _LOUDNESS_I.findall(log)
+    if not integrated:
+        return None
+    lra = _LOUDNESS_LRA.findall(log)
+    peak = _LOUDNESS_PEAK.findall(log)
+    return {
+        "integrated_lufs": float(integrated[-1]),
+        "lra_lu": float(lra[-1]) if lra else None,
+        "true_peak_dbfs": float(peak[-1]) if peak else None,
+    }

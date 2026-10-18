@@ -1,0 +1,153 @@
+"""Synthese des repliques de l'episode 2 V2, avec references vocales."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import wave
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "calliope-backend" / "src"))
+
+from calliope.config import settings  # noqa: E402
+from calliope.engines.modal_tts import ModalTTSEngine  # noqa: E402
+from calliope.studio import transcription, tts  # noqa: E402
+
+OUT = ROOT / "work" / "publish-ep44-v2"
+TTS = OUT / "tts"
+VOICES = OUT / "tts-voices"
+SOURCE_VOICES = ROOT / "work" / "publish43" / "tts-voices"
+
+LINES = [
+    ("a1", "durio", "Hier, tu m'as humilié devant tout le monde."),
+    ("a2", "momo", "Non. Tu t'es humilié tout seul. Moi, j'ai juste regardé."),
+    ("a3", "durio", "Les gardiens t'ont pas expliqué pourquoi j'étais ici ?"),
+    ("a4", "momo", "Si. Et ils m'ont expliqué pourquoi tu y es. C'est plus intéressant."),
+    ("a5", "durio", "Ce soir, 20h30, la cour. On règle ça devant tout le monde."),
+    ("a6", "momo", "Je serai là. Ramène du monde. Tu en auras besoin."),
+    ("b1", "durio", "Ses lunettes vont pas me faire peur."),
+    ("c1", "momo", "20h30. Il va encore croire que c'est lui qui a eu l'idée."),
+    ("d1", "poire", "Écoute ça. Ce soir, Durio et Momo se battent."),
+    ("d2", "peche", "Pour de vrai ?"),
+    ("d3", "poire", "Non, à 20h30. Mais Momo aurait déjà fait disparaître un détenu."),
+    ("d4", "peche", "Qui ça ?"),
+    ("d5", "poire", "Personne sait. Le type a changé de bloc. Ou de tête. J'ai pas tout compris."),
+    ("d6", "peche", "Et le gardien ?"),
+    ("d7", "poire", "Quel gardien ?"),
+    ("d8", "peche", "Le gardien qui l'accompagne."),
+    ("f1", "momo", "Cette nuit, ta porte n'était pas verrouillée."),
+    ("f2", "durio", "Tu n'as pas osé."),
+    ("f3", "momo", "Si. J'ai même pris le temps de faire une photo."),
+    ("f4", "durio", "Explique-moi. Qu'est-ce que tu veux ?"),
+    ("f5", "momo", "Savoir pourquoi tu es ici. Et pourquoi tu es si pressé de te battre."),
+    ("f6", "momo", "20h30. Et cette fois, fais attention à qui tu tapes."),
+]
+
+VOICE_PROMPTS = {
+    **tts.DEFAULT_VOICES,
+    "poire": (
+        "A small, nervous female inmate with a high, quick, breathless French voice, "
+        "gossipy but clearly articulated"
+    ),
+    "peche": (
+        "A taller, calmer female inmate with a medium-low, skeptical French voice, "
+        "clear and natural"
+    ),
+}
+
+REFERENCE_SENTENCES = {
+    "poire": "Je suis Poire. Tu sais quoi ? Ce soir, il va se passer quelque chose.",
+    "peche": "Je suis Pêche. Calme-toi. Raconte-moi exactement ce que tu as entendu.",
+}
+
+
+def duration(path: Path) -> float:
+    with wave.open(str(path), "rb") as handle:
+        return handle.getnframes() / handle.getframerate()
+
+
+def trim(source: Path, target: Path) -> None:
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error", "-i", str(source), "-af",
+            "silenceremove=start_periods=1:start_duration=0.02:start_threshold=-50dB,"
+            "areverse,"
+            "silenceremove=start_periods=1:start_duration=0.05:start_threshold=-50dB,"
+            "areverse",
+            "-ar", "48000", "-ac", "1", str(target),
+        ],
+        check=True,
+    )
+
+
+def ensure_reference(key: str, engine: ModalTTSEngine) -> bytes:
+    target = VOICES / f"{key}.wav"
+    if target.is_file() and target.stat().st_size > 0:
+        return target.read_bytes()
+    source = SOURCE_VOICES / f"{key}-ref.wav"
+    if source.is_file():
+        target.write_bytes(source.read_bytes())
+        return target.read_bytes()
+    audio = engine.synthesize(
+        REFERENCE_SENTENCES[key], VOICE_PROMPTS[key],
+        settings.studio_tts_cfg, settings.studio_tts_timesteps,
+    )
+    target.write_bytes(audio)
+    return audio
+
+
+def main() -> None:
+    TTS.mkdir(parents=True, exist_ok=True)
+    VOICES.mkdir(parents=True, exist_ok=True)
+    engine = ModalTTSEngine(settings.studio_tts_modal_app, settings.studio_tts_modal_function)
+    available = engine.check_available()
+    if not available["ok"]:
+        raise SystemExit(available["message"])
+    references = {key: ensure_reference(key, engine) for key in VOICE_PROMPTS}
+    manifest = []
+    for line_id, speaker, text in LINES:
+        final = TTS / f"{line_id}.wav"
+        if final.is_file() and final.stat().st_size > 0:
+            manifest.append({"id": line_id, "speaker": speaker, "text": text,
+                             "path": str(final), "duration": round(duration(final), 3)})
+            print(f"[{line_id}] conserve {duration(final):.2f}s", flush=True)
+            continue
+        best = None
+        for attempt in range(3):
+            cfg = settings.studio_tts_cfg if attempt % 2 == 0 else 1.6
+            raw = TTS / f"{line_id}-{attempt}-raw.wav"
+            audio = engine.synthesize(
+                text, VOICE_PROMPTS[speaker], cfg,
+                settings.studio_tts_timesteps, reference=references[speaker],
+            )
+            raw.write_bytes(audio)
+            candidate = TTS / f"{line_id}-{attempt}.wav"
+            trim(raw, candidate)
+            verdict = transcription.assess_transcript_v2(
+                text, transcription.transcribe_dialogue(
+                    str(candidate), settings.studio_asr_checkpoint, "fr",
+                ), language="fr",
+            )
+            print(f"[{line_id}] essai {attempt + 1}: {verdict.get('status')} "
+                  f"{verdict.get('reason', '')} {duration(candidate):.2f}s", flush=True)
+            if best is None or verdict.get("status") == "ok":
+                best = candidate
+            if verdict.get("status") == "ok":
+                break
+        if best is None:
+            raise SystemExit(f"Aucune synthese pour {line_id}")
+        final.write_bytes(best.read_bytes())
+        manifest.append({"id": line_id, "speaker": speaker, "text": text,
+                         "path": str(final), "duration": round(duration(final), 3)})
+    (OUT / "lines.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    total = sum(item["duration"] for item in manifest)
+    print(f"TOTAL {total:.2f}s sur {len(manifest)} repliques", flush=True)
+
+
+if __name__ == "__main__":
+    main()
+

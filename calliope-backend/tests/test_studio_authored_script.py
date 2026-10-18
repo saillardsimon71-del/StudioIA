@@ -66,6 +66,43 @@ def test_locked_story_rejects_a_take_merging_distinct_authored_beats():
     series_planner._validate_story_realization(story, plan)
 
 
+def test_missing_source_indices_are_reported_together_without_changing_the_draft():
+    from calliope.studio.authored_script import authored_story
+
+    story = authored_story(SCRIPT, ENTITIES)
+    plan = conversation()
+    source = plan['scenes'][0]['shots'][0]
+    plan['scenes'][0]['shots'] = [source | {'dialogue_turns': [copy.deepcopy(turn)]}
+                                 for turn in source['dialogue_turns']]
+    before = copy.deepcopy(plan)
+    with pytest.raises(series_planner._NativeValidationError) as error:
+        series_planner._validate_story_realization(story, plan)
+    assert error.value.paths == [
+        ['scenes', 0, 'shots', i, 'source_beat_index'] for i in range(3)]
+    fields = series_planner._native_repair_fields(plan, error.value.paths)
+    repaired = series_planner._apply_native_values(plan, error.value.paths,
+        {'values': {field['id']: i for i, field in enumerate(fields)}})
+    series_planner._validate_story_realization(story, repaired)
+    assert plan == before
+
+
+def test_source_indices_still_reject_moved_lines_and_out_of_order_beats():
+    from calliope.studio.authored_script import authored_story
+
+    story = authored_story(SCRIPT, ENTITIES)
+    plan = conversation()
+    source = plan['scenes'][0]['shots'][0]
+    plan['scenes'][0]['shots'] = [source | {
+        'source_beat_index': i, 'dialogue_turns': [copy.deepcopy(turn)]}
+        for i, turn in enumerate(source['dialogue_turns'])]
+    for indices in ([1, 0, 2], [0, True, 2], [0, 1, 99]):
+        draft = copy.deepcopy(plan)
+        for shot, index in zip(draft['scenes'][0]['shots'], indices):
+            shot['source_beat_index'] = index
+        with pytest.raises(ValueError, match='source_beat_index'):
+            series_planner._validate_story_realization(story, draft)
+
+
 def test_free_ideas_and_example_quotes_are_not_treated_as_locked_scripts():
     from calliope.studio.authored_script import authored_story
 

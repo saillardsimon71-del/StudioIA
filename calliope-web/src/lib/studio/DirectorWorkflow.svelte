@@ -9,6 +9,7 @@
   let check = $state<DirectorPreflight | null>(null);
   let error = $state('');
   let notice = $state('');
+  let promptCopy = $state<{ shotId: number; text: string; message: string; failed: boolean } | null>(null);
   let busy = $state(false);
   let revision = $state('');
   let selection = $state<number[]>([]);
@@ -31,7 +32,7 @@
   }
   async function act(task: () => Promise<unknown>) {
     if (busy) return;
-    busy = true; error = ''; notice = '';
+    busy = true; error = ''; notice = ''; promptCopy = null;
     try { await task(); await onchanged(); await load(); }
     catch (err) { error = errorMessage(err); }
     finally { busy = false; }
@@ -43,12 +44,53 @@
     finally { busy = false; }
   }
   function choose(id: number, value: boolean) { selection = value ? [...selection, id] : selection.filter((v) => v !== id); }
-  async function upload(event: Event) {
+  let pending = $state<{ file: File; shotId: number | null }[]>([]);
+  let fileInput: HTMLInputElement | undefined = $state();
+  const stem = (name: string) => name.replace(/\.[^.]+$/, "");
+  function detectShot(file: File): number | null {
+    return current?.shots.find(s => stem(s.filename) === stem(file.name))?.id ?? null;
+  }
+  function handleFiles(files: File[]) {
+    if (!files.length) return;
+    pending = files.map(file => ({ file, shotId: detectShot(file) }));
+  }
+  function selectFiles(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
-    const files = Array.from(input.files ?? []);
-    if (!current || !files.length) return;
-    await act(() => director.images(board.project.id, current!.storyboard_hash, files));
-    input.value = '';
+    handleFiles(Array.from(input.files ?? []));
+    input.value = "";
+  }
+  function handleDrop(event: DragEvent) {
+    event.preventDefault();
+    handleFiles(Array.from(event.dataTransfer?.files ?? []));
+  }
+  function setShot(index: number, value: string) {
+    pending = pending.map((item, i) => (i === index ? { ...item, shotId: value ? Number(value) : null } : item));
+  }
+  function canImport() {
+    return pending.length > 0 && pending.every(item => item.shotId != null);
+  }
+  async function importPending() {
+    if (!current || !canImport()) return;
+    const files = pending.map(item => item.file);
+    const shotIds = pending.map(item => item.shotId);
+    await act(() => director.images(board.project.id, current!.storyboard_hash, files, shotIds));
+    pending = [];
+  }
+  async function copyPrompt(shotId: number) {
+    if (!current?.approved || busy || active) return;
+    busy = true; error = ''; notice = '';
+    promptCopy = { shotId, text: '', message: 'Préparation du prompt...', failed: false };
+    try {
+      const result = await director.imagePrompt(board.project.id, shotId);
+      try {
+        await navigator.clipboard.writeText(result.prompt);
+        promptCopy = { shotId, text: '', message: `Prompt du plan ${result.plan} copié.`, failed: false };
+      } catch {
+        promptCopy = { shotId, text: result.prompt, message: 'La copie automatique a échoué. Sélectionnez le prompt ci-dessous, puis copiez-le manuellement.', failed: true };
+      }
+    } catch (err) {
+      promptCopy = { shotId, text: '', message: `Prompt non copié : ${errorMessage(err)}`, failed: true };
+    } finally { busy = false; }
   }
   async function saveExpert(id: number) {
     if (!current) return;
@@ -95,6 +137,7 @@
     <ol class="steps"><li class:done={current.approved}>Relire le storyboard</li><li class:done={current.shots.filter(s => !s.continue_from_previous).every(s => s.image?.approved)}>Importer les images ChatGPT</li><li>Produire et vérifier les prises</li></ol>
     <h2>1. Votre storyboard</h2>
     <p>Relisez les actions et les paroles. Sélectionnez les plans à modifier et décrivez votre changement. Les autres plans et leurs médias sont conservés.</p>
+    {#if !current.approved}<p class="hint">Validez le storyboard en bas de cette section pour activer la copie des prompts et le paquet pour ChatGPT.</p>{/if}
     <div class="story-grid">
       {#each current.shots as shot, index (shot.id)}
         <article class="story-card stack" data-shot-id={shot.id}>
@@ -104,6 +147,13 @@
           <p class="hint">Lieu : {shot.contract.location}. Personnages : {shot.contract.casting.join(', ') || 'aucun'}.</p>
           {#each shot.contract.dialogue as line}<p><strong>{line.speaker} :</strong> {line.text}</p>{/each}
           {#if !shot.contract.dialogue.length}<p class="hint">Sans dialogue.</p>{/if}
+          {#if !shot.continue_from_previous}
+            <button type="button" disabled={busy || active || !current.approved} onclick={() => copyPrompt(shot.id)}>Copier le prompt de ce plan</button>
+            {#if promptCopy?.shotId === shot.id}
+              <p class:error={promptCopy.failed} role={promptCopy.failed ? 'alert' : 'status'}>{promptCopy.message}</p>
+              {#if promptCopy.text}<label>Prompt à copier manuellement<textarea readonly rows="8" value={promptCopy.text} onclick={event => event.currentTarget.select()}></textarea></label>{/if}
+            {/if}
+          {/if}
           {#if shot.continue_from_previous}
             {@const live = board.scenes.flatMap(s => s.shots).find(s => s.id === shot.id)}
             <p class="hint">Ce plan poursuit la dernière image conservée du plan précédent. L'image du paquet est une référence facultative.</p>
@@ -136,9 +186,28 @@
       <button class="primary" disabled={busy || active || current.approved}
         onclick={() => act(() => director.approve(board.project.id, current!.storyboard_hash))}>{current.approved ? 'Storyboard validé' : 'Valider le storyboard'}</button></div>
     <h2>2. Images dans ChatGPT, puis import</h2>
-    <p>Téléchargez le paquet avec prompts, références disponibles et noms des images. Générez les images vous-même dans cette conversation ChatGPT, puis importez-les en lot avec ces noms. Vérifiez chaque image avant de la valider.</p>
+    <p>Téléchargez le paquet : un seul fichier de prompts et les images de référence. Joignez ces fichiers à ChatGPT, générez les images indiquées, puis importez-les en choisissant le plan correspondant. Vérifiez chaque image avant de la valider.</p>
     <div class="row">{#if current.approved}<a class="package-link" href={`/api/studio/projects/${board.project.id}/director/package`} download>Télécharger le paquet pour ChatGPT</a>{:else}<p class="hint">La validation du storyboard ouvre le paquet.</p>{/if}
-      <label class="upload">Importer le lot d'images<input type="file" multiple accept="image/png,image/jpeg,image/webp" disabled={busy || active || !current.approved} onchange={upload} /></label></div>
+      <button type="button" disabled={busy || active || !current.approved} onclick={() => fileInput?.click()}>Choisir les fichiers</button>
+      <input bind:this={fileInput} type="file" multiple accept="image/png,image/jpeg,image/webp" disabled={busy || active || !current.approved} onchange={selectFiles} class="hidden-file" /></div>
+    <button type="button" class="dropzone" disabled={busy || active || !current.approved} ondragover={event => event.preventDefault()} ondrop={handleDrop} onclick={() => fileInput?.click()}>Glissez vos images ici ou cliquez pour choisir des fichiers.</button>
+    {#if pending.length}
+      <div class="stack upload">
+        <p class="hint">Associez chaque image au plan, puis importez. Les fichiers déjà nommés comme le paquet sont pré-associés.</p>
+        {#each pending as item, index (index)}
+          <div class="row">
+            <span class="filename">{item.file.name}</span>
+            <select value={item.shotId ?? 0} onchange={event => setShot(index, event.currentTarget.value)}>
+              <option value={0} disabled>— choisir un plan —</option>
+              {#each current.shots as shot, i}
+                <option value={shot.id} disabled={pending.some((p, j) => j !== index && p.shotId === shot.id)}>Plan {i + 1}{shot.purpose === "midroll" || shot.purpose === "outro" ? " (CTA)" : ""} - {shot.contract.duration_sec} s</option>
+              {/each}
+            </select>
+          </div>
+        {/each}
+        <button class="primary" disabled={busy || active || !canImport()} onclick={importPending}>Importer {pending.length} image{pending.length > 1 ? "s" : ""}</button>
+      </div>
+    {/if}
     <h2>3. Préflight, production et contrôle des prises</h2>
     <p>Le préflight vérifie localement les contrats, les images et le budget. Chaque nouvelle prise attend votre revue avant le rendu suivant.</p>
     <details><summary>Panneau expert : budget de production</summary><div class="stack budget">
@@ -195,6 +264,8 @@
   .budget { max-width: 620px; padding: 16px 0; }
   .package-link { padding: 10px 14px; background: #31543a; color: white; border-radius: 6px; }
   .upload { max-width: 440px; }
+  .hidden-file { display: none; }
+  .dropzone { width: 100%; padding: 14px; border: 2px dashed #8aa07f; border-radius: 8px; background: #f6f9f2; color: #31543a; cursor: pointer; text-align: center; }
   .take-review video { width: 100%; max-height: 480px; background: #18251c; }
   .errors { padding: 12px; background: #fff0eb; color: #713320; }
   details > summary { cursor: pointer; padding: 10px 0; }

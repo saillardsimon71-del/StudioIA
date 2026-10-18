@@ -84,6 +84,26 @@ def test_next_episode_waits_for_previous_and_missing_services_create_no_jobs(cli
     assert episode(client, a["id"], request="second").status_code == 409
 
 
+def test_continuity_reads_the_final_export_instead_of_an_old_working_script(client):
+    from calliope.studio import series as series_module, service
+
+    item = series(client)
+    project = episode(client, item["id"]).json()["project_id"]
+    final_shot = {"description": "The keeper switches off the radio.",
+                  "dialogue": "Enough.", "prompt": "Keeper switches off the radio.",
+                  "state": {"end_state": {"radio": "off"}}}
+    with service.database() as conn:
+        revision = conn.execute("SELECT revision FROM studio_projects WHERE project_id=?",
+                                (project,)).fetchone()[0]
+        conn.execute("UPDATE studio_episodes SET canon_revision=? WHERE project_id=?",
+                     (revision, project))
+        conn.execute("INSERT INTO studio_exports(project_id,request_id,revision,aspect_ratio,"
+                     "snapshot_json,output_path) VALUES(?,?,?,?,?,?)",
+                     (project, "final", revision, "9:16", json.dumps({"clips": [final_shot]}),
+                      "final.mp4"))
+        assert series_module.context(conn, item["id"])["history"][0]["shots"] == [final_shot]
+
+
 def test_blank_concept_and_unknown_bible_fields_are_rejected(client):
     assert client.post("/api/studio/series", json={"title": "X", "concept": " "}).status_code == 422
     a = series(client)

@@ -25,6 +25,32 @@ def realization_plan():
     return plan
 
 
+@pytest.mark.asyncio
+async def test_native_director_chooses_the_export_sound_mix(monkeypatch):
+    async def generate(messages, **options):
+        example = json.loads(messages[0]['content'].split(
+            'Return ONLY this JSON structure,', 1)[1].split('\n', 1)[1].split('\n\n', 1)[0])
+        assert {'enabled', 'voice_gain_db', 'ducking', 'ambience',
+                'ambience_gain_db', 'sfx', 'holds'} <= example['audio'].keys()
+        assert example['scenes'][0]['shots'][0]['source_beat_index'] == 0
+        assert 'Supported ambience: none, room, wind, rain, cafe, night, city, forest.' in messages[0]['content']
+        plan = realization_plan()
+        plan['audio'] = {'enabled': True, 'music': 'none', 'voice_gain_db': 0,
+                         'ducking': True, 'ambience': 'room', 'ambience_gain_db': -34,
+                         'sfx': [{'effect': 'door', 'shot_index': 0, 'at_sec': .2,
+                                  'gain_db': -24}], 'holds': []}
+        return plan
+
+    monkeypatch.setattr(series_planner, 'generate_structured', generate)
+    result = await series_planner.plan_episode(
+        {'entities': [], 'prompt_contract_version': 2, 'target_seconds': 32.5, 'language': 'fr'},
+        'Le gardien entend la porte.', '')
+    assert result['audio']['enabled'] is True
+    assert result['audio']['ambience'] == 'room'
+    assert result['audio']['voice_gain_db'] == 0
+    assert result['audio']['sfx'][0]['effect'] == 'door'
+
+
 def test_native_identifier_case_is_normalized_without_changing_prose():
     plan = native_plan()
     for entity in plan["entities"]:
@@ -67,6 +93,30 @@ def test_native_accent_normalization_does_not_merge_distinct_canon_entries():
     plan["render_canon"]["props"].update({"clé": "A brass key.", "cle": "A different key."})
     with pytest.raises(ValueError, match="collision"):
         series_planner.normalize_plan(plan, {"entities": []})
+
+
+@pytest.mark.asyncio
+async def test_native_overlong_take_is_repaired_without_rewriting_the_dialogue(monkeypatch):
+    calls = []
+    source = realization_plan()
+
+    async def generate(messages, **options):
+        calls.append(copy.deepcopy(messages))
+        if len(calls) == 1:
+            draft = copy.deepcopy(source)
+            draft['scenes'][0]['shots'][0]['duration_sec'] = 18
+            return draft
+        fields = json.loads(messages[-1]['content'])['repair_fields']
+        assert [field['path'] for field in fields] == [['scenes', 0, 'shots']]
+        return {'values': {'field_1': copy.deepcopy(source['scenes'][0]['shots'])}}
+
+    monkeypatch.setattr(series_planner, 'generate_structured', generate)
+    result = await series_planner.plan_episode(
+        {'entities': [], 'prompt_contract_version': 2, 'target_seconds': 32.5, 'language': 'fr'},
+        'Une fuite.', '')
+    assert len(calls) == 2
+    assert [shot['dialogue'] for scene in result['scenes'] for shot in scene['shots']
+            if shot.get('purpose') != 'midroll'] == [f'Line {i}.' for i in range(6)]
 
 
 @pytest.mark.asyncio
@@ -679,6 +729,40 @@ async def test_native_writer_repair_keeps_the_real_cta_budget(monkeypatch):
     cta_duration = series_planner._midroll_spec({"language": "fr"})["duration_sec"]
     assert f"{cta_duration:g}-second midroll" in requests[1][-1]["content"]
     assert sum(s["duration_sec"] for scene in result["scenes"] for s in scene["shots"]) == 24 + cta_duration
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('seconds_per_shot', [2., 6.])
+async def test_director_repairs_duration_during_preparation_without_rewriting_speech(monkeypatch, seconds_per_shot):
+    requests = []
+    original = realization_plan()
+    cta = series_planner._midroll_spec({'language': 'fr'})['duration_sec']
+
+    async def generate(messages, **options):
+        requests.append(copy.deepcopy(messages))
+        if len(requests) == 1:
+            draft = copy.deepcopy(original)
+            for shot in draft['scenes'][0]['shots']:
+                shot['duration_sec'] = seconds_per_shot
+            return draft
+        assert len(requests) == 2, 'Only the invalid timing needs one repair'
+        fields = json.loads(messages[-1]['content'])['repair_fields']
+        assert [field['path'] for field in fields] == [['scenes', 0, 'shots']]
+        assert '24 seconds of story' in messages[-1]['content']
+        return {'values': {'field_1': copy.deepcopy(original['scenes'][0]['shots'])}}
+
+    monkeypatch.setattr(series_planner, 'generate_structured', generate)
+    result = await series_planner.plan_episode(
+        {'entities': [], 'prompt_contract_version': 2, 'studio_director': True,
+         'target_seconds': 24 + cta, 'language': 'fr'}, 'Une fuite.', '')
+    shots = [shot for scene in result['scenes'] for shot in scene['shots']]
+    narrative = [shot for shot in shots if shot.get('purpose') not in ('midroll', 'outro')]
+    assert len(requests) == 2
+    assert sum(shot['duration_sec'] for shot in shots) == pytest.approx(24 + cta)
+    assert [(turn['speaker'], turn['text']) for shot in narrative for turn in shot['dialogue_turns']] == [
+        (shot['speaker'], shot['dialogue']) for shot in original['scenes'][0]['shots']]
+    assert [shot.get('action', '') for shot in narrative] == [
+        shot.get('action', '') for shot in original['scenes'][0]['shots']]
 
 
 @pytest.mark.asyncio

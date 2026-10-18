@@ -92,10 +92,38 @@ def test_ltx_keeps_authored_timed_overlays_and_requests_review_instead_of_moving
     assert 'LTX' in plan['editorial_review']['risks']
 
 
-@pytest.mark.asyncio
-async def test_normal_planner_applies_ltx_realization_before_saving(monkeypatch):
+def test_ltx_splits_multi_speaker_even_with_a_timed_sfx(monkeypatch):
     monkeypatch.setattr(settings, 'studio_video_profile', 'ltx')
     source = conversation()
+    source['audio'] = {
+        'sfx': [{'effect': 'impact', 'shot_index': 0, 'at_sec': 0.2, 'gain_db': -6}],
+        'holds': [],
+    }
+    plan = prepare_ltx_plan(series_planner.normalize_plan(source, {'entities': []}))
+    assert len(plan['scenes'][0]['shots']) == 3
+    assert plan['audio']['sfx'][0]['shot_index'] == 0
+
+
+def test_ltx_split_preserves_late_sound_cue_positions():
+    source = conversation()
+    source['audio'] = {
+        'sfx': [{'effect': 'impact', 'shot_index': 0, 'at_sec': 5.5, 'gain_db': -6}],
+        'holds': [{'shot_index': 0, 'at_sec': 5.0, 'duration_sec': 1.0, 'drop_db': -36}],
+    }
+    plan = prepare_ltx_plan(source)
+    shots = plan['scenes'][0]['shots']
+    for field, original_time in [('sfx', 5.5), ('holds', 5.0)]:
+        cue = plan['audio'][field][0]
+        assert cue['at_sec'] < shots[cue['shot_index']]['duration_sec']
+        assert sum(s['duration_sec'] for s in shots[:cue['shot_index']]) + cue['at_sec'] == pytest.approx(original_time)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('duration', [7.2, 18.0])
+async def test_normal_planner_applies_ltx_realization_before_saving(monkeypatch, duration):
+    monkeypatch.setattr(settings, 'studio_video_profile', 'ltx')
+    source = conversation()
+    source['scenes'][0]['shots'][0]['duration_sec'] = duration
     story = {'title':'Le coffre', 'narrative_outline':source['narrative_outline'],
              'beats':[{'action':'Une dispute.', 'dialogue_turns':[
                  {key:turn[key] for key in ('speaker','text')}
@@ -117,9 +145,11 @@ async def test_normal_planner_applies_ltx_realization_before_saving(monkeypatch)
     assert [s['speaker'] for s in shots[:-1]] == ['keeper','visitor','keeper']
     assert shots[-1]['purpose'] == 'midroll'
     assert plan['creative_story'] == story
+    assert all(1 <= s['duration_sec'] <= 15 for s in shots)
+    assert sum(s['duration_sec'] for s in shots[:-1]) == pytest.approx(duration, abs=.1)
 
 
-def test_new_series_uses_end_cta_without_rewriting_existing_series(client):
+def test_new_series_has_no_cta_without_rewriting_existing_series(client):
     item = client.post('/api/studio/series', json={
         'title':'Test', 'concept':'Conversation.'}).json()
-    assert item['directing_profile']['cta_placement'] == 'end'
+    assert item['directing_profile']['cta_placement'] == 'none'

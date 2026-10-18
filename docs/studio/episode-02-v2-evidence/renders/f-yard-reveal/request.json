@@ -1,0 +1,18 @@
+{
+  "contract_version": 1,
+  "prompt": "A single continuous cinematic medium two-shot in the prison yard at night. Locked camera, no cuts, no zoom. Durio and Momo face each other at the center of the circle, eyes locked; neither looks at the camera or the floor. Momo takes a small metal box from his pocket, opens it and holds up a photo. Durio looks at the photo, then at Momo, and freezes; he does not punch, lunge or throw anything. Momo says in a calm, cold French voice: \"Cette nuit, ta porte n'était pas verrouillée.\" Durio: \"Tu n'as pas osé.\" Momo: \"Si. J'ai même pris le temps de faire une photo.\" Durio: \"Qu'est-ce que tu veux ?\" Momo: \"Savoir pourquoi tu es ici. Et pourquoi tu es si pressé de te battre.\" Momo puts his sunglasses back on: \"20h30. Et cette fois, regarde bien qui tu tapes.\" End on both faces, eyes locked. The crowd is silent in the background. No zoom, no punch, no walking away, no extra dialogue, no text, no narrator.",
+  "requested_duration_sec": 15.0,
+  "duration_sec": 15.041666666666666,
+  "aspect_ratio": "9:16",
+  "width": 768,
+  "height": 1344,
+  "fps": 24,
+  "frames": 361,
+  "steps": 8,
+  "video_profile": "ltx",
+  "seed": 10449023119220816229,
+  "audio_mode": "native",
+  "continuity_mode": "image",
+  "trace_id": "ep44v2_f_yard_reveal",
+  "image_path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\calliope-backend\\data\\assets\\44\\studio\\uploads\\430b73f581274f628fa1be3bf0a28600.png"
+}

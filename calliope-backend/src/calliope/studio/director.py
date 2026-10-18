@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from calliope.config import settings
 from calliope.studio import service
-from calliope.studio.director_contracts import ROLE, Budget, ShotContract
+from calliope.studio.director_contracts import ROLE, Budget, ShotContract, validate_speech_timing
 from calliope.studio.ltx_realization import action_sequence
 from calliope.studio.series_planner import generate_structured
 from calliope.studio.visual_identity import file_hash
@@ -127,15 +127,18 @@ def shot_hash(conn, shot, contract):
         {k: v for k, v in label.items() if k != "anchor_binding"}
         for label in live.get("screen_text", [])
     ]
-    return digest(
-        {
-            "contract": contract,
-            "live": live,
-            "references": references,
-            "canon": context.get("render_canon", {}),
-            "bible": context.get("bible", {}),
-        }
-    )
+    payload = {
+        "contract": contract,
+        "live": live,
+        "references": references,
+        "canon": context.get("render_canon", {}),
+        "bible": context.get("bible", {}),
+    }
+    if settings.studio_video_profile == "ltx":
+        from calliope.studio.ltx_prompt import LTX_PROMPT_VERSION
+
+        payload["prompt_compiler_version"] = LTX_PROMPT_VERSION
+    return digest(payload)
 
 
 def _state(conn, project_id):
@@ -226,6 +229,7 @@ def initialize(project_id, contracts):
             values.append(validate_contract(
                 value, context["entities"], context.get("render_canon", {}).get("props", {}),
             ))
+            validate_speech_timing(values[-1])
         conn.execute(
             "INSERT INTO studio_director_projects(project_id,budget_json) VALUES(?,?) "
             "ON CONFLICT(project_id) DO UPDATE SET approved_hash=NULL",
@@ -237,6 +241,9 @@ def initialize(project_id, contracts):
                 (shot["id"], json.dumps(contract)),
             )
             apply_contract(conn, shot["id"], contract)
+        from calliope.studio import plan_sync
+
+        plan_sync.sync_all(conn, project_id)
         row = conn.execute(
             "SELECT context_json FROM studio_episodes WHERE project_id=?", (project_id,)
         ).fetchone()
@@ -278,6 +285,7 @@ def apply_contract(conn, shot_id, value):
             for t in value["dialogue"]
         ],
         action=value["action"],
+        reaction="",
         start_state=value["initial_state"],
         end_state=value["final_state"],
         framing=value["framing"],
@@ -409,10 +417,16 @@ async def prepare(project_id, internal=False):
                     for action in requirements['action_sequence']
                 ],
             }
-        for field, values in requirements.get('prop_states', {}).items():
+        for field in ('initial_state', 'final_state'):
+            values = requirements.get('prop_states', {}).get(field, {})
+            required = set(requirements['required_state_keys']) | values.keys()
+            if field == 'initial_state' and requirements['continuation_state']:
+                required -= requirements['continuation_state'].keys()
+            value_schema = next(iter(schema['properties'][field]['patternProperties'].values()))
             schema['properties'][field]['properties'] = {
-                key: {'const': value} for key, value in values.items()}
-            schema['properties'][field]['required'] = list(values)
+                key: {'const': values[key]} if key in values else value_schema
+                for key in sorted(required)}
+            schema['properties'][field]['required'] = sorted(required)
         schema = {
             "$defs": schema.pop("$defs", {}),
             "type": "object", "additionalProperties": False, "required": ["shots"],
@@ -476,6 +490,9 @@ async def prepare(project_id, internal=False):
                              "When action_sequence is supplied, copy requirements.action verbatim "
                              "and include each supplied action once in chronology, in order, "
                              "adding only at_sec times. Do not expand or rewrite these events. "
+                             "For a continuation, software inherits continuation_state exactly. "
+                             "initial_state need only add new characters or props. Frame composition, "
+                             "positions and eyelines must honor the inherited starting state. "
                              "Copy prop_states exactly; choose consistent character poses. "
                              "All other characters stay silent. Previous/next data are spatial "
                              "continuity only, never permission to add a reply to this take. "
@@ -507,7 +524,10 @@ async def prepare(project_id, internal=False):
             try:
                 if value is None:
                     raise ValueError("Un seul contrat est requis.")
+                if isinstance(value, dict) and isinstance(value.get('initial_state'), dict) and requirements['continuation_state']:
+                    value = value | {'initial_state': value['initial_state'] | requirements['continuation_state']}
                 valid = validate_contract(value, memory["entities"], props)
+                validate_speech_timing(valid)
                 for field in ("casting", "location", "duration_sec"):
                     actual = set(valid[field]) if field == "casting" else valid[field]
                     wanted = set(requirements[field]) if field == "casting" else requirements[field]
@@ -554,7 +574,7 @@ async def prepare(project_id, internal=False):
                 )
                 if attempt == 2:
                     raise HTTPException(
-                        422, f"Plan {shot['id']}: {error} "
+                        422, f"Plan {index + 1}: {error} "
                         "Deux corrections automatiques ont échoué. "
                         "Les autres contrats sont conservés.",
                     ) from None
@@ -599,7 +619,7 @@ def approve(project_id, expected_hash):
     return state(project_id)
 
 
-def validate_live(conn, project_id, current, require_ready=True):
+def validate_live(conn, project_id, current, require_ready=True, speech_shot_ids=None):
     from calliope.studio.authored_script import authored_story
 
     shots = live_shots(conn, project_id)
@@ -611,7 +631,7 @@ def validate_live(conn, project_id, current, require_ready=True):
     if require_ready and plan.get('prompt_contract_version') == 2:
         seconds = sum(shot['duration_sec'] for shot in shots)
         target = float(frozen.get('target_seconds', 65))
-        if abs(seconds - target) > max(2., target * .1):
+        if abs(seconds - target) > max(2., target * .1) + 1e-6:
             raise HTTPException(
                 422, f'Durée prévue {seconds:g} s, cible {target:g} s : '
                 'repréparez le découpage sans ajouter de pauses de remplissage.')
@@ -624,7 +644,7 @@ def validate_live(conn, project_id, current, require_ready=True):
                 422, 'Ce scénario fourni a été réécrit par une ancienne préparation. '
                 "Recommencez cet épisode depuis son idée originale ; ses données seront archivées.")
     previous = None
-    for entry, shot in zip(current["shots"], shots):
+    for plan_number, (entry, shot) in enumerate(zip(current["shots"], shots), 1):
         context = service.shot_context(conn, shot["id"])
         try:
             contract = validate_contract(
@@ -632,15 +652,20 @@ def validate_live(conn, project_id, current, require_ready=True):
                 context.get("render_canon", {}).get("props", {}),
             )
         except ValueError as exc:
-            raise HTTPException(422, f"Plan {shot['id']}: {exc}") from None
+            raise HTTPException(422, f"Plan {plan_number}: {exc}") from None
         if contract["duration_sec"] != shot["duration_sec"]:
-            raise HTTPException(422, f"Plan {shot['id']}: duree differente du contrat.")
+            raise HTTPException(422, f"Plan {plan_number}: duree differente du contrat.")
         if shot["prompt"] != contract["action"] or shot["image_prompt"] != contract["first_frame"]:
             raise HTTPException(
-                422, f"Plan {shot['id']}: synchronisez les prompts depuis le contrat expert."
+                422, f"Plan {plan_number}: synchronisez les prompts depuis le contrat expert."
             )
         if contract["dialogue"] and shot["audio_mode"] != "native":
-            raise HTTPException(422, f"Plan {shot['id']}: dialogue present mais audio desactive.")
+            raise HTTPException(422, f"Plan {plan_number}: dialogue present mais audio desactive.")
+        if speech_shot_ids is None or shot['id'] in speech_shot_ids:
+            try:
+                validate_speech_timing(contract)
+            except ValueError as exc:
+                raise HTTPException(422, f"Plan {plan_number}: {exc}") from None
         required_states = set(context["shot"].get("prop_keys") or [])
         known_states = {e["key"] for e in context["entities"]} | set(
             context.get("render_canon", {}).get("props", {})
@@ -649,27 +674,46 @@ def validate_live(conn, project_id, current, require_ready=True):
             not required_states <= contract["initial_state"].keys()
             or not required_states <= contract["final_state"].keys()
         ):
-            raise HTTPException(422, f"Plan {shot['id']}: etats des objets du canon incomplets.")
+            raise HTTPException(422, f"Plan {plan_number}: etats des objets du canon incomplets.")
         if not (contract["initial_state"].keys() | contract["final_state"].keys()) <= known_states:
             raise HTTPException(
-                422, f"Plan {shot['id']}: etat rattache a une identite ou un objet inconnu."
+                422, f"Plan {plan_number}: etat rattache a une identite ou un objet inconnu."
             )
         if " ".join(t["text"] for t in contract["dialogue"]) != shot["dialogue"].strip():
-            raise HTTPException(422, f"Plan {shot['id']}: paroles differentes du contrat.")
+            raise HTTPException(422, f"Plan {plan_number}: paroles differentes du contrat.")
         turns = shot.get("dialogue_turns") or []
         if turns and [(t["speaker"], t["text"]) for t in turns] != [
             (t["speaker"], t["text"]) for t in contract["dialogue"]
         ]:
-            raise HTTPException(422, f"Plan {shot['id']}: attribution des voix differente.")
+            raise HTTPException(422, f"Plan {plan_number}: attribution des voix differente.")
         if shot["continue_from_previous"]:
             if previous is None or previous["location"] != contract["location"]:
                 raise HTTPException(422, "Raccord sans plan precedent dans le meme lieu.")
             for key, value in previous["final_state"].items():
                 if contract["initial_state"].get(key) != value:
-                    raise HTTPException(422, f"Plan {shot['id']}: raccord incompatible pour {key}.")
+                    raise HTTPException(422, f"Plan {plan_number}: raccord incompatible pour {key}.")
         if shot.get("purpose") not in ("midroll", "outro"):
             previous = contract
 
+
+def build_image_prompt(entry, plan):
+    c = entry["contract"]
+    lines = [
+        "Génère UNE image de départ (t=0), verticale 9:16, sans texte, bulles, filigranes ni interface.",
+        "Scène INDÉPENDANTE : ne reprends pas la composition ni le décor des autres plans.",
+        "Lieu : " + c["location"] + ". Personnages : " + (", ".join(c["casting"]) or "aucun") + ".",
+        "Première image : " + c["first_frame"],
+    ]
+    if c.get("positions"):
+        lines.append("Positions : " + "; ".join(k + " = " + v for k, v in c["positions"].items()))
+    if c.get("eyelines"):
+        lines.append("Regards : " + "; ".join(k + " = " + v for k, v in c["eyelines"].items()))
+    lines.append("Cadrage : " + c["framing"])
+    if c.get("initial_state"):
+        lines.append("État initial : " + "; ".join(k + " = " + v for k, v in c["initial_state"].items()))
+    if c.get("continuity"):
+        lines.append("Continuité : " + " ".join(c["continuity"]))
+    return "\n".join(lines)
 
 def package(project_id):
     with service.database() as conn:
@@ -688,15 +732,21 @@ def package(project_id):
             archive.writestr(
                 "README.txt",
                 "Generation MANUELLE dans une conversation ChatGPT.\n"
-                "Pour chaque plan: joindre les references indiquees au prompt, generer une "
-                "premiere image, puis enregistrer sous le nom exact du manifest.\n"
-                "Importer les images par lot dans Studio IA, les visualiser et les valider. "
-                "Les plans en continuation utilisent la derniere frame precedente: "
-                "image facultative.\n"
+                "Joins UNIQUEMENT ces fichiers a ChatGPT :\n"
+                "- prompts-episode-" + str(project_id) + ".txt (tous les plans a generer)\n"
+                "- les images du dossier references/ (4 images)\n"
+                "ChatGPT produit une image de depart par plan indique. Enregistre chaque "
+                "image sous le nom indique (ou tout autre nom), puis importe-les dans "
+                "Studio IA et choisis le plan correspondant dans le menu.\n"
+                "Les plans en continuation sont sans image : ils partent de la derniere "
+                "image du plan precedent.\n"
                 "Aucun appel automatique a ChatGPT.\n",
             )
             written = set()
-            for entry in current["shots"]:
+            legend = {}
+            guide = ["EPISODE " + str(project_id) + " - IMAGES A GENERER AVEC CHATGPT", ""]
+            continuations = []
+            for index, entry in enumerate(current["shots"]):
                 context = service.shot_context(conn, entry["id"])
                 refs = []
                 for entity in context["entities"]:
@@ -720,6 +770,8 @@ def package(project_id):
                             "available": bool(name),
                         }
                     )
+                    if name:
+                        legend.setdefault(name, (entity["key"], entity["description"]))
                 entity_keys = {entity["key"] for entity in context["entities"]}
                 for key, description in context.get("render_canon", {}).get("props", {}).items():
                     if key in entry["contract"]["references"] and key not in entity_keys:
@@ -761,11 +813,33 @@ def package(project_id):
                         indent=2,
                     )
                 )
-                prompt_file = "prompts/" + Path(entry["filename"]).stem + ".txt"
-                archive.writestr(prompt_file, prompt)
+                prompt_file = "prompts-episode-" + str(project_id) + ".txt"
+                if entry["continue_from_previous"]:
+                    continuations.append(index + 1)
+                else:
+                    title = "PLAN " + str(index + 1)
+                    if entry.get("purpose") in ("midroll", "outro"):
+                        title += " (CTA)"
+                    guide.append(
+                        "=" * 70
+                        + "\n"
+                        + title
+                        + " - fichier attendu : "
+                        + entry["filename"]
+                        + "\n"
+                        + "=" * 70
+                        + "\n"
+                        + "PROMPT À COLLER (envoie ce bloc seul, avec les références jointes) :\n"
+                        + build_image_prompt(entry, index + 1)
+                        + "\n\n"
+                        + "Détails techniques (optionnel) :\n"
+                        + prompt
+                        + "\n"
+                    )
                 manifest["shots"].append(
                     {
                         "id": entry["id"],
+                        "plan": index + 1,
                         "filename": entry["filename"],
                         "shot_hash": entry["hash"],
                         "prompt_file": prompt_file,
@@ -773,11 +847,37 @@ def package(project_id):
                         "continuation": entry["continue_from_previous"],
                     }
                 )
+
+
+
+            guide.insert(2, "References jointes : " + ", ".join(Path(n).name for n in legend))
+            guide.insert(3, "Consignes : une image t=0 par plan ci-dessous, dans cet ordre. Pas de texte, bulles, filigranes ni interface. Format 9:16. Aucune action future.")
+            guide.insert(4, "")
+            if continuations:
+                guide.append("Plans sans image (continuations) : " + ", ".join("Plan " + str(n) for n in continuations) + ".")
+            archive.writestr(
+                "prompts-episode-" + str(project_id) + ".txt",
+                "\n".join(guide),
+            )
             archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+
         return buffer.getvalue()
 
 
-def import_images(project_id, expected_hash, uploads):
+def image_prompt(project_id, shot_id):
+    with service.database() as conn:
+        current = _state(conn, project_id)
+        if not current.get("approved"):
+            raise HTTPException(409, "Validez le storyboard avant le prompt image.")
+        entry = next((s for s in current["shots"] if s["id"] == shot_id), None)
+        if not entry:
+            raise HTTPException(404, "Plan introuvable.")
+        if entry["continue_from_previous"]:
+            raise HTTPException(409, "Ce plan est une continuation: aucune image de depart necessaire.")
+    plan = next(i + 1 for i, s in enumerate(current["shots"]) if s["id"] == shot_id)
+    return {"shot_id": shot_id, "plan": plan, "prompt": build_image_prompt(entry, plan)}
+
+def import_images(project_id, expected_hash, uploads, shot_ids=None):
     import uuid
 
     from calliope.studio import series
@@ -785,21 +885,30 @@ def import_images(project_id, expected_hash, uploads):
     series.require_editable(project_id)
     if not uploads or len(uploads) > 100:
         raise HTTPException(422, "Importez entre 1 et 100 images.")
+    if shot_ids is not None and len(shot_ids) != len(uploads):
+        raise HTTPException(422, "Indiquez un plan par image.")
     prepared, seen = [], set()
     with service.database() as conn:
         conn.execute("BEGIN IMMEDIATE")
         current = require_hash(conn, project_id, expected_hash, approved=True)
         by_stem = {Path(s["filename"]).stem: s for s in current["shots"]}
-        for filename, content in uploads:
-            entry = by_stem.get(Path(filename).stem)
-            if (
-                not entry
-                or entry["id"] in seen
-                or Path(filename).suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp")
-            ):
-                raise HTTPException(
-                    422, "Nom inconnu, paquet obsolete ou plan en double: " + filename[:150]
-                )
+        by_id = {s["id"]: s for s in current["shots"]}
+        for index, (filename, content) in enumerate(uploads):
+            shot_id = shot_ids[index] if shot_ids is not None else None
+            if shot_id is not None:
+                entry = by_id.get(shot_id)
+                if entry is None:
+                    raise HTTPException(422, "Plan inconnu: " + str(shot_id))
+            else:
+                entry = by_stem.get(Path(filename).stem)
+                if entry is None:
+                    raise HTTPException(
+                        422, "Nom inconnu, paquet obsolete ou plan en double: " + filename[:150]
+                    )
+            if entry["id"] in seen:
+                raise HTTPException(422, "Plan en double: " + filename[:150])
+            if Path(filename).suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+                raise HTTPException(422, "Format non pris en charge: " + filename[:150])
             if len(content) > 25 * 1024 * 1024:
                 raise HTTPException(413, "Image superieure a 25 Mo.")
             try:
@@ -900,7 +1009,7 @@ def preflight(project_id, shot_ids=None):
         ).fetchone()
         seconds, count = 0.0, 0
         ids = set(shot_ids) if shot_ids is not None else None
-        for entry, shot in zip(current["shots"], live_shots(conn, project_id)):
+        for plan_number, (entry, shot) in enumerate(zip(current["shots"], live_shots(conn, project_id)), 1):
             if ids is not None and shot["id"] not in ids:
                 continue
             if shot["approved"] and shot["selected_video_id"]:
@@ -912,18 +1021,18 @@ def preflight(project_id, shot_ids=None):
                         raise HTTPException(422, "QC obsolete: video absente.")
                     guard_approval(conn, shot, take)
                 except HTTPException as exc:
-                    errors.append(f"Plan {shot['id']}: QC a refaire. {exc.detail}")
+                    errors.append(f"Plan {plan_number}: QC a refaire. {exc.detail}")
                 continue
             if not shot["continue_from_previous"] and not (
                 entry["image"] and entry["image"]["approved"]
             ):
-                errors.append(f"Plan {shot['id']}: image premiere frame absente ou non validee.")
+                errors.append(f"Plan {plan_number}: image premiere frame absente ou non validee.")
             if shot["continue_from_previous"]:
                 try:
                     source = service._previous_video(conn, shot["id"])
                 except HTTPException:
                     warnings.append(
-                        f"Plan {shot['id']}: derniere frame a verifier apres la prise precedente."
+                        f"Plan {plan_number}: derniere frame a verifier apres la prise precedente."
                     )
                 else:
                     previous = service.public_shot(conn, source["clip_id"])
@@ -936,7 +1045,7 @@ def preflight(project_id, shot_ids=None):
                                 previous.get("trim_end_sec"),
                             )
                         except HTTPException as exc:
-                            errors.append(f"Plan {shot['id']}: {exc.detail}")
+                            errors.append(f"Plan {plan_number}: {exc.detail}")
             try:
                 context = service.shot_context(conn, shot["id"])
                 prompt = compile_video_prompt(
@@ -960,7 +1069,7 @@ def preflight(project_id, shot_ids=None):
                     / H3_FPS
                 )
             except (ValueError, KeyError) as exc:
-                errors.append(f"Plan {shot['id']}: {service.safe_error(exc)}")
+                errors.append(f"Plan {plan_number}: {service.safe_error(exc)}")
                 continue
             if not shot["selected_video_id"]:
                 seconds += duration
@@ -1111,15 +1220,30 @@ async def revise(project_id, expected_hash, shot_ids, instruction, contracts=Non
         memory = series.context(conn, episode[0])
         props = json.loads(episode["plan_json"]).get("render_canon", {}).get("props", {})
     if contracts is None:
-        response = await generate_structured(
-            [
+        contract_schema = ShotContract.model_json_schema()
+        schema = {
+            "$defs": contract_schema.pop("$defs", {}),
+            "type": "object", "additionalProperties": False, "required": ["shots"],
+            "properties": {"shots": {
+                "type": "array", "minItems": len(wanted), "maxItems": len(wanted),
+                "items": {
+                    "type": "object", "additionalProperties": False,
+                    "required": ["id", "contract"],
+                    "properties": {
+                        "id": {"type": "integer", "enum": sorted(wanted)},
+                        "contract": contract_schema,
+                    },
+                },
+            }},
+        }
+        messages = [
                 {
                     "role": "system",
                     "content": ROLE
-                    + '\nReturn ONLY {"shots":[{"id":integer,"contract":ShotContract}]}. '
+                    + '\nReturn ONLY one JSON object {"shots":[{"id":integer,"contract":ShotContract}]}. '
                     "Return exactly the requested IDs, no others. "
                     "Do not change casting identity or the CTA dialogue. "
-                    "Schema: " + json.dumps(ShotContract.model_json_schema()),
+                    "Schema: " + json.dumps(schema),
                 },
                 {
                     "role": "user",
@@ -1134,12 +1258,46 @@ async def revise(project_id, expected_hash, shot_ids, instruction, contracts=Non
                         )
                     ),
                 },
-            ],
-            temperature=0.2,
-            max_tokens=16000,
-            json_mode=True,
-        )
-        contracts = response.get("shots") if isinstance(response, dict) else None
+            ]
+        proposed_dialogue = {}
+        for attempt in range(3):
+            response = await generate_structured(
+                messages, temperature=0.2, max_tokens=16000, json_mode=True,
+                required_keys=("shots",), retry_invalid=False,
+                diagnostics_dir=settings.assets_dir / str(project_id) / "studio" / "diagnostics",
+            )
+            contracts = response.get("shots") if isinstance(response, dict) else None
+            if not isinstance(contracts, list) or any(
+                not isinstance(item, dict) or item.get('id') not in wanted or 'contract' not in item
+                for item in contracts
+            ):
+                break
+            try:
+                timing_errors = []
+                for item in contracts:
+                    valid = validate_contract(item['contract'], memory['entities'], props)
+                    dialogue = [(line['speaker'], line['text']) for line in valid['dialogue']]
+                    if item['id'] in proposed_dialogue and dialogue != proposed_dialogue[item['id']]:
+                        raise ValueError('Conserver les paroles et locuteurs de la première proposition.')
+                    proposed_dialogue[item['id']] = dialogue
+                    try:
+                        validate_speech_timing(valid)
+                    except ValueError as exc:
+                        number = next(i + 1 for i, shot in enumerate(before['shots']) if shot['id'] == item['id'])
+                        timing_errors.append(f'Plan {number}: {exc}')
+                if timing_errors:
+                    raise ValueError('\n'.join(timing_errors))
+            except ValueError as exc:
+                if attempt == 2:
+                    raise HTTPException(422, f'Révision non enregistrée après trois tentatives : {exc}') from None
+                messages.extend([
+                    {'role': 'assistant', 'content': json.dumps(scrub(response), ensure_ascii=False)},
+                    {'role': 'user', 'content': 'Corrige cette erreur avant de renvoyer les contrats : '
+                     + str(exc) + ' Conserve les paroles et locuteurs de la proposition. '
+                     'Utilise le temps disponible ; si nécessaire, adapte la durée des seuls plans sélectionnés.'},
+                ])
+                continue
+            break
     if (
         not isinstance(contracts, list)
         or any(
@@ -1157,6 +1315,7 @@ async def revise(project_id, expected_hash, shot_ids, instruction, contracts=Non
     for item in contracts:
         try:
             updates[item["id"]] = validate_contract(item["contract"], memory["entities"], props)
+            validate_speech_timing(updates[item["id"]])
         except (KeyError, ValueError) as exc:
             raise HTTPException(422, f"Contrat de revision invalide: {exc}") from None
         original = next(s for s in before["shots"] if s["id"] == item["id"])
@@ -1167,7 +1326,8 @@ async def revise(project_id, expected_hash, shot_ids, instruction, contracts=Non
             story_changed = True
         if (
             original["purpose"] in ("midroll", "outro")
-            and updates[item["id"]]["dialogue"] != original["contract"]["dialogue"]
+            and [(line["speaker"], line["text"]) for line in updates[item["id"]]["dialogue"]]
+            != [(line["speaker"], line["text"]) for line in original["contract"]["dialogue"]]
         ):
             raise HTTPException(422, "Les paroles du CTA sont conservees.")
     series.require_editable(project_id)
@@ -1182,6 +1342,9 @@ async def revise(project_id, expected_hash, shot_ids, instruction, contracts=Non
                 (json.dumps(value), shot_id),
             )
             apply_contract(conn, shot_id, value)
+        from calliope.studio import plan_sync
+
+        plan_sync.sync_all(conn, project_id)
         for shot_id in affected:
             conn.execute(
                 "UPDATE studio_shots SET selected_video_id=NULL,approved=0,trim_start_sec=NULL,"
@@ -1189,7 +1352,8 @@ async def revise(project_id, expected_hash, shot_ids, instruction, contracts=Non
                 (shot_id,),
             )
             conn.execute("UPDATE clips SET clip_path=NULL WHERE id=?", (shot_id,))
-        validate_live(conn, project_id, _state(conn, project_id), require_ready=False)
+        validate_live(conn, project_id, _state(conn, project_id), require_ready=False,
+                      speech_shot_ids=wanted)
         if story_changed:
             events = [
                 shot["description"]
@@ -1278,7 +1442,10 @@ def guard_approval(conn, shot, take):
         return
     metadata = json.loads(take["metadata_json"] or "{}")
     verdict = metadata.get("dialogue_qc") or {}
-    if verdict.get("status") in ("extra", "missing", "inaudible", "duplicate", "repeated"):
+    if verdict.get("status") in (
+        "extra", "missing", "inaudible", "duplicate", "repeated",
+        "timing_mismatch", "audio_level",
+    ):
         raise HTTPException(422, "Paroles incorrectes ou audio absent: corrigez cette prise.")
     current = _state(conn, shot["project_id"])
     entry = next(s for s in current["shots"] if s["id"] == shot["id"])
@@ -1322,6 +1489,8 @@ def review_take(project_id, take_id, payload):
             "inaudible",
             "duplicate",
             "repeated",
+            "timing_mismatch",
+            "audio_level",
         ):
             raise HTTPException(
                 422, "Cette prise contient un defaut de parole detecte. Reprenez ce plan."

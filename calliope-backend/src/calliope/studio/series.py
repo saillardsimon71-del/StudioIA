@@ -410,7 +410,7 @@ def create_series(data):
                 data.get("aspect_ratio", "9:16"),
                 data.get("language", "en"),
                 data.get("target_seconds", 65),
-                json.dumps(directing_profile(data.get("directing_profile"))),
+                json.dumps(directing_profile({"cta_placement": "none"} | (data.get("directing_profile") or {}))),
             ),
         )
         conn.commit()
@@ -436,7 +436,10 @@ def update_series(series_id, data):
                 patch["production_mode"] = (
                     "manual" if patch["require_reference_approval"] else "automatic"
                 )
-            base = {} if "preset" in patch else current["directing_profile"]
+            base = (
+                {"cta_placement": current["directing_profile"]["cta_placement"]}
+                if "preset" in patch else current["directing_profile"]
+            )
             profile = directing_profile(base | patch)
             conn.execute(
                 "UPDATE studio_series SET directing_profile_json=? WHERE id=?",
@@ -529,6 +532,19 @@ def context(conn, series_id):
                 (row["project_id"],),
             )
         ]
+        history_shots = [
+            shot | {'state': json.loads(shot.pop('state_json') or '{}')} for shot in shots
+        ]
+        final_clips = json.loads(exported[0]).get("clips", []) if exported else []
+        final_story = [clip for clip in final_clips if clip.get("purpose") not in ("midroll", "outro")]
+        if final_story and all(
+            all(key in clip for key in ("description", "dialogue", "prompt", "state"))
+            for clip in final_story
+        ):
+            history_shots = [
+                {key: clip[key] for key in ("description", "dialogue", "prompt", "state")}
+                for clip in final_story
+            ]
         result["history"].append(
             {
                 "number": row["number"],
@@ -536,7 +552,7 @@ def context(conn, series_id):
                 "summary": row["summary"],
                 "events": json.loads(row["events_json"]),
                 "ongoing_plot": row["ongoing_plot"],
-                "shots": [shot | {'state': json.loads(shot.pop('state_json') or '{}')} for shot in shots],
+                "shots": history_shots,
             }
         )
     return result

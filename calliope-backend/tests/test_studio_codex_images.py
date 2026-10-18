@@ -14,7 +14,8 @@ from tests.test_studio import new_board, png_bytes
 
 
 @pytest.mark.asyncio
-async def test_codex_images_use_subscription_without_an_image_api_key(monkeypatch):
+@pytest.mark.parametrize('provider', ['codex', 'api'])
+async def test_live_images_require_manual_import_without_calling_a_provider(monkeypatch, provider):
     called = []
 
     async def generate(request, *, check_cancel=None):
@@ -23,13 +24,14 @@ async def test_codex_images_use_subscription_without_an_image_api_key(monkeypatc
 
     monkeypatch.setitem(sys.modules, "calliope.studio.codex_image", SimpleNamespace(generate=generate))
     monkeypatch.setattr(service, "settings", SimpleNamespace(
-        **(settings.model_dump() | {"studio_image_provider": "codex", "studio_image_api_key": None})
+        **(settings.model_dump() | {"dry_run": False, "studio_image_provider": provider,
+                                   "studio_image_api_key": None})
     ))
-    request = {"image_provider": "codex", "image_base_url": settings.studio_image_base_url,
+    request = {"image_provider": provider, "image_base_url": settings.studio_image_base_url,
                "image_model": "codex-imagegen", "aspect_ratio": "9:16", "prompt": "A deep hotel lobby."}
-    content, metadata = await service._generate_image(request)
-    assert content == png_bytes() and metadata["provider"] == "codex"
-    assert called == [request]
+    with pytest.raises(ValueError, match='Images manuelles uniquement'):
+        await service._generate_image(request)
+    assert called == []
 
 
 def test_codex_provider_can_be_saved_without_changing_text_service(client, monkeypatch):
@@ -162,5 +164,6 @@ def test_returned_image_must_belong_to_native_generator(native_runner, tmp_path)
 @pytest.mark.asyncio
 async def test_changing_provider_does_not_silently_retry_a_frozen_api_job(monkeypatch):
     monkeypatch.setattr(settings, "studio_image_provider", "codex")
+    monkeypatch.setattr(settings, "dry_run", True)
     with pytest.raises(ValueError, match="générateur.*changé"):
         await service._generate_image({"image_model": "agnes-2.5-flash", "reference_paths": []})

@@ -282,7 +282,7 @@ export interface DirectingProfile {
   require_reference_approval: boolean;
   production_mode: "automatic" | "manual";
   transitions: "cuts" | "scene_fades";
-  cta_placement: "middle" | "end";
+  cta_placement: "none" | "middle" | "end";
 }
 
 export interface StudioConfig {

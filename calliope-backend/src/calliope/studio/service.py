@@ -650,6 +650,9 @@ def update_shot(project_id, shot_id, data):
                 raise HTTPException(422, str(exc)) from None
             plan["speaker_ids"] = _speaker_ids_for_plan(live_plan)
             conn.execute("UPDATE studio_episodes SET plan_json=? WHERE project_id=?", (json.dumps(plan), project_id))
+        from calliope.studio import plan_sync
+
+        plan_sync.sync_shot(conn, project_id, shot_id)
         result = public_shot(conn, shot_id)
         conn.commit()
         return result
@@ -923,11 +926,23 @@ def require_source_visual_review(source, shot, context, previous_video_time=None
     if len(review.get("anchor_bindings", [])) != len(labels):
         raise HTTPException(422, "Les zones de texte de l'image de départ doivent être approuvées.")
     if source["kind"] == "video":
+        from calliope.engines.h3_graph import H3_FPS
         from calliope.engines.modal_h3 import _last_frame_png
+        from calliope.studio.screen_text import _anchor_frame
 
+        frame_index = int(review.get("frame_index") or 0)
+        if previous_video_time is not None:
+            expected = max(0, math.floor(float(previous_video_time) * H3_FPS) - 1)
+            if frame_index != expected:
+                raise HTTPException(
+                    422,
+                    "Approuvez la dernière frame conservée du plan précédent avant de poursuivre.",
+                )
         content = _last_frame_png(Path(source["output_path"]), previous_video_time)
-        with Image.open(io.BytesIO(content)) as image:
-            digest = hashlib.sha256(image.convert("RGB").tobytes()).hexdigest()
+        # L'approbation encode la frame via OpenCV ; la vérification doit utiliser
+        # le même décodeur pour comparer exactement les mêmes pixels.
+        frame = _anchor_frame(source["output_path"], frame_index)
+        digest = hashlib.sha256(frame[:, :, ::-1].tobytes()).hexdigest()
         if review.get("frame_pixel_sha256") != digest:
             raise HTTPException(
                 422, "Approuvez la dernière frame conservée du plan précédent avant de poursuivre."
@@ -1029,6 +1044,9 @@ def enqueue_takes(shot_id, data):
             "SELECT aspect_ratio FROM studio_projects WHERE project_id=?", (project["id"],)
         ).fetchone()[0]
         kind = data["kind"]
+        from calliope.engines.h3_graph import h3_profile
+
+        video_engine = h3_profile(settings.studio_video_profile)["label"]
         from calliope.studio.visual_identity import (
             compile_image_request,
             file_hash,
@@ -1089,6 +1107,10 @@ def enqueue_takes(shot_id, data):
                 context=context,
                 expected_dialogue=spoken_dialogue(shot | context.get("shot", {}), context),
             )
+            if settings.studio_video_profile == "ltx":
+                from calliope.studio.ltx_prompt import LTX_PROMPT_VERSION
+
+                parameters["prompt_compiler_version"] = LTX_PROMPT_VERSION
             if context.get("directing_profile", {}).get("require_reference_approval"):
                 info = context.get("shot") or {}
                 keys = (info.get("character_keys") or []) + (
@@ -1211,8 +1233,7 @@ def enqueue_takes(shot_id, data):
                     kind,
                     prompt,
                     seed,
-                    "FastH3 8-Step V2 / MiniMax H3"
-                    if kind == "video"
+                    video_engine if kind == "video"
                     else "Codex imagegen" if settings.studio_image_provider == "codex"
                     else settings.studio_image_model,
                     source["id"] if source else None,
@@ -1286,12 +1307,16 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
             "SELECT context_json FROM studio_episodes WHERE project_id=?", (project_id,)
         ).fetchone()
         if episode:
-            at_end = json.loads(episode["context_json"]).get("directing_profile", {}).get("cta_placement") == "end"
+            placement = json.loads(episode["context_json"]).get("directing_profile", {}).get("cta_placement")
+            at_end = placement == "end"
             promotions = [i for i, shot in enumerate(shots) if shot.get("purpose") == "midroll"]
             valid_position = len(promotions) == 1 and (
                 promotions[0] == len(shots) - 1 if at_end else 0 < promotions[0] < len(shots) - 1
             )
-            if not valid_position or any(
+            if placement == "none":
+                if any(shot.get("purpose") in ("midroll", "outro") for shot in shots):
+                    raise HTTPException(409, "Cet episode est sans CTA : retirez le plan promotionnel.")
+            elif not valid_position or any(
                 shot.get("purpose") == "outro" for shot in shots
             ):
                 position = "à la fin du récit" if at_end else "au milieu du récit"
@@ -1352,6 +1377,9 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
                     "duration_sec": effective.get("duration_sec") or shot["duration_sec"],
                     "beat_sec": shot["duration_sec"],
                     "dialogue": shot["dialogue"],
+                    "description": shot["description"],
+                    "prompt": shot["prompt"],
+                    "state": shot_context(conn, row['id'])["shot"],
                     "trim_start_sec": shot.get("trim_start_sec"),
                     "trim_end_sec": shot.get("trim_end_sec"),
                     "audio_mode": shot["audio_mode"],
@@ -1846,6 +1874,17 @@ async def run_studio_job(job, payload, should_stop):
                 if request["audio_mode"] == "native" and not info["has_audio"]:
                     raise ValueError("Le rendu FastH3 n'a pas de piste audio native.")
                 metadata = {**result.get("metadata", {}), **info}
+                if request.get("video_profile") == "ltx":
+                    from calliope.engines.ltx_graph import LTX_MODEL_REVISION, LTX_VIDEO_CFG
+
+                    metadata.setdefault("model_revision", LTX_MODEL_REVISION)
+                    metadata.setdefault("video_cfg", LTX_VIDEO_CFG)
+                    metadata.setdefault("audio_cfg", 1.0)
+                    metadata.setdefault("refinement_steps", 3)
+                    metadata.setdefault(
+                        "prompt_compiler_version",
+                        request.get("prompt_compiler_version"),
+                    )
                 temporary.replace(path)
             finally:
                 temporary.unlink(missing_ok=True)

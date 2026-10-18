@@ -1,0 +1,18 @@
+{
+  "contract_version": 1,
+  "prompt": "A single continuous cinematic medium shot in a small prison cell. Locked camera, no cuts, no zoom. Durio, the giant durian-headed inmate in an orange jumpsuit, stands facing a cracked concrete wall, side profile. He punches the wall once with his bare fist, breathing hard, then turns his head slightly and says in a very deep, raspy French voice: \"Ses lunettes vont pas me faire peur.\" He stares at the wall, jaw clenched. Bare cell, metal bunk, cold light. No text, no narrator, no extra dialogue.",
+  "requested_duration_sec": 5.0,
+  "duration_sec": 5.041666666666667,
+  "aspect_ratio": "9:16",
+  "width": 768,
+  "height": 1344,
+  "fps": 24,
+  "frames": 121,
+  "steps": 8,
+  "video_profile": "ltx",
+  "seed": 6433960372521772977,
+  "audio_mode": "native",
+  "continuity_mode": "image",
+  "trace_id": "ep44v2_b_cell_durio",
+  "image_path": "C:\\Users\\saill\\Documents\\Codex\\2026-10-07\\files-pasted-by-the-user-mission\\outputs\\studio-ia\\calliope-backend\\data\\assets\\44\\studio\\uploads\\cea50171fa1f46d484a44b3183a7ad7a.png"
+}

@@ -132,6 +132,11 @@ class ConfigUpdate(BaseModel):
     image_provider: Literal["api", "codex"] | None = None
     image_model: str | None = Field(default=None, min_length=1, max_length=200)
     image_api_key: str | None = None
+    tts_enabled: bool | None = None
+    tts_modal_app: str | None = Field(default=None, min_length=1, max_length=200)
+    tts_modal_function: str | None = Field(default=None, min_length=1, max_length=200)
+    tts_native_gain: float | None = Field(default=None, ge=0, le=1)
+    tts_turn_retries: int | None = Field(default=None, ge=1, le=6)
 
 
 def _validate_url(value):
@@ -160,6 +165,11 @@ async def get_config():
         "image_provider": settings.studio_image_provider,
         "image_model": settings.studio_image_model,
         "image_configured": bool(settings.studio_image_api_key),
+        "tts_enabled": settings.studio_tts_enabled,
+        "tts_modal_app": settings.studio_tts_modal_app,
+        "tts_modal_function": settings.studio_tts_modal_function,
+        "tts_native_gain": settings.studio_tts_native_gain,
+        "tts_turn_retries": settings.studio_tts_turn_retries,
         "dry_run": settings.dry_run,
         "pipeline_revision": runtime.LOADED_REVISION,
         "restart_required": runtime.source_revision() != runtime.LOADED_REVISION,
@@ -184,12 +194,17 @@ async def update_config(payload: ConfigUpdate):
         "image_provider": "studio_image_provider",
         "image_model": "studio_image_model",
         "image_api_key": "studio_image_api_key",
+        "tts_enabled": "studio_tts_enabled",
+        "tts_modal_app": "studio_tts_modal_app",
+        "tts_modal_function": "studio_tts_modal_function",
+        "tts_native_gain": "studio_tts_native_gain",
+        "tts_turn_retries": "studio_tts_turn_retries",
     }
     for key in ("llm_base_url", "image_base_url"):
         if key in data:
             _validate_url(data[key])
     for key, value in data.items():
-        setattr(settings, mapping.get(key, key), value.strip())
+        setattr(settings, mapping.get(key, key), value.strip() if isinstance(value, str) else value)
     if any(key.startswith("llm_") for key in data):
         settings.sync_legacy_llm_into_active()
     settings.save_config_file()

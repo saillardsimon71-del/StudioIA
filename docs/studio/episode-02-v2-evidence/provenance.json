@@ -1,0 +1,164 @@
+[
+  {
+    "source": "work/publish-ep44-v2/render_v2.py",
+    "archive": "render_v2.py.txt",
+    "sha256": "63157b880e4ba262c432e70b304b7646ce672420f2ce3d12afca8ecc412d6038",
+    "bytes": 9650
+  },
+  {
+    "source": "work/publish-ep44-v2/tts_build.py",
+    "archive": "tts_build.py.txt",
+    "sha256": "5e6291c189f8b650272fe4e312cd5c15bfd03c275fc2e445d57a588b31ed02bc",
+    "bytes": 6446
+  },
+  {
+    "source": "work/publish-ep44-v2/assemble_v2.py",
+    "archive": "assemble_v2.py.txt",
+    "sha256": "d9e3c0ec4fdc295229bf8969e0825a4673a5be9afff2de6012a53d1e9019decb",
+    "bytes": 8480
+  },
+  {
+    "source": "work/publish-ep44-v2/lines.json",
+    "archive": "lines.json",
+    "sha256": "2cd2d6b0aa8384d3e349fac32336d55bcd7311db72a81f57ceafe70e51015f0d",
+    "bytes": 6378
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/a-cantine/metadata.json",
+    "archive": "renders/a-cantine/metadata.json",
+    "sha256": "5b339a6890e6fce14ac42336e53aa76cded0304e5ce561729ecab93ded94e5b2",
+    "bytes": 952
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/a-cantine/request.json",
+    "archive": "renders/a-cantine/request.json",
+    "sha256": "4fc177dfa79d2169bc8507d5446804d17cc90195f5a9869d854dc3a80e34a012",
+    "bytes": 1955
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/b-cell-durio/metadata.json",
+    "archive": "renders/b-cell-durio/metadata.json",
+    "sha256": "872bfe322bc25e9698e6eee5fac664b536fb93b02623a5686feb2eb68cada990",
+    "bytes": 948
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/b-cell-durio/request.json",
+    "archive": "renders/b-cell-durio/request.json",
+    "sha256": "4d2520e192ff6f00d64b4b31e848b71e83fd09463411b2e6ef875badc2d5e6bf",
+    "bytes": 1096
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/c-cell-momo/metadata.json",
+    "archive": "renders/c-cell-momo/metadata.json",
+    "sha256": "22b8ca54a0bdc2e9efdbbe687a5bd71f94f2e66d5b3e067610085f7a012745d2",
+    "bytes": 947
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/c-cell-momo/request.json",
+    "archive": "renders/c-cell-momo/request.json",
+    "sha256": "a43b233fdc82d96daa660e2059760377cc96e5a6ac927b32997b78f9c2ed9f02",
+    "bytes": 1142
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/d-corridor/metadata.json",
+    "archive": "renders/d-corridor/metadata.json",
+    "sha256": "b6ff85672cf83ddfa1373258ca9f7c58b5344b8f3c19adc6ba9bcd4a91e1f7ab",
+    "bytes": 953
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/d-corridor/request.json",
+    "archive": "renders/d-corridor/request.json",
+    "sha256": "c76b3a21b20a2afdbf0c4d3668eddfdcdd03fde7fac1ae1a9ae5ad9bcdc7849d",
+    "bytes": 1603
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/e-yard-wide/metadata.json",
+    "archive": "renders/e-yard-wide/metadata.json",
+    "sha256": "822159bb3eb416abb45ee992b5be21027e1695210885fec57d4796f3c8088d19",
+    "bytes": 947
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/e-yard-wide/request.json",
+    "archive": "renders/e-yard-wide/request.json",
+    "sha256": "68753a545d8c5b2f2830b0ae3195119b689f5aca5fe78eef33e7a4e78f9d0bec",
+    "bytes": 1084
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/f-yard-reveal/metadata.json",
+    "archive": "renders/f-yard-reveal/metadata.json",
+    "sha256": "7a4c7819bc5970cc7e876cf7e36b7117134dc753d21a980c6a9af7dc4b0b24b6",
+    "bytes": 952
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/f-yard-reveal/request.json",
+    "archive": "renders/f-yard-reveal/request.json",
+    "sha256": "b16e24c9887157e5d11222a02158015231d4f4077e01fc13ba827840e7e7c713",
+    "bytes": 1525
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/timeline.json",
+    "archive": "renders/timeline.json",
+    "sha256": "7ae33c5bb5878e9cef5018ab039a9e6194c5d3a56fbcc8fd575d3ef35ab08f83",
+    "bytes": 233
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/a-cantine/prompt.txt",
+    "archive": "renders/a-cantine/prompt.txt",
+    "sha256": "864f2ce6fe78f26bb2db93dbcbc94569e037a59c11421a73b5640b2f9b5b74b4",
+    "bytes": 1349
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/b-cell-durio/prompt.txt",
+    "archive": "renders/b-cell-durio/prompt.txt",
+    "sha256": "3594cf6f6c5ea1980f7953ddc53833d03c55722ed5b9112197b8fff60c294a49",
+    "bytes": 499
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/c-cell-momo/prompt.txt",
+    "archive": "renders/c-cell-momo/prompt.txt",
+    "sha256": "b6ce1e020c80993569e726fca2c53025d97ad9207771b937852f60927ccdcd20",
+    "bytes": 546
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/d-corridor/prompt.txt",
+    "archive": "renders/d-corridor/prompt.txt",
+    "sha256": "c1f04ef5a5273827c3313148217834472aeeeb1c1c75a61055d1253874b1ddd0",
+    "bytes": 991
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/e-yard-wide/prompt.txt",
+    "archive": "renders/e-yard-wide/prompt.txt",
+    "sha256": "eb3b1f86a1c8c656bf7571ffac289a4f7d31674106b5472529b79d4cd90fe80e",
+    "bytes": 491
+  },
+  {
+    "source": "work/publish-ep44-v2/renders/f-yard-reveal/prompt.txt",
+    "archive": "renders/f-yard-reveal/prompt.txt",
+    "sha256": "3686f8475071b4e83da364afbc08087dec155778969ac41465a67ae42da680ac",
+    "bytes": 914
+  },
+  {
+    "source": "publish/episode-01-FINAL-V3/manifest.json",
+    "archive": "episode-01-published-v3/manifest.json",
+    "sha256": "fd969fe998a143d173bdc3dbc851f00d87505728069aefdcdcc96c7d8d68637b",
+    "bytes": 1566
+  },
+  {
+    "source": "publish/episode-01-FINAL-V3/qc.json",
+    "archive": "episode-01-published-v3/qc.json",
+    "sha256": "21f7b16575ea602b31e5e686a91f1e4b3f8c67777446e777f44c5950deeb052e",
+    "bytes": 2014
+  },
+  {
+    "source": "publish/episode-01-FINAL-V3/README.md",
+    "archive": "episode-01-published-v3/README.md",
+    "sha256": "57af9497a1df0a8c5f143e8c2426f9f1b32495cbf77e37a72b178f8d97974343",
+    "bytes": 2441
+  },
+  {
+    "source": "publish/episode-01-FINAL-V3/SCENARIO.md",
+    "archive": "episode-01-published-v3/SCENARIO.md",
+    "sha256": "fd06a537e21f6a6359a1be6b5d62a1db5febd71d0cac224b31a5328863b1cff0",
+    "bytes": 2852
+  }
+]

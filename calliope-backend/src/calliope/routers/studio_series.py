@@ -33,12 +33,12 @@ class SeriesCreate(BaseModel):
     language: str = Field(default="en", min_length=1, max_length=40)
     target_seconds: int = Field(default=65, ge=10, le=120)
     bible: BiblePatch = Field(default_factory=BiblePatch)
-    directing_profile: DirectingProfile = Field(default_factory=lambda: DirectingProfile(cta_placement='end'))
+    directing_profile: DirectingProfile = Field(default_factory=lambda: DirectingProfile(cta_placement='none'))
 
     @field_validator('directing_profile', mode='before')
     @classmethod
     def new_series_profile(cls, value):
-        return {'cta_placement':'end'} | value if isinstance(value, dict) else value
+        return {'cta_placement':'none'} | value if isinstance(value, dict) else value
 
     @field_validator("title", "concept", "language")
     @classmethod

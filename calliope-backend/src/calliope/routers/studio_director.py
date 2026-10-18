@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from pydantic import Field
@@ -94,10 +95,23 @@ async def package(project_id: int):
 
 @router.post("/projects/{project_id}/director/images")
 async def images(
-    project_id: int, expected_hash: str = Form(...), files: list[UploadFile] = File(...)
+    project_id: int,
+    expected_hash: str = Form(...),
+    files: list[UploadFile] = File(...),
+    shot_ids: str | None = Form(None),
 ):
     if len(files) > 100:
         raise HTTPException(413, "100 images maximum par lot.")
+    ids = None
+    if shot_ids is not None:
+        try:
+            ids = json.loads(shot_ids)
+        except ValueError:
+            raise HTTPException(422, "shot_ids doit etre une liste JSON.") from None
+        if not isinstance(ids, list) or len(ids) != len(files):
+            raise HTTPException(422, "Indiquez un plan par image.")
+        if any(v is not None and (type(v) is not int or v <= 0) for v in ids):
+            raise HTTPException(422, "Chaque plan doit etre un identifiant entier positif.")
     uploads, total = [], 0
     for file in files:
         content = await file.read(25 * 1024 * 1024 + 1)
@@ -105,7 +119,14 @@ async def images(
         if len(content) > 25 * 1024 * 1024 or total > 100 * 1024 * 1024:
             raise HTTPException(413, "Image 25 Mo et lot 100 Mo maximum.")
         uploads.append((file.filename or "", content))
-    return await asyncio.to_thread(director.import_images, project_id, expected_hash, uploads)
+    return await asyncio.to_thread(
+        director.import_images, project_id, expected_hash, uploads, ids
+    )
+
+
+@router.get("/projects/{project_id}/director/shots/{shot_id}/image-prompt")
+async def image_prompt(project_id: int, shot_id: int):
+    return await asyncio.to_thread(director.image_prompt, project_id, shot_id)
 
 
 @router.post("/projects/{project_id}/director/images/{take_id}/review")
