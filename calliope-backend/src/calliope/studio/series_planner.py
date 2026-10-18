@@ -535,6 +535,15 @@ def _validate_story_realization(story, plan, draft=None):
             for index in range(len(turns)):
                 path = ["scenes", si, "shots", ti]
                 origins.append(path + ["dialogue_turns", index] if raw.get("dialogue_turns") else path)
+    # Detect large dialogue loss before source-locked validation, which
+    # otherwise exposes only the surviving scene paths as repair targets.
+    drift = abs(len(expected) - len(actual))
+    if drift > MAX_TARGETED_DIALOGUE_COUNT_DRIFT:
+        raise _UnrecoverableStoryRealizationError(
+            f"Arrêt sans réparation automatique : {drift} répliques manquantes "
+            "ou supplémentaires dans la réalisation, aucune destination locale fiable.",
+            [],
+        )
     if invalid_indices:
         raise _NativeValidationError(
             'source_beat_index: conserver les étapes du scénario fourni, sans les fusionner ni déplacer leurs répliques. '
@@ -549,14 +558,6 @@ def _validate_story_realization(story, plan, draft=None):
         message = ("creative_story: la préparation doit conserver les répliques, leur ordre et leurs locuteurs. "
                    f"Attendu {json.dumps(expected, ensure_ascii=False)}; reçu {json.dumps(actual, ensure_ascii=False)}.")
         if len(actual) != len(expected):
-            drift = abs(len(expected) - len(actual))
-            if drift > MAX_TARGETED_DIALOGUE_COUNT_DRIFT:
-                raise _UnrecoverableStoryRealizationError(
-                    f"{message} Arrêt sans réparation automatique : "
-                    f"{drift} répliques manquantes ou supplémentaires, "
-                    "aucune destination de correction locale fiable.",
-                    [],
-                )
             raise _StoryRealizationError(
                 message, [['scenes', i, 'shots'] for i in range(len(plan['scenes']))]
             )
