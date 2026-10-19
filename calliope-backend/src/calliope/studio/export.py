@@ -12,7 +12,9 @@ import tempfile
 from fractions import Fraction
 from pathlib import Path
 
-_SIZES = {"16:9": (1280, 720), "9:16": (720, 1280), "1:1": (960, 960)}
+from . import editorial
+
+_SIZES = {"16:9": (1280, 720), "9:16": (1080, 1920), "1:1": (960, 960)}
 _PROCESS_OPTIONS = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 
@@ -284,6 +286,9 @@ async def assemble(
     width, height = size
     durations = [max(0.0, end - start) for start, end in windows]
     total_duration = sum(durations)
+    sequence = editorial.validate_cuts(durations)
+    if not sequence["ok"]:
+        raise ValueError("Montage non conforme : " + str(sequence["error"]))
     _check_target(total_duration, frozen.get("target_seconds"), "des fenêtres utiles")
     base = [ffmpeg, "-v", "error", "-nostdin", "-nostats", "-progress", "pipe:1", "-y"]
     with tempfile.TemporaryDirectory(prefix="studio-export-", dir=destination.parent) as temporary:
@@ -323,12 +328,22 @@ async def assemble(
                 overlays.append({"clip_id": clip.get("clip_id"), **overlay_data})
             if not native_audio:
                 command += ["-f", "lavfi", "-i", "anullsrc=cl=stereo:r=48000"]
-            video_filter = (
-                f"scale={width}:{height}:force_original_aspect_ratio=decrease:"
-                f"force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
-                "setsar=1,fps=24,format=yuv420p,setpts=PTS-STARTPTS"
-                + ("," + overlay_filter if overlay_filter else "")
-            )
+            if (width, height) == (1080, 1920):
+                # Le format social valide (V3/V4) remplit le cadre : un léger
+                # recadrage de 4:7 vers 9:16 évite les barres noires.
+                video_filter = (
+                    f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+                    f"crop={width}:{height},setsar=1,fps=24,format=yuv420p,"
+                    "setpts=PTS-STARTPTS"
+                )
+            else:
+                video_filter = (
+                    f"scale={width}:{height}:force_original_aspect_ratio=decrease:"
+                    f"force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
+                    "setsar=1,fps=24,format=yuv420p,setpts=PTS-STARTPTS"
+                )
+            if overlay_filter:
+                video_filter += "," + overlay_filter
             fade = (
                 frozen.get("transitions") == "scene_fades" and index > 0
                 and clip.get("scene_id") is not None
@@ -458,12 +473,26 @@ async def assemble(
             raise ValueError("Durée du MP4 incohérente avec les plans conservés au montage.")
         video_duration = float(metadata["duration_sec"])
         padded = work / "final.mp4"
+        pad_audio_filter = f"apad=whole_dur={video_duration:.9f}"
+        final_audio = frozen.get("audio", {})
+        has_native_audio = any(
+            clip.get("audio_mode") == "native" and probe.get("has_audio")
+            for clip, probe in zip(clips, probes)
+        )
+        if has_native_audio and final_audio.get("loudnorm", True):
+            target = float(final_audio.get("loudness_target_lufs", -23))
+            peak = float(final_audio.get("true_peak_db", -1))
+            pad_audio_filter += (
+                f",loudnorm=I={target:g}:TP={peak:g}:LRA=11,"
+                "alimiter=limit=0.794328:level=false"
+            )
+        pad_audio_filter += ",aresample=48000"
         pad_command = base + [
             "-i", str(ready),
             "-map", "0:v:0",
             "-map", "0:a:0",
             "-c:v", "copy",
-            "-af", f"apad=whole_dur={video_duration:.9f}",
+            "-af", pad_audio_filter,
             "-t", f"{video_duration:.9f}",
             "-c:a", "aac",
             "-b:a", "192k",

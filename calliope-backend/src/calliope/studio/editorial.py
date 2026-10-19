@@ -109,3 +109,43 @@ def validate_plan(plan: dict) -> dict:
         "duration_sec": round(total, 3),
         "cuts_per_10s": round(cuts / (total / 10), 3) if total else 0.0,
     }
+
+
+def validate_cuts(durations: list[float]) -> dict:
+    """Refuse un montage qui coupe à chaque réplique.
+
+    Ce contrôle est utilisé par l'export, y compris pour les assemblages
+    manuels : un plan par réplique doit échouer avant l'encodage, pas être
+    masqué par un fondu ou une validation humaine.
+    """
+    values = [max(0.0, float(value or 0)) for value in durations]
+    total = sum(values)
+    cuts = max(0, len(values) - 1)
+    if total <= 0:
+        return {
+            "ok": False,
+            "error": "Durée totale nulle.",
+            "cuts": cuts,
+            "duration_sec": 0.0,
+            "maximum": 0,
+        }
+    maximum = max(2, math.ceil(total / 8))
+    if cuts > maximum:
+        return {
+            "ok": False,
+            "error": (
+                f"Trop de coupes : {cuts} pour {total:.1f} s "
+                f"(maximum {maximum})."
+            ),
+            "cuts": cuts,
+            "duration_sec": round(total, 3),
+            "maximum": maximum,
+        }
+    return {
+        "ok": True,
+        "error": None,
+        "cuts": cuts,
+        "duration_sec": round(total, 3),
+        "maximum": maximum,
+    }
+

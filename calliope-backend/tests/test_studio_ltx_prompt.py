@@ -108,3 +108,27 @@ def test_ltx_prompt_keeps_a_medium_low_voice_out_of_raspy():
     prompt = compile_ltx_prompt(shot, context, first_frame=False)
     assert "warm, medium-low French voice" in prompt
     assert "low, raspy French voice" not in prompt
+
+
+def test_ltx_prompt_keeps_critical_constraints_when_trimming_optional_prose():
+    shot, context = sample()
+    shot["soundscape"] = "quiet room tone " * 40
+    shot["reaction"] = "A long optional reaction " * 20
+    prompt = compile_ltx_prompt(shot, context, first_frame=False)
+    assert "Only the named speaker speaks" in prompt
+    assert "Speak each quoted line exactly once" in prompt
+    assert "The voice stays in the foreground" in prompt
+    assert "Ambient sound:" not in prompt
+    assert len(prompt.split()) <= 200
+
+
+def test_ltx_prompt_fails_loudly_instead_of_dropping_critical_dialogue():
+    shot, context = sample()
+    long_line = "This line is deliberately long " * 8
+    shot["dialogue"] = " ".join([long_line] * 20)
+    shot["dialogue_turns"] = [
+        {"speaker": "lila", "text": long_line} for _ in range(20)
+    ]
+    with pytest.raises(ValueError, match="trop long même après réduction"):
+        compile_ltx_prompt(shot, context, first_frame=False)
+

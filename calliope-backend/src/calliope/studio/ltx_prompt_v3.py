@@ -232,12 +232,19 @@ def compile_ltx_prompt(shot, context, first_frame):
             })
             _append_visual(parts, prose(turn.get("reaction") or ""), True, seen)
         parts.append({
+            "text": (
+                "Only the named speaker speaks; every other character stays "
+                "silent with their mouth closed."
+            ),
+            "optional": False,
+        })
+        parts.append({
             "text": "The voice stays in the foreground above the ambience.",
-            "optional": True,
+            "optional": False,
         })
         parts.append({
             "text": "Speak each quoted line exactly once, in order.",
-            "optional": True,
+            "optional": False,
         })
     else:
         parts.append({
@@ -273,7 +280,7 @@ def compile_ltx_prompt(shot, context, first_frame):
         if soundscape and soundscape.casefold() != "n/a":
             parts.append({"text": f"Ambient sound: {soundscape}", "optional": True})
     if labels:
-        parts.append({"text": "No on-screen text, captions or subtitles.", "optional": True})
+        parts.append({"text": "No on-screen text, captions or subtitles.", "optional": False})
     if first_frame:
         parts.append({
             "text": "Do not re-describe the opening image; show only the new motion.",
@@ -283,8 +290,6 @@ def compile_ltx_prompt(shot, context, first_frame):
     parts = _limit_words(parts, LTX_PROMPT_TARGET_WORDS)
     prompt = re.sub(r"\s+", " ", " ".join(part["text"] for part in parts)).strip()
     return prompt
-
-    return "natural"
 
 
 def _limit_words(parts: list[dict], maximum: int) -> list[dict]:
