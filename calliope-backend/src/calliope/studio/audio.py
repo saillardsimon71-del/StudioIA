@@ -438,7 +438,7 @@ def mix_command(base, source, config, durations, directory, ready):
         + f"amix=inputs={len(inputs)}:duration=first:normalize=0{holds}[background]"
     )
     filters.append(
-        "[voice][background]amix=inputs=2:duration=first:normalize=0,"
+        "[voice][background]amix=inputs=2:duration=longest:normalize=0,"
         "alimiter=limit=0.94:level=0:latency=1[mixed]"
     )
     return command + [

@@ -456,6 +456,28 @@ async def assemble(
         metadata = await asyncio.to_thread(inspect_media, ready)
         if abs(metadata["duration_sec"] - total_duration) > max(0.1, len(clips) / 24 + 0.01):
             raise ValueError("Durée du MP4 incohérente avec les plans conservés au montage.")
+        video_duration = float(metadata["duration_sec"])
+        padded = work / "final.mp4"
+        pad_command = base + [
+            "-i", str(ready),
+            "-map", "0:v:0",
+            "-map", "0:a:0",
+            "-c:v", "copy",
+            "-af", f"apad=whole_dur={video_duration:.9f}",
+            "-t", f"{video_duration:.9f}",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-ar", "48000",
+            "-ac", "2",
+            "-movflags", "+faststart",
+            str(padded),
+        ]
+        await _run_ffmpeg(
+            pad_command, video_duration, 0.99, 0.995, "Alignement audio",
+            progress_callback, cancel_check,
+        )
+        ready = padded
+        metadata.update(await asyncio.to_thread(inspect_media, ready))
         warning = _check_target(
             metadata["duration_sec"], frozen.get("target_seconds"), "du MP4 réel"
         )
