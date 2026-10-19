@@ -116,6 +116,30 @@ aucun job pending/running. Le projet 44 est en pause au QC.
   `1465e4cecc8a72887e907c8f37e4c73e8c8ee7f8ef13c8e497c46d67979d7cef`,
   57469808 octets, 60,666 s, 1080x1920, audio 48 kHz stéréo.
 
+## Installation vérifiée
+
+Le Studio a redémarré le 19 octobre sur le port 8247 avec
+`pipeline_revision=d072499b461b157e` et `restart_required=false`.
+DeepSeek reste `deepseek-v4-pro`. L'épisode 44 reste `paused/qc`.
+Les comptes de projets/séries/épisodes/prises/exports sont identiques à la
+sauvegarde. Comparaison intégrale des lignes inchangées dans les sept tables
+`studio_episodes`, `studio_shots`, `studio_director_shots`, `studio_takes`,
+`studio_exports`, `studio_productions`, `studio_entities`. Les deux MP4 ont
+strictement les mêmes SHA-256. Aucun job actif et aucune source de test ajoutée
+à la base réelle. La migration ajoute uniquement la table des sources.
+
+Le test navigateur a utilisé une base séparée sur le port 8251. Capture locale :
+`work/source-video-interface.png`.
+
+Pour relancer ultérieurement, après avoir fermé l'instance existante :
+
+```powershell
+Set-Location 'C:\Users\saill\Documents\Codex\2026-10-07\files-pasted-by-the-user-mission\outputs\studio-ia'
+.\.venv\Scripts\python.exe .\run_studio.py --port 8247
+```
+
+Le Studio est déjà lancé ; il n'est pas nécessaire de le relancer maintenant.
+
 ## Limites de cette tranche
 
 Le module ne reconnaît pas automatiquement expressions, identités, poses ou
