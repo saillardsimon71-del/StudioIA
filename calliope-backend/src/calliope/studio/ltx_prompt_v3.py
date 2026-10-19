@@ -13,6 +13,7 @@ Le compilateur est volontairement déterministe : aucune dépendance au LLM.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from .h3_prompt import (
     dialogue_language,
@@ -77,18 +78,41 @@ def _unique_sentences(*values: str) -> str:
     return " ".join(result)
 
 
+def _fold_accents(value: str) -> str:
+    """Retire les accents pour comparer des descriptions sans dependance d'encodage."""
+    return "".join(
+        char for char in unicodedata.normalize("NFKD", value)
+        if not unicodedata.combining(char)
+    )
+
+
 def _voice_label(description: str) -> str:
-    text = str(description or "").casefold()
-    if any(word in text for word in ("grave", "rauque", "profond")):
+    """Traduit une description vocale en indication LTX courte.
+
+    Les nuances sont testees de la plus precise a la plus generale : une voix
+    "legerement plus grave" ne doit pas devenir "low, raspy" comme une voix
+    "tres grave, rauque", sinon l'identite vocale des personnages se confond.
+    """
+    text = _fold_accents(str(description or "").casefold())
+    if any(word in text for word in (
+        "legerement plus grave", "un peu plus grave",
+        "plus adulte", "moins enfantine", "moins enfantin",
+    )):
+        return "slightly lower, more mature"
+    if "medium-grave" in text:
+        return "warm, medium-low"
+    if any(word in text for word in ("tres grave", "rauque", "profond")):
         return "low, raspy"
     if any(word in text for word in ("aigu", "nasillard", "nasillarde")):
         return "high, nasal"
-    if any(word in text for word in ("calme", "posé", "pose", "posée")):
+    if any(word in text for word in ("calme", "pose")):
         return "calm, measured"
     if any(word in text for word in ("trembl", "nerveux", "nerveuse")):
         return "nervous, trembling"
-    if any(word in text for word in ("deep", "low", "masculine", "grave")):
+    if any(word in text for word in ("deep", "low", "masculine")):
         return "low, resonant"
+    if "grave" in text:
+        return "low"
     if any(word in text for word in ("bright", "young")):
         return "bright, youthful"
     if any(word in text for word in ("warm", "feminine")):
