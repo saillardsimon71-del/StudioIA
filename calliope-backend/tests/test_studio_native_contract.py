@@ -802,6 +802,7 @@ async def test_real_export_removes_phone_only_for_native_contract(media, tmp_pat
         "ffmpeg", "-v", "error", "-ss", "0.5", "-i", str(output),
         "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"
     ])
-    pixel = Image.open(io.BytesIO(frame)).convert("RGB").getpixel((490, 700))
+    image = Image.open(io.BytesIO(frame)).convert("RGB")
+    pixel = image.getpixel((round(image.width * 490 / 720), round(image.height * 700 / 1280)))
     assert (pixel[2] > 200) is (version == 2)
     assert result["screen_text"][0]["labels"][0]["text"] == "123"

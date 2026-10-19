@@ -586,11 +586,9 @@ def test_cost_reservations_block_multiple_takes_and_are_idempotent(client, prepa
 
 
 @pytest.mark.asyncio
-async def test_plan_to_qc_and_targeted_retake_without_gpu(client, prepared, monkeypatch, tmp_path):
-    from pathlib import Path
+async def test_plan_qc_rejects_fragmented_export_and_preserves_targeted_retake(client, prepared, monkeypatch, tmp_path):
     from calliope.agent import llm
     from calliope.studio import director, production, series, video_preparation
-    from calliope.studio.export import inspect_media
     from calliope.queue.manager import queue_manager
     from tests.test_studio import video_bytes
     project, shots = prepared
@@ -660,11 +658,11 @@ async def test_plan_to_qc_and_targeted_retake_without_gpu(client, prepared, monk
                   'visual_ok': True, 'continuity_ok': True, 'speakers_ok': True, 'audio_ok': True})
         assert reviewed.status_code == 200, reviewed.text
     series.resume(project)
-    outputs = await production.run_production(job, payload, lambda: False)
-    queue_manager.mark_done(old_job, outputs)
-    assert len(outputs) == 1 and Path(outputs[0]).is_file()
-    assert inspect_media(Path(outputs[0]))['has_audio'] is True
-    assert service.board(project)['production']['status'] == 'done'
+    with pytest.raises(RuntimeError, match='Trop de coupes'):
+        await production.run_production(job, payload, lambda: False)
+    queue_manager.mark_failed(old_job, 'Trop de coupes')
+    assert not any(item['output_path'] for item in service.board(project)['exports'])
+    assert service.board(project)['production']['status'] == 'failed'
     assert calls == [shot['id'] for shot in shots], 'Reviewed takes must never be rendered again'
     saved = {s['id']: s['selected_video_id'] for s in service.board(project)['scenes'][0]['shots']}
     retried = client.post(f"/api/studio/projects/{project}/shots/{shots[1]['id']}/retake",
