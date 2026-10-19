@@ -312,7 +312,7 @@ def public_shot(conn, shot_id):
     clip["purpose"] = context.get("purpose", "")
     clip.update({key: context[key] for key in (
         "prop_keys", "start_state", "end_state", "cut_reason", "action", "reaction",
-        "framing", "camera", "blocking", "post_dub_turns"
+        "framing", "camera", "blocking", "post_dub_turns", "source_beat_index"
     ) if key in context})
     clip["prompt_contract_version"] = shot_context(conn, shot_id)["prompt_contract_version"]
     if clip["continue_from_previous"]:
@@ -1307,6 +1307,10 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
             "SELECT context_json FROM studio_episodes WHERE project_id=?", (project_id,)
         ).fetchone()
         if episode:
+            if json.loads(episode['context_json']).get('source_video'):
+                from calliope.studio import director
+
+                director.validate_live(conn, project_id, director._state(conn, project_id))
             placement = json.loads(episode["context_json"]).get("directing_profile", {}).get("cta_placement")
             at_end = placement == "end"
             promotions = [i for i, shot in enumerate(shots) if shot.get("purpose") == "midroll"]
@@ -1345,6 +1349,8 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
         ).fetchone()
         clips, missing = [], []
         from calliope.studio import director
+        if episode and json.loads(episode['context_json']).get('source_video'):
+            director.validate_live(conn, project_id, director._state(conn, project_id))
         for row in conn.execute(
             "SELECT c.id,c.scene_id,s.heading,c.order_index FROM clips c "
             "JOIN scenes s ON s.id=c.scene_id "
@@ -1383,6 +1389,7 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
                     "trim_start_sec": shot.get("trim_start_sec"),
                     "trim_end_sec": shot.get("trim_end_sec"),
                     "audio_mode": shot["audio_mode"],
+                    "continue_from_previous": shot['continue_from_previous'],
                     "screen_text": shot.get("screen_text", []),
                     "purpose": shot.get("purpose", ""),
                     "prompt_contract_version": shot["prompt_contract_version"],
@@ -1413,6 +1420,13 @@ async def enqueue_export(project_id, request_id, parent_job_id=None):
         ).fetchone()
         if episode:
             frozen = json.loads(episode[0])
+            if frozen.get('source_video'):
+                source = frozen['source_video']
+                snapshot['source_reference'] = {
+                    'id': source['id'], 'sha256': source['sha256'],
+                    'timeline': [{k: s[k] for k in ('start_sec', 'end_sec')}
+                                 for s in source['analysis']['shots']],
+                }
             snapshot["target_seconds"] = frozen.get("target_seconds")
             from calliope.studio.h3_prompt import directing_profile
             snapshot["transitions"] = directing_profile(

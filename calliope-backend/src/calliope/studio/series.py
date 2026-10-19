@@ -559,6 +559,8 @@ def context(conn, series_id):
 
 
 def create_episode(series_id, data):
+    if data.get('video_source_id'):
+        data = data | {'studio_director': True}
     if data.get('studio_director'):
         data = data | {'prepare_only': True, 'image_mode': 'manual_chatgpt'}
     if data.get("prepare_only"):
@@ -577,6 +579,10 @@ def create_episode(series_id, data):
         if old:
             if (
                 old["idea"] != data["idea"].strip()
+                or (json.loads(old['context_json']).get('source_video') or {}).get('id')
+                != data.get('video_source_id')
+                or (json.loads(old['context_json']).get('source_video') or {}).get('hash')
+                != data.get('video_source_hash')
                 or old["objective"] != data.get("objective", "").strip()
                 or bool(json.loads(old["context_json"]).get("prepare_only"))
                 != bool(data.get("prepare_only"))
@@ -614,6 +620,14 @@ def create_episode(series_id, data):
         if data.get('tone', '').strip():
             frozen['bible'] = frozen['bible'] | {'tone': data['tone'].strip()}
         frozen["image_mode"] = data.get("image_mode", "generated")
+        if data.get('video_source_id'):
+            from calliope.studio.source_video import frozen_source
+            from calliope.studio.series_planner import _midroll_spec
+
+            frozen['source_video'] = frozen_source(
+                conn, series_id, data['video_source_id'], data.get('video_source_hash'))
+            frozen['target_seconds'] = (
+                frozen['source_video']['analysis']['duration_sec'] + _midroll_spec(frozen)['duration_sec'])
         cur = conn.execute(
             "INSERT INTO projects(title,idea) VALUES(?,?)",
             (f"{current['title']} - Épisode {number}", data["idea"].strip()),

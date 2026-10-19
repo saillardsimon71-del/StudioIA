@@ -54,6 +54,7 @@ export interface Shot {
   dialogue: string;
   purpose?: string;
   prompt_contract_version?: number;
+  source_beat_index?: number;
   action?: string;
   reaction?: string;
   framing?: string;
@@ -396,7 +397,7 @@ export const studio = {
     request<Board>(`/projects/${projectId}/visual-contract`, "POST"),
   createEpisode: (
     id: number,
-    payload: { idea: string; objective: string; request_id: string; prepare_only?: boolean; image_mode?: "generated" | "text_to_video"; studio_director?: boolean; target_seconds?: number; tone?: string },
+    payload: { idea: string; objective: string; request_id: string; prepare_only?: boolean; image_mode?: "generated" | "text_to_video"; studio_director?: boolean; target_seconds?: number; tone?: string; video_source_id?: string; video_source_hash?: string },
   ) =>
     request<{ project_id: number; job_id: number }>(
       `/series/${id}/episodes`,

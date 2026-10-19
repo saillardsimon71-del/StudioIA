@@ -5,6 +5,8 @@
   import EntityIdentityEditor from "$lib/studio/EntityIdentityEditor.svelte";
   import SeriesReferenceImporter from "$lib/studio/SeriesReferenceImporter.svelte";
   import SeriesActions from "$lib/studio/SeriesActions.svelte";
+  import SourceVideoImport from "$lib/studio/SourceVideoImport.svelte";
+  import type { VideoSource } from "$lib/studio/source-video-api";
   import {
     studio,
     newRequestId,
@@ -26,6 +28,8 @@
   let busy = $state("");
   let configOpen = $state(false);
   let episodeOpen = $state(false);
+  let episodeMode = $state<'concept' | 'video'>('concept');
+  let videoSource = $state<VideoSource | null>(null);
   let requestId = "";
   let requestContent = "";
   let loadedId = 0;
@@ -83,19 +87,23 @@
     if (busy) return;
     busy = "episode";
     error = "";
-    const content = JSON.stringify([idea.trim(), objective.trim(), episodeSeconds, episodeTone, 'studio_director']);
+    if (episodeMode === 'video' && !videoSource?.approved) { busy = ''; return; }
+    const content = JSON.stringify([idea.trim(), objective.trim(), episodeSeconds, episodeTone,
+      'studio_director', episodeMode, episodeMode === 'video' ? videoSource?.hash : null]);
     if (content !== requestContent) {
       requestContent = content;
       requestId = newRequestId();
     }
     try {
       const result = await studio.createEpisode(data.id, {
-        idea: idea.trim(),
+        idea: idea.trim() || "Adapter cette vidéo dans l'univers de la série, en conservant son rythme et sa chute.",
         objective: objective.trim(),
         request_id: requestId,
         prepare_only: true,
         studio_director: true,
-        ...(episodeSeconds ? { target_seconds: episodeSeconds } : {}),
+        ...(episodeMode === 'concept' && episodeSeconds ? { target_seconds: episodeSeconds } : {}),
+        ...(episodeMode === 'video' && videoSource ? {
+          video_source_id: videoSource.id, video_source_hash: videoSource.hash } : {}),
         tone: episodeTone.trim(),
       });
       await goto("/studio/" + result.project_id);
@@ -200,9 +208,21 @@
       </p>{/if}
     {#if episodeOpen && !item.archived}<form class="episode-form stack" onsubmit={create}>
         <h2>Épisode {item.episodes.length + 1}</h2>
+        <label>Point de départ<select bind:value={episodeMode} disabled={!!busy}>
+          <option value="concept">Concept</option><option value="video">Vidéo à refaire</option>
+        </select></label>
+        {#if episodeMode === 'video'}
+          <SourceVideoImport
+            seriesId={item.id}
+            disabled={!!busy}
+            defaultLanguage={item.language === 'fr' ? 'fr' : 'en'}
+            onchanged={(source) => (videoSource = source)}
+          />
+          <p>Langue cible : {item.language}. Univers : {item.title}. Le rythme mesuré de la source sera conservé.</p>
+        {/if}
         <label
-          >Idée directrice<textarea
-            required
+          >{episodeMode === 'video' ? "Consignes d'adaptation (facultatif)" : 'Idée directrice'}<textarea
+            required={episodeMode === 'concept'}
             rows="3"
             maxlength="20000"
             bind:value={idea}
@@ -216,17 +236,18 @@
           /></label
         >
         <details><summary>Durée et ton (facultatifs)</summary><div class="stack">
-          <label>Durée visée en secondes<input type="number" min="10" max="120" bind:value={episodeSeconds} placeholder={String(item.target_seconds)} /></label>
+          {#if episodeMode === 'concept'}<label>Durée visée en secondes<input type="number" min="10" max="120" bind:value={episodeSeconds} placeholder={String(item.target_seconds)} /></label>{/if}
           <label>Ton de cet épisode<input maxlength="2000" bind:value={episodeTone} placeholder="Suspense, tendre, comique..." /></label>
         </div></details>
         <p class="hint">DeepSeek prépare le storyboard et les réglages. Vous relisez et validez, générez les images manuellement dans ChatGPT, puis les importez ici avant toute vidéo.
           Toute la durée visée est consacrée au récit, sans incitation promotionnelle.
         </p>
+        {#if episodeMode === 'video'}<p class="hint">L'adaptation et la préparation utilisent le service texte DeepSeek configuré. Aucune génération vidéo n'est lancée à cette étape. Utilisez une source que vous pouvez adapter et créez une version originale dans votre univers.</p>{/if}
         <div class="row">
-          <button class="primary" disabled={!!busy || !idea.trim()}
+          <button class="primary" disabled={!!busy || (episodeMode === 'video' ? !videoSource?.approved : !idea.trim())}
             >{busy === "episode"
               ? "Lancement..."
-              : "Préparer le storyboard"}</button
+              : episodeMode === 'video' ? "Adapter et préparer le storyboard" : "Préparer le storyboard"}</button
           ><button
             type="button"
             onclick={() => (episodeOpen = false)}

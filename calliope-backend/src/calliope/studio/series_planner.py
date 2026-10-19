@@ -240,6 +240,10 @@ def _creative_context(context):
 
 
 async def _develop_creative_story(context, idea, objective, trace=None):
+    if context.get('source_video'):
+        from calliope.studio.source_video import adapt_story
+
+        return await adapt_story(context, idea, objective), {'source': 'video_adaptation', 'candidates': []}
     from calliope.studio.authored_script import authored_story
 
     supplied = authored_story(idea, context.get('entities', []))
@@ -1009,6 +1013,10 @@ the immutable design of every character and location. References are reviewed be
     trace = context.get("_planner_trace")
     trace_token = uuid.uuid4().hex
     public_context = {k: v for k, v in context.items() if k not in ("entities", "_planner_trace")}
+    if context.get('source_video'):
+        from calliope.studio.source_video import public_analysis
+
+        public_context['source_video'] = {'analysis': public_analysis(context['source_video'])}
     public_context["directing_profile"] = directing_profile(context.get("directing_profile"))
     public_context["entities"] = [
         {k: e[k] for k in ("key", "kind", "name", "description", "identity") if k in e}
@@ -1017,6 +1025,8 @@ the immutable design of every character and location. References are reviewed be
     ]
     episode_target = float(context.get("target_seconds", 65))
     target = max(5.0, episode_target - _midroll_spec(context)["duration_sec"])
+    if context.get('source_video'):
+        target = float(context['source_video']['analysis']['duration_sec'])
     duration_instruction = (
         f"{target:g} seconds of story, with no promotional speech or CTA."
         if public_context["directing_profile"]["cta_placement"] == "none" else
@@ -1175,6 +1185,17 @@ camera, eyelines and ongoing action. This is a technical continuation, not a rev
 angle, new scene, pause or visible edit. Describe only the current take's acting.
 Keep exact source words, voices, roles and useful actions. Never add dialogue to fill time.
 """
+    if native and creative_story.get('source_timeline'):
+        prompt += '''\nSOURCE VIDEO RHYTHM: creative_story.source_timeline fixes every source cut.
+source_beat_index is the zero-based source shot. Keep EVERY source shot, including
+silent ones, in order. For each source shot, sum(duration_sec) must equal
+end_sec-start_sec within 0.35 seconds. Its first take is an independent camera cut
+(continue_from_previous=false); any technical split within it MUST continue from
+the previous frame. Never add a camera cut at a speaker change. Directions not
+documented in source notes are adaptation choices, not observed visual facts.
+Use the series' own characters, locations, voices and visual references only.
+The number of source shots overrides the general minimum of two narrative takes.
+'''
     messages = [
         {"role": "system", "content": prompt},
         {
@@ -1312,6 +1333,10 @@ Keep exact source words, voices, roles and useful actions. Never add dialogue to
                 _resolve_native_states(plan)
                 _validate_native_contract(plan, list({e['key']: e for e in
                     context.get('entities', []) + plan.get('entities', [])}.values()))
+            if native and creative_story.get('source_timeline'):
+                from calliope.studio.source_video import validate_rhythm
+
+                validate_rhythm(creative_story, plan)
             return insert_midroll(plan, context)
         except ValueError as exc:
             validation_error = str(exc)

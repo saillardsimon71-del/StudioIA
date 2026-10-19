@@ -628,6 +628,21 @@ def validate_live(conn, project_id, current, require_ready=True, speech_shot_ids
         (project_id,),
     ).fetchone()
     frozen, plan = json.loads(episode['context_json']), json.loads(episode['plan_json'])
+    if frozen.get('source_video') and require_ready:
+        from calliope.studio.series_planner import _validate_story_realization
+        from calliope.studio.source_video import validate_rhythm
+
+        story = plan.get('creative_story', {})
+        if not story.get('source_locked') or not story.get('source_timeline'):
+            raise HTTPException(422, 'Vidéo source : adaptation verrouillée absente.')
+        live = {'scenes': [{'shots': [shot | {
+            'source_beat_index': service.shot_context(conn, shot['id'])['shot'].get('source_beat_index')
+        } for shot in shots]}]}
+        try:
+            validate_rhythm(story, live)
+            _validate_story_realization(story, live)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
     if require_ready and plan.get('prompt_contract_version') == 2:
         seconds = sum(shot['duration_sec'] for shot in shots)
         target = float(frozen.get('target_seconds', 65))
@@ -713,6 +728,11 @@ def build_image_prompt(entry, plan):
         lines.append("État initial : " + "; ".join(k + " = " + v for k, v in c["initial_state"].items()))
     if c.get("continuity"):
         lines.append("Continuité : " + " ".join(c["continuity"]))
+    if entry.get('composition_reference'):
+        lines.append('Référence de composition : ' + entry['composition_reference']
+                     + '. Utilise le cadrage et les poses uniquement. Remplace les personnages, '
+                     'décors, voix et textes source par ceux du canon et de ce contrat. '
+                     "L'image source n'est pas une première image de production.")
     return "\n".join(lines)
 
 def package(project_id):
@@ -734,7 +754,7 @@ def package(project_id):
                 "Generation MANUELLE dans une conversation ChatGPT.\n"
                 "Joins UNIQUEMENT ces fichiers a ChatGPT :\n"
                 "- prompts-episode-" + str(project_id) + ".txt (tous les plans a generer)\n"
-                "- les images du dossier references/ (4 images)\n"
+                "- les images du dossier references/ (personnages, décors et compositions source)\n"
                 "ChatGPT produit une image de depart par plan indique. Enregistre chaque "
                 "image sous le nom indique (ou tout autre nom), puis importe-les dans "
                 "Studio IA et choisis le plan correspondant dans le menu.\n"
@@ -749,6 +769,19 @@ def package(project_id):
             for index, entry in enumerate(current["shots"]):
                 context = service.shot_context(conn, entry["id"])
                 refs = []
+                from calliope.studio.source_video import composition_reference
+
+                composition = composition_reference(context)
+                if composition:
+                    path, name = composition
+                    if name not in written:
+                        archive.write(path, name)
+                        written.add(name)
+                    description = 'Composition et poses uniquement, identités et décors à remplacer.'
+                    refs.append({'key': 'source-composition', 'kind': 'composition',
+                                 'description': description, 'file': name, 'available': True})
+                    entry = entry | {'composition_reference': name}
+                    legend.setdefault(name, ('source-composition', description))
                 for entity in context["entities"]:
                     if entity["key"] not in entry["contract"]["references"]:
                         continue
@@ -874,6 +907,11 @@ def image_prompt(project_id, shot_id):
             raise HTTPException(404, "Plan introuvable.")
         if entry["continue_from_previous"]:
             raise HTTPException(409, "Ce plan est une continuation: aucune image de depart necessaire.")
+        from calliope.studio.source_video import composition_reference
+
+        composition = composition_reference(service.shot_context(conn, shot_id))
+        if composition:
+            entry = entry | {'composition_reference': composition[1]}
     plan = next(i + 1 for i, s in enumerate(current["shots"]) if s["id"] == shot_id)
     return {"shot_id": shot_id, "plan": plan, "prompt": build_image_prompt(entry, plan)}
 

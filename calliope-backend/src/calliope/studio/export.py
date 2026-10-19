@@ -164,6 +164,8 @@ def _window_for(clip, probe):
         beat = 0.0
     if beat <= 0:
         return 0.0, probe_sec
+    if clip.get('preserve_source_timing'):
+        return pacing.explicit_window(0, min(beat, probe_sec), probe_sec)
     native = clip.get("prompt_contract_version") == 2
     if (
         clip.get("audio_mode") == "native"
@@ -277,7 +279,9 @@ async def assemble(
             raise ValueError("Une prise en mode son natif n'a pas de piste audio.")
     _check_cancel(cancel_check)
     windows = [
-        await asyncio.to_thread(_window_for, clip, probe)
+        await asyncio.to_thread(_window_for, clip | {
+            'preserve_source_timing': bool(frozen.get('source_reference'))
+            and clip.get('purpose') not in ('midroll', 'outro')}, probe)
         for clip, probe in zip(clips, probes)
     ]
     _check_cancel(cancel_check)
@@ -286,9 +290,14 @@ async def assemble(
     width, height = size
     durations = [max(0.0, end - start) for start, end in windows]
     total_duration = sum(durations)
-    sequence = editorial.validate_cuts(durations)
-    if not sequence["ok"]:
-        raise ValueError("Montage non conforme : " + str(sequence["error"]))
+    if frozen.get('source_reference'):
+        from .source_video import validate_export_rhythm
+
+        validate_export_rhythm(frozen, durations, windows=windows)
+    else:
+        sequence = editorial.validate_cuts(durations)
+        if not sequence["ok"]:
+            raise ValueError("Montage non conforme : " + str(sequence["error"]))
     _check_target(total_duration, frozen.get("target_seconds"), "des fenêtres utiles")
     base = [ffmpeg, "-v", "error", "-nostdin", "-nostats", "-progress", "pipe:1", "-y"]
     with tempfile.TemporaryDirectory(prefix="studio-export-", dir=destination.parent) as temporary:

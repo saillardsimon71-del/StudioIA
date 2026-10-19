@@ -75,6 +75,8 @@ class EpisodeCreate(BaseModel):
     prepare_only: bool = False
     image_mode: Literal["generated", "text_to_video"] = "generated"
     studio_director: bool = False
+    video_source_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
+    video_source_hash: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
     target_seconds: int | None = Field(default=None, ge=10, le=120)
     tone: str = Field(default='', max_length=2000)
 
