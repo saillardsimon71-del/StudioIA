@@ -650,6 +650,12 @@ def validate_live(conn, project_id, current, require_ready=True, speech_shot_ids
             raise HTTPException(
                 422, f'Durée prévue {seconds:g} s, cible {target:g} s : '
                 'repréparez le découpage sans ajouter de pauses de remplissage.')
+        if not frozen.get('source_video'):
+            from calliope.studio.editorial import validate_cuts
+
+            sequence = validate_cuts([shot['duration_sec'] for shot in shots])
+            if not sequence['ok']:
+                raise HTTPException(422, 'Montage non conforme avant GPU : ' + sequence['error'])
         try:
             supplied = authored_story(episode['idea'], frozen.get('entities', []))
         except ValueError as exc:
