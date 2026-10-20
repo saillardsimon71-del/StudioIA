@@ -10,8 +10,10 @@ Règles V2 :
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
+from pathlib import Path
 from typing import Callable
 
 import httpx
@@ -78,6 +80,31 @@ class ScenarioGenerationError(ValueError):
         self.raw_content = raw_content
 
 
+# Documents éditoriaux locaux : consultés à CHAQUE génération, pas de service externe.
+_CREATIVE_GUIDES_DIR = Path(__file__).resolve().parents[1] / "creative-guides"
+_CREATIVE_GUIDE_FILES = ("01_attention.md", "02_retention.md", "03_narration.md")
+
+
+def load_creative_guides() -> tuple[str, str]:
+    """Retourne les trois guides et leur empreinte courte, sans appel réseau."""
+    sections: list[str] = []
+    for name in _CREATIVE_GUIDE_FILES:
+        path = _CREATIVE_GUIDES_DIR / name
+        try:
+            guide = path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ScenarioGenerationError(
+                f"Bible créative indisponible : {path} ({type(exc).__name__}: {exc})."
+            ) from exc
+        if not guide:
+            raise ScenarioGenerationError(f"Bible créative vide : {path}.")
+        sections.append(f"### {name}\n{guide}")
+
+    content = "\n\n".join(sections)
+    revision = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
+    return content, revision
+
+
 class ScenarioDraft(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -106,17 +133,19 @@ def generate_scenario_once(
             "correspondant dans Paramètres (`studio-v2/config.json`)."
         )
 
+    creative_guides, creative_guides_version = load_creative_guides()
+
     user_message = (
         f"IDÉE DE L'UTILISATEUR :\n{clean_idea}\n\n"
         f"DURÉE TOTALE VISÉE : environ {target_duration_s:g} secondes en format vertical 9:16 "
-        f"(soit typiquement {max(1, round(target_duration_s / 5))} plan(s) de ~5 secondes). "
+        f"Choisis librement le nombre et la durée des plans (3 à 10 secondes par plan) selon le rythme de l’histoire. "
         f"Garde chaque description concise pour que chaque prompt LTX reste sous {MAX_LTX_PROMPT_WORDS} mots."
     )
 
     request_body: dict = {
         "model": settings.deepseek_model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT + "\n\nPRINCIPES ÉDITORIAUX PERMANENTS (adaptables au genre, sans recette rigide) :\n" + creative_guides},
             {"role": "user", "content": user_message},
         ],
         "response_format": {"type": "json_object"},
@@ -212,5 +241,6 @@ def generate_scenario_once(
         "estimated_cost_usd": round(usd, 6),
         "estimated_cost_eur": eur,
         "warnings": prompt_warnings,
+        "creative_guides_version": creative_guides_version,
     }
     return project, meta

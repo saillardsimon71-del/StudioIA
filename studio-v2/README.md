@@ -69,3 +69,20 @@ cd studio-v2
 phase3_run_authorized.bat "C:\chemin\vers\fruit_zeste.png" 0.50
 ```
 Le script demande confirmation (`OUI`), exécute **une seule prise** sans retry automatique, enregistre le coût réel dans `studio-v2/data/v2.db` et `COSTS.md`, lance l'inspection média + OCR Tesseract + Whisper CPU, et génère l'export vertical `1080×1920` prêt à visionner.
+
+---
+
+## Bible créative permanente (DeepSeek)
+
+Les trois documents `creative-guides/01_attention.md`, `02_retention.md` et `03_narration.md` sont automatiquement lus à **chaque génération de scénario**. Ils s'ajoutent au prompt système existant, sans nouveau modèle, sans agent ni appel API supplémentaire. Les consignes sont des principes éditoriaux adaptables, pas une chronologie imposée.
+
+Les fichiers peuvent être édités manuellement ; la modification sera prise en compte dès la génération suivante (pas de cache). S'il manque un fichier ou s'il est vide, le scénario est arrêté avec une erreur explicite **avant** l'appel DeepSeek.
+
+La réponse de génération expose `llm_meta.creative_guides_version` (empreinte courte des trois fichiers). Cela ne modifie pas le schéma Pydantic `Project` ni les vidéos déjà générées. Il n'y a aucun accès aux analytiques TikTok, Instagram ou YouTube.
+
+Vérification rapide sans coût API ni GPU :
+
+```powershell
+cd studio-v2
+.\.venv\Scripts\python.exe -m pytest tests/test_creative_guides.py -q
+```
