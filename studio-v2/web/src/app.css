@@ -1,0 +1,127 @@
+:root {
+	color-scheme: dark;
+	--bg: #0c0f14;
+	--panel: #151a23;
+	--panel-alt: #1b2230;
+	--border: #2a3447;
+	--text: #eef2f8;
+	--muted: #98a4b8;
+	--accent: #38bdf8;
+	--accent-strong: #0284c7;
+	--ok: #22c55e;
+	--warn: #f59e0b;
+	--err: #ef4444;
+	font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--text);
+	line-height: 1.45;
+}
+
+button,
+input,
+textarea,
+select {
+	font-family: inherit;
+	font-size: 0.92rem;
+}
+
+button {
+	cursor: pointer;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--panel-alt);
+	color: var(--text);
+	padding: 0.5rem 0.9rem;
+	font-weight: 500;
+	transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+button:hover:not(:disabled) {
+	border-color: var(--accent);
+	background: #222c3f;
+}
+
+button:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+
+button.primary {
+	background: var(--accent-strong);
+	border-color: var(--accent);
+	color: #fff;
+	font-weight: 600;
+}
+
+button.primary:hover:not(:disabled) {
+	background: #0369a1;
+}
+
+button.danger {
+	border-color: #7f1d1d;
+	background: #3b1219;
+	color: #fecaca;
+}
+
+input,
+textarea,
+select {
+	width: 100%;
+	background: #0f131b;
+	border: 1px solid var(--border);
+	border-radius: 7px;
+	color: var(--text);
+	padding: 0.48rem 0.65rem;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+	outline: none;
+	border-color: var(--accent);
+}
+
+.card {
+	background: var(--panel);
+	border: 1px solid var(--border);
+	border-radius: 11px;
+	padding: 1rem 1.15rem;
+}
+
+.badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	padding: 0.18rem 0.55rem;
+	border-radius: 999px;
+	font-size: 0.78rem;
+	font-weight: 600;
+	border: 1px solid var(--border);
+	background: var(--panel-alt);
+}
+
+.badge.ok {
+	border-color: #166534;
+	background: #052e16;
+	color: #86efac;
+}
+
+.badge.warn {
+	border-color: #92400e;
+	background: #3b1f06;
+	color: #fcd34d;
+}
+
+.badge.err {
+	border-color: #991b1b;
+	background: #3f0d12;
+	color: #fca5a5;
+}
