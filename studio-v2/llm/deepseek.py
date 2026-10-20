@@ -138,7 +138,7 @@ def generate_scenario_once(
     user_message = (
         f"IDÉE DE L'UTILISATEUR :\n{clean_idea}\n\n"
         f"DURÉE TOTALE VISÉE : environ {target_duration_s:g} secondes en format vertical 9:16 "
-        f"(soit typiquement {max(1, round(target_duration_s / 5))} plan(s) de ~5 secondes). "
+        f"Choisis librement le nombre et la durée des plans (3 à 10 secondes par plan) selon le rythme de l’histoire. "
         f"Garde chaque description concise pour que chaque prompt LTX reste sous {MAX_LTX_PROMPT_WORDS} mots."
     )
 
