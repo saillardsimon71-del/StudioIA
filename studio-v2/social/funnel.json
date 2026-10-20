@@ -1,0 +1,39 @@
+{
+  "campaign_id": "studio-ia-bibles-v1",
+  "account": "AvenirIA0",
+  "landing_url": "https://fruitcity.sitequivend.fr/funnel",
+  "privacy_url": "https://fruitcity.sitequivend.fr/confidentialite",
+  "checkout_url": "",
+  "price_eur": 197,
+  "keyword": "STUDIO",
+  "keyword_campaign_enabled": true,
+  "dm_template": "Voilà la bible Studio IA : {landing_url}\nLe PDF contient le showrunner et les 3 bibles créatives. L'email se renseigne sur la page, jamais ici. STOP pour ne plus recevoir de DM.",
+  "email_provider": "kit",
+  "email_sequence": [
+    {
+      "day": 0,
+      "subject": "Ta bible Studio IA est prête",
+      "body": "Voici les quatre guides promis : {pdf_url}\nCommence par le showrunner. Écris ce que ton personnage veut, ce qui l'en empêche et la décision qui va changer la scène.\nPuis ouvre la bible attention : ton premier plan doit donner une raison de rester.\nGarde une seule action filmable par prise. Tu pourras vérifier le résultat avant de payer un nouveau rendu."
+    },
+    {
+      "day": 1,
+      "subject": "Un beau plan ne suffit pas à raconter une histoire",
+      "body": "Prends trois plans de ton épisode et résume chacun par un verbe.\nS'ils disent tous « regarde » ou « attend », cherche ce qui doit changer : découvre, refuse, cache, révèle.\nC'est le test de la bible rétention. Il ne garantit aucune performance, mais il permet de repérer une scène qui stagne avant de dépenser du GPU.\nLa formation Studio IA propose de travailler cette méthode dans un pipeline de production : {checkout_url}\nTarif : 197 EUR."
+    },
+    {
+      "day": 2,
+      "subject": "Ton personnage change entre deux plans ?",
+      "body": "Repars de la même référence visuelle. Décris l'état initial et l'état final de chaque prise. Garde une action claire, un dialogue court et une intention de caméra.\nQuand une prise échoue, conserve les autres. Le journal de production doit te dire quel plan reprendre et pourquoi.\nLa bible narration t'aide à garder le désir et la voix du personnage stables.\nStudio IA : la méthode et le pipeline de production, 197 EUR : {checkout_url}"
+    },
+    {
+      "day": 3,
+      "subject": "Le coût que ton prix par seconde oublie",
+      "body": "Compte les rendus rejetés, le démarrage du conteneur, le montage et les reprises. Puis divise par les plans réellement retenus.\nUn rendu importé à 0 EUR ne prouve pas que sa génération était gratuite. Un tarif estimé ne remplace pas une facture.\nStudio IA sépare ces informations pour t'aider à décider avant de relancer une prise.\nTu retrouveras cette approche dans la formation à 197 EUR : {checkout_url}"
+    },
+    {
+      "day": 4,
+      "subject": "Passer des bibles à ton propre pipeline",
+      "body": "Tu as maintenant les quatre bibles : showrunner, attention, rétention et narration.\nLa prochaine étape est de les relier à tes références, tes prompts LTX, tes prises validées et ton export final.\nC'est le travail visé par la formation Studio IA. Le tarif est de 197 EUR. Vérifie le programme et les conditions sur la page de vente avant de choisir : {checkout_url}\nTu peux aussi continuer avec les guides gratuits. Pas de compte à rebours ni de résultat promis."
+    }
+  ]
+}

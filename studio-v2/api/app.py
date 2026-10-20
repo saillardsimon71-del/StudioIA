@@ -44,6 +44,7 @@ from engines.video import (
 from llm.deepseek import ScenarioGenerationError, generate_scenario_once
 from qc.media import ffmpeg_exe, ffprobe_exe, inspect_media
 from qc.runner import run_take_qc
+from social.x_automation import enqueue_validated_episodes
 
 
 class CreateProjectRequest(BaseModel):
@@ -145,6 +146,12 @@ def create_app(
     app.state.repo = repo
     app.state.llm_transport = llm_transport
     app.state.modal_runner = modal_runner
+
+    def _queue_social() -> dict:
+        try:
+            return {"queued": enqueue_validated_episodes(app.state.repo, app.state.settings.data_dir)}
+        except (OSError, ValueError, RuntimeError) as exc:
+            return {"queued": 0, "warning": f"File sociale à vérifier : {type(exc).__name__}"}
 
     app.add_middleware(
         CORSMiddleware,
@@ -633,7 +640,7 @@ def create_app(
                 human_notes=req.human_notes,
                 actual_cost_eur=req.actual_cost_eur,
             )
-        return {"project": saved.model_dump(mode="json"), "take": updated_take}
+        return {"project": saved.model_dump(mode="json"), "take": updated_take, "social": _queue_social()}
 
     # ── Étape 5 : EXPORT (Assemblage FFmpeg MP4 vertical + QC complet) ───────
 
@@ -652,6 +659,7 @@ def create_app(
             height=qc["media"]["height"] if qc.get("media") else 0,
             qc=qc,
         )
+        record["social"] = _queue_social()
         return record
 
     @app.get("/api/projects/{project_id}/exports")

@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest>=8.3.0
+modal>=0.70.0
+python-multipart>=0.0.12
+pydantic-settings>=2.5.0
