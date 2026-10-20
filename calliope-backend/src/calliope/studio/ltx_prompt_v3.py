@@ -261,11 +261,11 @@ def compile_ltx_prompt(shot, context, first_frame):
     ):
         parts.append({
             "text": "Each reply starts as the previous line ends, with brief natural breaths.",
-            "optional": True,
+            "optional": False,
         })
         parts.append({
             "text": "Perform the described gestures while speaking.",
-            "optional": True,
+            "optional": False,
         })
         parts.append({
             "text": "Use facial expressions and small motivated movements.",
@@ -278,7 +278,7 @@ def compile_ltx_prompt(shot, context, first_frame):
     else:
         soundscape = prose(shot.get("soundscape") or "")
         if soundscape and soundscape.casefold() != "n/a":
-            parts.append({"text": f"Ambient sound: {soundscape}", "optional": True})
+            parts.append({"text": f"Ambient sound: {soundscape}", "optional": False})
     if labels:
         parts.append({"text": "No on-screen text, captions or subtitles.", "optional": False})
     if first_frame:

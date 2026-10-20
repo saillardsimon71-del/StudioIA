@@ -2,7 +2,7 @@
 
 ## Perimetre et autorisations
 
-Demande : observer le travail du Studio, conserver les preuves, corriger ses mecanismes, puis verifier sur un film reel. Sujet choisi par l'utilisateur : compteur de bodycount, hook et intrigue. L'utilisateur autorise les appels texte DeepSeek. Il n'a pas autorise de GPU, TTS ou generation d'images pour ce test.
+Demande : observer le travail du Studio, conserver les preuves, corriger ses mecanismes, puis verifier sur un film reel. Sujet choisi par l'utilisateur : compteur de bodycount, hook et intrigue. Autorisation initiale : appels texte DeepSeek seulement. Les autorisations ulterieures d'images et de GPU figurent dans la suite datee ci-dessous.
 
 Serie isolee 33, projet 47, job 680. Requete initiale conservee dans `work/bodycount15-proof/episode-request.json`. Deux personnages humains adultes, un lieu, 15 secondes, aucune reprise du scenario En prison. DeepSeek invente les personnages et toutes les paroles. Aucun scenario corrige manuellement n'est injecte.
 
@@ -95,3 +95,21 @@ Verdict : le test de production de 15 secondes n'est pas valide. Les controles d
 Un scenario coherent puis un storyboard complet et valide ne suffisent pas a declarer le parcours fiable. Il reste a obtenir les images manuelles, verifier le preflight et le budget, produire les prises, controler toutes les paroles et images, puis exporter et regarder les 15 secondes entieres. Les erreurs de voix, de jeu, de synchronisation et de raccord ne sont pas couvertes par une simple revue texte.
 
 Chaque nouvelle tentative et intervention doit etre notee. Aucun echec ne doit etre transforme en succes par une correction manuelle du scenario, un montage externe ou une approbation de QC non verifie.
+
+## Suite du 19 octobre : images et preparation du rendu
+
+L'utilisateur demande maintenant de generer les images dans cette conversation et de tester. Une seule premiere image est necessaire : le plan 429 est independant, les plans 430 et 431 continuent depuis la derniere frame de la prise precedente. Deux appels au seul outil imagegen integre : creation, puis correction ciblee du regard. Aucune API image n'est appelee par Studio IA. Les deux PNG et leurs prompts sont conserves sous `work/bodycount15-proof/images/`.
+
+Deux revisions techniques reelles sont demandees a DeepSeek via l'API Director. Les six paroles, locuteurs, durees et etats canoniques sont conserves ; aucune replique n'est ecrite manuellement. Premiere revision : prompts raccourcis, tasse encore tenue au debut du plan 430, bouilloire eteinte au debut du plan 431. Elle laisse des gestes repetes dans la chronologie. Seconde revision : retrait des decouvertes et gestes repetes, decouverte du compteur de Marion apres "Regarde le tien". Les reponses sont conservees dans `image-revision-response.json` et `motion-revision-response.json`. Deux interventions de revue ont donc encore ete necessaires.
+
+Defaut general prouve pendant cette preparation : le compilateur pouvait supprimer silencieusement `soundscape` et les consignes de rythme/gestes lorsqu'il reduisait le prompt. Les tests reproduisent leur perte avant correctif. Ces consignes sont maintenant obligatoires quand elles sont configurees ; si elles ne tiennent pas, le compilateur refuse plutot que de les supprimer. Le Director compile aussi le contrat pendant sa preparation et ses revisions, puis a l'approbation. Une revision LLM trop longue est corrigee avant enregistrement ; une edition experte trop longue est refusee sans modifier les donnees. Test de reparation et d'atomicite ajoute.
+
+Verification : 176 tests passes en 89,66 s, sortie 0 (`regressions-images.log`). Prompts reels finaux : 166, 167 et 180 mots ; ambiance, respirations courtes et gestes pendant la parole sont presents dans les trois. Les criteres ne prouvent pas que le moteur les respectera.
+
+Storyboard approuve, hash `1d0d18b1148d7918834be3039cd59f34bec5ca8489926288446ec7627f1a97b3`. Paquet exporte par le Studio. Premiere image importee via la route normale avec nom stable et association explicite au plan 429 : prise image 638, revue enregistree apres inspection. Deux adultes seulement, mug dans la main droite, ecrans vierges aux poignets gauches, bouilloire sans vapeur, aucun texte genere. Le regard reste une appreciation visuelle, pas une mesure. Rendu visuel tres realiste ; le style 3D expressif doit encore etre evalue en mouvement.
+
+Les compteurs restent des surimpressions fixes, pas du suivi de poignet. Les premieres frames 430/431 ne sont pas utilisees dans ce parcours en continuation ; les raccords reels devront etre verifies sur les dernieres frames generees. L'identite vocale, le lip-sync, les paroles parasites et le rythme ne sont pas encore verifies sur un film.
+
+L'utilisateur autorise explicitement le redemarrage du serveur de test 8252 puis un plafond estimatif de 4 EUR sans reprise automatique. Budget enregistre : 3 prises maximum, 15,6 s maximum, tarif operateur 0,20 EUR/s. Preflight : 3 prises, 15,458 s arrondies moteur, estimation 3,091667 EUR, zero reserve ; ce tarif n'est pas une garantie de facturation. Le controle automatique refuse encore l'arret/redemarrage du processus 61444 avec "blocked by policy", meme apres l'accord explicite. Aucun contournement ni rendu GPU avec l'ancien compilateur. Script de relance manuelle prepare : `work/bodycount15-restart.ps1`. La production reste en pause, zero prise video et zero reservation GPU. Le nouveau code est teste localement mais n'est pas charge dans le serveur 8252 tant que ce redemarrage est refuse.
+
+Verdict a cette etape : image et preflight prepares, parcours idee -> film toujours non demontre. Il faut charger les correctifs puis produire et inspecter les vraies prises avant de parler de fiabilite.

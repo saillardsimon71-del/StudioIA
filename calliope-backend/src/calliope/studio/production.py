@@ -550,6 +550,19 @@ async def assess_take(shot):
 
     take = selected_video(shot)
     metadata = (take or {}).get("metadata") or {}
+    if take and not settings.dry_run and Path(take.get('output_path') or '').is_file():
+        from calliope.studio import generated_text
+
+        stat = Path(take['output_path']).stat()
+        signature = [stat.st_size, stat.st_mtime_ns]
+        text_qc = metadata.get('text_qc') or {}
+        if text_qc.get('signature') != signature or text_qc.get('status') == 'unverified':
+            text_qc = await asyncio.to_thread(generated_text.scan, take['output_path'])
+            metadata['text_qc'] = text_qc | {'signature': signature}
+            with service.database() as conn:
+                conn.execute('UPDATE studio_takes SET metadata_json=? WHERE id=?',
+                             (json.dumps(metadata), take['id']))
+                conn.commit()
     override = metadata.get("dialogue_qc_override")
     if take and override:
         # Une validation supervisee enregistree ne doit pas etre ecrasee par
@@ -664,7 +677,8 @@ async def assess_take(shot):
         language,
     ]
     cached = metadata.get("transcription_cache") or {}
-    if cached.get("signature") == signature:
+    if (cached.get("signature") == signature
+            and (cached.get('transcript') or {}).get('status') == 'ok'):
         transcript = cached["transcript"]
         voice = cached.get("activity")
     else:
@@ -990,11 +1004,15 @@ async def render_shot(job, initial, should_stop):
                 from calliope.studio import tts
                 shot = await asyncio.to_thread(tts.apply_to_shot, shot)
             verdict = await assess_take(shot)
-        if verdict and verdict['status'] == 'ok':
+        text_qc = ((selected_video(shot) or {}).get('metadata') or {}).get('text_qc') or {}
+        if verdict and verdict['status'] == 'ok' and text_qc.get('status') != 'unexpected_text':
             trim_take(shot, verdict.get('voice'), verdict.get('trim_end_limit_sec'))
+        message = ('Texte parasite détecté dans la prise native. Prise conservée, non approuvée.'
+                   if text_qc.get('status') == 'unexpected_text' else
+                   'Prise conservee. Verifiez les paroles, locuteurs, image et raccords avant de continuer.')
         with service.database() as conn:
             conn.execute("UPDATE studio_productions SET status='paused',stage='qc',message=? WHERE project_id=?",
-                ('Prise conservee. Verifiez les paroles, locuteurs, image et raccords avant de continuer.', job['project_id']))
+                (message, job['project_id']))
             conn.commit()
         raise ProductionPausedError()
     clear = not verdict or verdict.get("status") == "ok"

@@ -112,14 +112,25 @@ def test_ltx_prompt_keeps_a_medium_low_voice_out_of_raspy():
 
 def test_ltx_prompt_keeps_critical_constraints_when_trimming_optional_prose():
     shot, context = sample()
-    shot["soundscape"] = "quiet room tone " * 40
+    shot["soundscape"] = "quiet room tone"
+    context['directing_profile'] = {'dialogue_density': 'brisk', 'silences': 'brief'}
+    context['render_canon']['characters']['lila']['appearance'] = 'A long optional appearance ' * 40
     shot["reaction"] = "A long optional reaction " * 20
     prompt = compile_ltx_prompt(shot, context, first_frame=False)
     assert "Only the named speaker speaks" in prompt
     assert "Speak each quoted line exactly once" in prompt
     assert "The voice stays in the foreground" in prompt
-    assert "Ambient sound:" not in prompt
+    assert "Ambient sound: quiet room tone" in prompt
+    assert "brief natural breaths" in prompt
+    assert "Perform the described gestures while speaking" in prompt
     assert len(prompt.split()) <= 200
+
+
+def test_ltx_prompt_rejects_an_ambience_that_cannot_fit_without_silent_loss():
+    shot, context = sample()
+    shot['soundscape'] = 'quiet room tone ' * 80
+    with pytest.raises(ValueError, match='trop long'):
+        compile_ltx_prompt(shot, context, first_frame=True)
 
 
 def test_ltx_prompt_fails_loudly_instead_of_dropping_critical_dialogue():
