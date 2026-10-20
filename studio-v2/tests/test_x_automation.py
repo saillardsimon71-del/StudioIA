@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from test_x_scheduler import api_server, client_for
+from test_x_scheduler import api_server, client_for, validated_qc
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -45,7 +45,7 @@ def episode(tmp_path):
     )
     repo.record_export(
         project_id=project.id, output_path=video, duration_s=6,
-        width=160, height=288, qc={"ok": True},
+        width=160, height=288, qc=validated_qc(project),
     )
     return repo, data, project, video
 
@@ -107,7 +107,7 @@ def test_unapproved_or_failed_export_never_enters_queue(episode):
     repo.save_project(project)
     repo.record_export(
         project_id=project.id, output_path=video, duration_s=6,
-        width=160, height=288, qc={"ok": False},
+        width=160, height=288, qc=validated_qc(project, False),
     )
     assert enqueue_validated_episodes(repo, data) == 0
 
@@ -118,6 +118,49 @@ def test_changed_approved_shot_requires_a_new_export(episode):
     project.shots[0].rendered_video_ref = str(video.with_name("new-take.mp4"))
     repo.save_project(project)
     assert enqueue_validated_episodes(repo, data) == 0
+
+
+def test_export_keeps_render_input_snapshot_during_concurrent_update(episode, monkeypatch):
+    import hashlib
+    import core.export as exporter
+    from core.config import V2Settings
+    from social.x_automation import enqueue_validated_episodes
+    repo, data, project, video = episode
+    original = exporter._run_cmd
+    calls = []
+    expected = hashlib.sha256(project.model_dump_json().encode()).hexdigest()
+
+    def run_and_update(cmd, cwd):
+        if not calls:
+            current = repo.get_project(project.id)
+            new_take = data / "replacement.mp4"
+            new_take.write_bytes(video.read_bytes())
+            current.shots[0].rendered_video_ref = str(new_take)
+            repo.save_project(current)
+        calls.append(cmd)
+        return original(cmd, cwd)
+
+    monkeypatch.setitem(exporter.EXPORT_SIZES, "9:16", (160, 288))
+    monkeypatch.setattr(exporter, "_run_cmd", run_and_update)
+    settings = V2Settings(data_dir=data, ocr_enabled=False, whisper_model_or_path="")
+    out, qc = exporter.export_project_mp4(project, settings)
+    assert qc["project_sha256"] == expected
+    repo.record_export(project_id=project.id, output_path=out, duration_s=6,
+                       width=160, height=288, qc=qc)
+    assert enqueue_validated_episodes(repo, data) == 0
+
+
+def test_replaced_unpublished_export_keeps_campaign_opt_in(episode):
+    from social.common import locked_queue
+    from social.x_automation import enqueue_validated_episodes
+    repo, data, project, video = episode
+    enqueue_validated_episodes(repo, data)
+    repo.record_export(project_id=project.id, output_path=video, duration_s=6,
+                       width=160, height=288, qc=validated_qc(project))
+    assert enqueue_validated_episodes(repo, data) == 4
+    with locked_queue(data) as queue:
+        roots = [p for p in queue["posts"] if p.get("keyword_opt_in") and p["status"] == "pending"]
+        assert len(roots) == 1
 
 
 def test_unknown_cost_is_never_reported_as_zero(episode):
@@ -158,7 +201,7 @@ def test_posts_fit_standard_x_even_when_source_prompt_is_long(episode):
     repo.save_project(project)
     repo.record_export(
         project_id=project.id, output_path=Path(project.shots[0].rendered_video_ref),
-        duration_s=6, width=160, height=288, qc={"ok": True},
+        duration_s=6, width=160, height=288, qc=validated_qc(project),
     )
     enqueue_validated_episodes(repo, data)
     posts = json.loads((data / "x_queue.json").read_text(encoding="utf-8"))["posts"]

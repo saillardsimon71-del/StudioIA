@@ -86,6 +86,7 @@ def enqueue_validated_episodes(repo, data_dir, *, now=None, jitter_minutes=None,
             cost = _cost_label(repo, project)
             opt_in = config.get("keyword_campaign_enabled", False) and not any(
                 p.get("keyword_opt_in") and p.get("campaign_id") == config["campaign_id"]
+                and (p["status"] != "cancelled" or p.get("attempted_at") or p.get("remote_id"))
                 for p in queue["posts"]
             )
             if opt_in:

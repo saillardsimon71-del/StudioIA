@@ -429,12 +429,7 @@ class StudioRepository:
         eid = f"export-{uuid.uuid4().hex[:10]}"
         now = utc_now()
         resolved = str(Path(output_path).resolve())
-        project = self.get_project(project_id)
         qc = dict(qc)
-        if project is not None:
-            qc["project_sha256"] = hashlib.sha256(
-                project.model_dump_json().encode("utf-8")
-            ).hexdigest()
         with self._connect() as conn:
             conn.execute(
                 """

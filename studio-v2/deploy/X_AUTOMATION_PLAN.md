@@ -41,7 +41,7 @@ Spec: User request "AUTOMATION X + FUNNEL FORMATION STUDIO IA V2" dated 2026-10-
 - [x] Lead magnet: creative-guides/00_showrunner.md and social/build_lead_magnet.py. Generate the four-guide PDF and visually inspect its rendering.
 - [x] Integration: enqueue after approved review/export; separate public application; API endpoints never publish a synthetic fixture.
 - [x] Deployment: .github/workflows/x_post.yml, self-hosted cron installer and deployment instructions. Test the same command used by the scheduler. Never depend on hosted artifact storage for private queue/lead state.
-- [ ] Run the complete V2 suite with isolated Modal credentials, check V1 diff, review, commit and push arena/studio-ia-v2-rebuild.
+- [x] Run the complete V2 suite with isolated Modal credentials, check V1 diff, review, commit and push arena/studio-ia-v2-rebuild.
 
 ## Baseline
 
@@ -50,3 +50,9 @@ Spec: User request "AUTOMATION X + FUNNEL FORMATION STUDIO IA V2" dated 2026-10-
 ## Verification before final review
 
 53/53 V2 tests passed with isolated Modal credentials. Real FFmpeg fixture, loopback X API, Kit HTTP transport, PowerShell AST, YAML and Python compilation checked. PDF six pages rendered and inspected. Desktop/mobile landing inspected with Chromium; no horizontal overflow or JavaScript errors. Live posting, actual DM delivery, registration, hosting and checkout cannot be activated without the absent credentials/provider/checkout.
+
+## Final review and corrections
+
+A fresh read-only reviewer identified five issues. All were reproduced before the fix: render/project snapshot mismatch, starvation after 100 inactive leads, cancelled opt-in reservation, missing DM pagination, and uncertain Kit creation duplicates. Seven regression cases failed before correction; an additional definitive-denial case failed and was corrected. The final full suite passed 61/61 with isolated Modal configuration. No V1 files changed.
+
+Live provider delivery and account permissions remain unverified without credentials. Browser selectors remain unverified and disabled by default. Production HTTPS hosting, the real Kit form/sequence, X credentials and a real 197 EUR checkout remain activation prerequisites. Actions is enabled on the repository, but no self-hosted runner is registered. The scheduled workflow also needs to exist on the default branch, currently feat/generalist-studio.

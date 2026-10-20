@@ -45,11 +45,13 @@ Copier `social.env.example` dans ce dossier privé sous le nom `social.env`. Ren
 powershell -NoProfile -File studio-v2/social/run-social.ps1 -DataDir C:/StudioIA/data -ConfigureKit
 ```
 
-La commande crée une séquence dédiée, non répétable, avec cinq emails publiés, puis mémorise ses identifiants dans SQLite. Elle reprend une configuration partielle sans recréer les emails confirmés. Les délais relatifs sont 0, 1, 1, 1, 1 jour. Le scheduler vérifie la confirmation des nouveaux contacts toutes les dix minutes et les inscrit ensuite à la séquence. Kit gère l'envoi et la désinscription. Un abonnement existant annulé n'est pas réactivé par le script.
+La commande crée une séquence dédiée, non répétable, avec cinq emails publiés, puis mémorise ses identifiants dans SQLite. Elle reprend une configuration partielle sans recréer les emails confirmés. Une intention est persistée avant chaque création ; après une réponse perdue, la relance recherche la ressource existante chez Kit. Zéro correspondance ou plusieurs correspondances bloquent toute recréation : vérifier le compte Kit avant de résoudre l'intention conservée dans `social_state`. Un refus explicite HTTP 4xx autorise une nouvelle tentative après correction.
+
+Les délais relatifs sont 0, 1, 1, 1, 1 jour. Le scheduler examine au plus cent contacts en attente par passage, avec un curseur tournant persistant ; les contacts jamais confirmés ne bloquent pas les suivants. Kit gère l'envoi et la désinscription. Un abonnement existant annulé n'est pas réactivé par le script.
 
 `KIT_SEQUENCE_ID` est facultatif sur le même dossier de données après cette initialisation. Pour un déploiement séparé, renseigner explicitement l'identifiant retourné et utiliser la même base V2. Vérifier une inscription avec une adresse de test que tu contrôles avant ouverture publique.
 
-La première campagne peut proposer de répondre exactement STUDIO sous son propre post pour demander un seul DM automatique. Les mentions hors de ce post, les simples occurrences du mot, le compte lui-même et les doublons ne déclenchent rien. STOP en DM bloque durablement les nouvelles livraisons. Les épisodes suivants renvoient directement à la landing, sans répéter le CTA à mot-clé. Aucun follow, unfollow ou repost automatique.
+La première campagne peut proposer de répondre exactement STUDIO sous son propre post pour demander un seul DM automatique. Les mentions hors de ce post, les simples occurrences du mot, le compte lui-même et les doublons ne déclenchent rien. Toutes les pages de DM disponibles sont parcourues avant livraison ; chaque STOP est persisté immédiatement. Une interruption reprend ce parcours au début, sans perdre les refus déjà enregistrés. Les épisodes suivants renvoient directement à la landing, sans répéter le CTA à mot-clé. Aucun follow, unfollow ou repost automatique.
 
 ## Serveur public
 

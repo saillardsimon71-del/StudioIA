@@ -5,6 +5,7 @@ import os
 import re
 import sqlite3
 import sys
+import uuid
 from pathlib import Path
 
 import httpx
@@ -17,7 +18,9 @@ from social.x_client import XClient, XError
 
 
 class ProviderError(RuntimeError):
-    pass
+    def __init__(self, message, *, uncertain=True):
+        super().__init__(message)
+        self.uncertain = uncertain
 
 
 class FunnelStore:
@@ -173,6 +176,11 @@ class KitClient:
             response = self.client.request(method, path, **kwargs)
             response.raise_for_status()
             return response.json()
+        except httpx.HTTPStatusError as exc:
+            raise ProviderError(
+                "Le service email n'a pas confirmé l'opération.",
+                uncertain=exc.response.status_code >= 500,
+            ) from None
         except (httpx.HTTPError, ValueError):
             raise ProviderError("Le service email n'a pas confirmé l'opération.") from None
 
@@ -202,8 +210,12 @@ def subscribe(email, consent, kit, store, config):
 
 
 def sync_confirmed_leads(kit, store):
+    cursor = store.get_state("kit_lead_cursor", 0)
     with store.connect() as conn:
-        leads = conn.execute("SELECT * FROM social_leads WHERE status='pending_confirmation' LIMIT 100").fetchall()
+        sql = "SELECT rowid AS lead_rowid,* FROM social_leads WHERE status='pending_confirmation' AND rowid>? ORDER BY rowid LIMIT 100"
+        leads = conn.execute(sql, (cursor,)).fetchall()
+        if not leads and cursor:
+            leads = conn.execute(sql, (0,)).fetchall()
     enrolled = 0
     for row in leads:
         state = kit.request("GET", f"subscribers/{row['subscriber_id']}")["subscriber"]["state"]
@@ -215,7 +227,41 @@ def sync_confirmed_leads(kit, store):
         elif state in {"cancelled", "bounced", "complained"}:
             with store.connect() as conn:
                 conn.execute("UPDATE social_leads SET status=? WHERE email=?", (state, row["email"]))
+        store.set_state("kit_lead_cursor", row["lead_rowid"])
     return enrolled
+
+
+def _create_kit_resource(store, kit, key, path, body, resource):
+    intent = store.get_state(key + "_intent")
+    if intent:
+        params = {"per_page": 1000}
+        matches = []
+        while True:
+            payload = kit.request("GET", path, params=params)
+            for item in payload[resource + "s"]:
+                fields = ("name",) if resource == "sequence" else ("subject", "position")
+                if all(item.get(field) == intent.get(field) for field in fields):
+                    matches.append(item)
+            page = payload.get("pagination", {})
+            if not page.get("has_next_page"):
+                break
+            params["after"] = page["end_cursor"]
+        if len(matches) != 1:
+            raise ProviderError("Création Kit incertaine : vérifier la ressource dans Kit avant toute nouvelle création.")
+        resource_id = matches[0]["id"]
+    else:
+        store.set_state(key + "_intent", body)
+        try:
+            result = kit.request("POST", path, json=body)
+        except ProviderError as exc:
+            if not exc.uncertain:
+                store.set_state(key + "_intent", None)
+            raise
+        resource_id = result.get(resource, {}).get("id")
+        if resource_id is None:
+            raise ProviderError("Création Kit non confirmée. Relancer la configuration pour rapprocher la ressource.")
+    store.set_state(key, resource_id)
+    return resource_id
 
 
 def configure_kit(store, config):
@@ -226,13 +272,14 @@ def configure_kit(store, config):
         raise ProviderError("Configurer KIT_API_KEY, KIT_FORM_ID, KIT_SENDER_EMAIL et STUDIO_CHECKOUT_URL.")
     kit = KitClient(key, form_id=form, sequence_id=store.get_state("kit_sequence_id", ""))
     if not kit.sequence_id:
-        sequence = kit.request("POST", "sequences", json={
-            "name": "Studio IA 197 EUR - " + config["campaign_id"],
+        setup_token = store.get_state("kit_setup_token") or uuid.uuid4().hex[:10]
+        store.set_state("kit_setup_token", setup_token)
+        sequence_id = _create_kit_resource(store, kit, "kit_sequence_id", "sequences", {
+            "name": "Studio IA 197 EUR - " + config["campaign_id"] + " - " + setup_token,
             "email_address": sender, "time_zone": "Europe/Paris",
             "active": True, "repeat": False, "hold": False,
-        })["sequence"]
-        kit.sequence_id = str(sequence["id"])
-        store.set_state("kit_sequence_id", kit.sequence_id)
+        }, "sequence")
+        kit.sequence_id = str(sequence_id)
     for index, email in enumerate(config["email_sequence"]):
         state_key = f"kit_email_{kit.sequence_id}_{index}"
         if store.get_state(state_key):
@@ -246,12 +293,11 @@ def configure_kit(store, config):
             for p in text.split("\n") if p.strip()
         )
         delay = 0 if index == 0 else email["day"] - config["email_sequence"][index - 1]["day"]
-        created = kit.request("POST", f"sequences/{kit.sequence_id}/emails", json={
+        _create_kit_resource(store, kit, state_key, f"sequences/{kit.sequence_id}/emails", {
             "subject": email["subject"], "content": content,
             "delay_value": delay, "delay_unit": "days",
             "position": index, "published": True,
-        })["email"]
-        store.set_state(state_key, created["id"])
+        }, "email")
     store.set_state("kit_setup_complete", True)
     return {"sequence_id": kit.sequence_id, "emails": len(config["email_sequence"])}
 
@@ -351,7 +397,8 @@ def main():
     parser.add_argument("--configure-kit", action="store_true")
     args = parser.parse_args()
     if args.configure_kit:
-        print(json.dumps(configure_kit(FunnelStore(args.data_dir / "v2.db"), read_config()), ensure_ascii=False))
+        with locked_queue(args.data_dir):
+            print(json.dumps(configure_kit(FunnelStore(args.data_dir / "v2.db"), read_config()), ensure_ascii=False))
     else:
         print(json.dumps(readiness(args.data_dir), ensure_ascii=False, indent=2))
 

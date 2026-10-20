@@ -11,6 +11,7 @@ Extrait l'essentiel éprouvé de V1 (`studio/export.py` + `studio/screen_text.py
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import tempfile
 from pathlib import Path
@@ -102,6 +103,7 @@ def export_project_mp4(
     apply_loudnorm: bool = True,
 ) -> tuple[Path, dict]:
     """Assemble les prises rendues d'un projet en un MP4 vertical prêt à visionner + rapport QC."""
+    project_sha256 = hashlib.sha256(project.model_dump_json().encode("utf-8")).hexdigest()
     if not project.shots:
         raise ValueError("Aucun plan dans le projet à exporter.")
 
@@ -230,4 +232,5 @@ def export_project_mp4(
         assembled.replace(destination)
 
     qc_report = run_export_qc(destination, project.shots, settings, expected_size=size)
+    qc_report["project_sha256"] = project_sha256
     return destination, qc_report

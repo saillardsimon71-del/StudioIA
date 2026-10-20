@@ -1,4 +1,5 @@
 import json
+import hashlib
 import sys
 import threading
 from datetime import datetime
@@ -11,6 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.scenario import Project, Shot
 from core.storage import StudioRepository
+
+
+def validated_qc(project, ok=True):
+    return {"ok": ok, "project_sha256": hashlib.sha256(project.model_dump_json().encode()).hexdigest()}
 
 
 @pytest.fixture
@@ -27,6 +32,10 @@ def api_server():
                 self.reply(200, {"data": {"id": "111", "username": state["username"]}})
             elif self.path.startswith("/2/media/upload?"):
                 self.reply(200, {"data": {"id": "700", "processing_info": {"state": "succeeded"}}})
+            elif self.path.startswith("/2/dm_events") and state.get("dm_pages"):
+                index = 1 if "pagination_token=older" in self.path else 0
+                state.setdefault("dm_gets", []).append(self.path)
+                self.reply(200, state["dm_pages"][index])
             else:
                 self.reply(200, {"data": [], "meta": {"result_count": 0}})
 
@@ -80,7 +89,7 @@ def make_queue(tmp_path):
     repo.save_project(project)
     repo.record_export(
         project_id=project.id, output_path=video, duration_s=5,
-        width=160, height=288, qc={"ok": True},
+        width=160, height=288, qc=validated_qc(project),
     )
     enqueue_validated_episodes(
         repo, tmp_path, now=datetime.fromisoformat("2026-10-20T06:00:00+00:00"), jitter_minutes=10,
@@ -226,3 +235,14 @@ def test_browser_requires_explicit_opt_in_before_starting(tmp_path, monkeypatch)
     monkeypatch.delenv("X_ALLOW_UNSUPPORTED_BROWSER", raising=False)
     with pytest.raises(XError, match="désactivé"):
         BrowserXClient(tmp_path)
+
+
+def test_dm_event_lookup_traverses_all_pages(api_server):
+    base, _, state = api_server
+    state["dm_pages"] = [
+        {"data": [{"id": "101", "sender_id": "333", "text": "Salut"}], "meta": {"next_token": "older"}},
+        {"data": [{"id": "100", "sender_id": "222", "text": "STOP"}], "meta": {}},
+    ]
+    events = list(client_for(base).dm_events())
+    assert [e["id"] for e in events] == ["101", "100"]
+    assert len(state["dm_gets"]) == 2

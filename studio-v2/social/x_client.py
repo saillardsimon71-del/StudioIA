@@ -129,7 +129,13 @@ class XClient:
             params["pagination_token"] = next_token
 
     def dm_events(self):
-        payload = self._request("GET", "/2/dm_events", params={
+        params = {
             "max_results": 100, "dm_event.fields": "sender_id,text,created_at",
-        })
-        return payload.get("data", [])
+        }
+        while True:
+            payload = self._request("GET", "/2/dm_events", params=params)
+            yield from payload.get("data", [])
+            token = payload.get("meta", {}).get("next_token")
+            if not token:
+                break
+            params["pagination_token"] = token

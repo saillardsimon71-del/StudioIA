@@ -205,3 +205,96 @@ def test_partial_sequence_setup_cannot_accept_subscribers(tmp_path, monkeypatch)
     assert KitClient.from_env(store) is None
     store.set_state("kit_setup_complete", True)
     assert KitClient.from_env(store).sequence_id == "30"
+
+
+def test_inactive_first_batch_cannot_starve_later_confirmed_lead(tmp_path):
+    from social.funnel import FunnelStore, KitClient, sync_confirmed_leads
+    enrolled = []
+
+    def provider(request):
+        subscriber_id = int(request.url.path.rsplit("/", 1)[-1])
+        if request.method == "GET":
+            return httpx.Response(200, json={"subscriber": {"state": "active" if subscriber_id == 101 else "inactive"}})
+        enrolled.append(subscriber_id)
+        return httpx.Response(201, json={"subscriber": {"id": subscriber_id}})
+
+    store = FunnelStore(tmp_path / "v2.db")
+    for i in range(1, 102):
+        store.save_lead(f"builder{i}@example.com", str(i), "pending_confirmation")
+    kit = KitClient("fixture", form_id="20", sequence_id="30", transport=httpx.MockTransport(provider))
+    assert sync_confirmed_leads(kit, store) == 0
+    assert sync_confirmed_leads(kit, store) == 1
+    assert enrolled == [101]
+
+
+def test_stop_on_older_dm_page_blocks_pending_delivery(tmp_path, api_server, monkeypatch):
+    import social.funnel as funnel
+    from social.common import locked_queue, read_config
+    from test_x_scheduler import make_queue
+    base, requests, state = api_server
+    make_queue(tmp_path)
+    config = read_config()
+    with locked_queue(tmp_path) as queue:
+        queue["posts"][-1].update(status="posted", remote_id="900")
+    store = funnel.FunnelStore(tmp_path / "v2.db")
+    store.claim_delivery("222", config["campaign_id"], "123", "900")
+    store.finish_delivery("222", config["campaign_id"], "pending")
+    state["dm_pages"] = [
+        {"data": [{"id": "101", "sender_id": "333", "text": "Salut"}], "meta": {"next_token": "older"}},
+        {"data": [{"id": "100", "sender_id": "222", "text": "STOP"}], "meta": {}},
+    ]
+    monkeypatch.setattr(funnel, "readiness", lambda *a, **kw: {"ready": True})
+    assert funnel.poll_funnel(tmp_path, client_for(base))["sent"] == 0
+    assert store.opted_out("222")
+    assert not requests
+
+
+@pytest.mark.parametrize("interrupted_resource", ["sequences", "emails"])
+def test_lost_kit_creation_response_is_reconciled_without_duplicate(tmp_path, monkeypatch, interrupted_resource):
+    import social.funnel as funnel
+    from social.common import read_config
+    resources = {"sequences": [], "emails": []}
+    creations = []
+    interrupted = []
+
+    def provider(request):
+        resource = request.url.path.rsplit("/", 1)[-1]
+        if request.method == "GET":
+            return httpx.Response(200, json={resource: resources[resource], "pagination": {"has_next_page": False}})
+        body = json.loads(request.content)
+        record = {**body, "id": 30 if resource == "sequences" else len(resources[resource]) + 1}
+        resources[resource].append(record)
+        creations.append(resource)
+        if resource == interrupted_resource and not interrupted:
+            interrupted.append(True)
+            raise httpx.ReadTimeout("Created, response lost", request=request)
+        return httpx.Response(201, json={"sequence" if resource == "sequences" else "email": record})
+
+    original = funnel.KitClient
+    monkeypatch.setattr(funnel, "KitClient", lambda key, **kw: original(key, **kw, transport=httpx.MockTransport(provider)))
+    for key, value in {"KIT_API_KEY": "fixture", "KIT_FORM_ID": "20", "KIT_SENDER_EMAIL": "owner@example.com"}.items():
+        monkeypatch.setenv(key, value)
+    config = read_config()
+    config["checkout_url"] = "https://example.com/197"
+    store = funnel.FunnelStore(tmp_path / "v2.db")
+    with pytest.raises(funnel.ProviderError):
+        funnel.configure_kit(store, config)
+    funnel.configure_kit(store, config)
+    assert creations.count("sequences") == 1
+    assert creations.count("emails") == 5
+
+
+def test_definitive_kit_denial_allows_retry_after_credentials_are_fixed(tmp_path):
+    from social.funnel import FunnelStore, KitClient, ProviderError, _create_kit_resource
+    calls = []
+
+    def provider(request):
+        calls.append(request.method)
+        return httpx.Response(403, json={}) if len(calls) == 1 else httpx.Response(201, json={"sequence": {"id": 30}})
+
+    kit = KitClient("fixture", form_id="20", sequence_id="", transport=httpx.MockTransport(provider))
+    store = FunnelStore(tmp_path / "v2.db")
+    with pytest.raises(ProviderError):
+        _create_kit_resource(store, kit, "kit_sequence_id", "sequences", {"name": "Dedicated"}, "sequence")
+    assert _create_kit_resource(store, kit, "kit_sequence_id", "sequences", {"name": "Dedicated"}, "sequence") == 30
+    assert calls == ["POST", "POST"]
