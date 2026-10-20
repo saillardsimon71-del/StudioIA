@@ -1,0 +1,12 @@
+# Studio IA V2 — isolated runtime state (never commit user media, DB, or secrets)
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+data/
+config.json
+.env
+web/node_modules/
+web/.svelte-kit/
+web/build/
+web/dist/
