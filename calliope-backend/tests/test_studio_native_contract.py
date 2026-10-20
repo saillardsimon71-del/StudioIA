@@ -732,10 +732,19 @@ async def test_native_writer_repair_keeps_the_real_cta_budget(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('seconds_per_shot', [2., 6.])
+@pytest.mark.parametrize('seconds_per_shot', [2., 12.])
 async def test_director_repairs_duration_during_preparation_without_rewriting_speech(monkeypatch, seconds_per_shot):
     requests = []
     original = realization_plan()
+    source = original['scenes'][0]['shots']
+    original['scenes'][0]['shots'] = []
+    for start in (0, 2, 4):
+        shot = copy.deepcopy(source[start])
+        shot['duration_sec'] = 8.
+        shot['dialogue_turns'] = [
+            {'speaker': item['speaker'], 'text': item['dialogue']} for item in source[start:start + 2]]
+        shot['dialogue'] = '\n'.join(turn['text'] for turn in shot['dialogue_turns'])
+        original['scenes'][0]['shots'].append(shot)
     cta = series_planner._midroll_spec({'language': 'fr'})['duration_sec']
 
     async def generate(messages, **options):
@@ -760,7 +769,8 @@ async def test_director_repairs_duration_during_preparation_without_rewriting_sp
     assert len(requests) == 2
     assert sum(shot['duration_sec'] for shot in shots) == pytest.approx(24 + cta)
     assert [(turn['speaker'], turn['text']) for shot in narrative for turn in shot['dialogue_turns']] == [
-        (shot['speaker'], shot['dialogue']) for shot in original['scenes'][0]['shots']]
+        (turn['speaker'], turn['text']) for shot in original['scenes'][0]['shots']
+        for turn in shot['dialogue_turns']]
     assert [shot.get('action', '') for shot in narrative] == [
         shot.get('action', '') for shot in original['scenes'][0]['shots']]
 
@@ -802,6 +812,7 @@ async def test_real_export_removes_phone_only_for_native_contract(media, tmp_pat
         "ffmpeg", "-v", "error", "-ss", "0.5", "-i", str(output),
         "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"
     ])
-    pixel = Image.open(io.BytesIO(frame)).convert("RGB").getpixel((490, 700))
+    image = Image.open(io.BytesIO(frame)).convert("RGB")
+    pixel = image.getpixel((round(image.width * 490 / 720), round(image.height * 700 / 1280)))
     assert (pixel[2] > 200) is (version == 2)
     assert result["screen_text"][0]["labels"][0]["text"] == "123"

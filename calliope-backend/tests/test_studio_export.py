@@ -230,6 +230,44 @@ async def test_export_freezes_snapshot_before_awaiting_progress(export_module, m
     assert result["width"] == result["height"]
 
 
+async def test_export_refuses_a_cut_per_dialogue_line(export_module, media, tmp_path):
+    native, _ = media
+    snapshot = snapshot_for(*[(native, 1.25, "native")] * 20)
+    with pytest.raises(ValueError, match="Trop de coupes"):
+        await export_module.assemble(snapshot, tmp_path / "too-many-cuts.mp4")
+
+
+async def test_social_export_is_full_frame_1080x1920_and_minus_14(
+    export_module, media, tmp_path
+):
+    tone = tmp_path / "tone-5s.mp4"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-y",
+        "-f", "lavfi", "-i", "color=c=blue:s=320x180:r=24:d=5",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=5",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", str(tone),
+    ], check=True, capture_output=True)
+    snapshot = snapshot_for((tone, 5, "native"), aspect_ratio="9:16")
+    snapshot["audio"] = {
+        "enabled": False,
+        "loudnorm": True,
+        "loudness_target_lufs": -14,
+        "true_peak_db": -1.5,
+    }
+    destination = tmp_path / "social.mp4"
+    result = await export_module.assemble(snapshot, destination)
+    assert result["width"] == 1080 and result["height"] == 1920
+    audio = export_module.inspect_audio(destination)
+    assert audio["sample_rate"] == 48000 and audio["channels"] == 2
+    assert audio["audio_duration_sec"] + 0.25 >= audio["video_duration_sec"]
+    from calliope.studio import pacing
+
+    loudness = pacing.measure_loudness(destination)
+    assert loudness is not None
+    assert abs(loudness["integrated_lufs"] + 14) <= 1.5
+
+
 async def test_missing_clip_leaves_destination_untouched(export_module, tmp_path):
     destination = tmp_path / "existing.mp4"
     destination.write_bytes(b"existing output")
@@ -245,17 +283,26 @@ async def test_missing_clip_leaves_destination_untouched(export_module, tmp_path
 async def test_target_warns_without_blocking_or_padding_valid_content(
     export_module, media, tmp_path, target,
 ):
-    native, _ = media
+    tone = tmp_path / "target-5s.mp4"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-y",
+        "-f", "lavfi", "-i", "color=c=blue:s=320x180:r=24:d=5",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=5",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", str(tone),
+    ], check=True, capture_output=True)
     destination = tmp_path / "existing.mp4"
     destination.write_bytes(b"previous film")
-    snapshot = snapshot_for(*[(native, 5, "silent")] * 13)
+    snapshot = snapshot_for(*[(tone, 5, "silent")] * 2)
     snapshot["target_seconds"] = target
     result = await export_module.assemble(snapshot, destination)
-    assert result["duration_sec"] == pytest.approx(16.25, abs=0.05)
+    assert result["duration_sec"] == pytest.approx(10.0, abs=0.05)
     assert result["target_seconds"] == target
     assert "cible" in result["duration_warning"]
     assert destination.read_bytes() != b"previous film"
-    assert list(tmp_path.iterdir()) == [destination]
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "existing.mp4", "target-5s.mp4"
+    ]
 
 
 async def test_export_checks_real_mp4_duration_before_replacing_destination(

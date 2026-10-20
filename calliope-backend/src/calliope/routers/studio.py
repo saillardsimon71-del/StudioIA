@@ -12,6 +12,7 @@ from calliope.config import settings
 from calliope.queue.manager import queue_manager
 from calliope.routers.studio_series import router as series_router
 from calliope.routers.studio_director import router as director_router
+from calliope.routers.studio_sources import router as sources_router
 from calliope.studio import director, runtime, series, service
 from calliope.studio.planner import parse_script, plan_with_llm
 from calliope.studio.screen_text import ScreenText
@@ -19,6 +20,7 @@ from calliope.studio.screen_text import ScreenText
 router = APIRouter()
 router.include_router(series_router)
 router.include_router(director_router)
+router.include_router(sources_router)
 
 
 class ProjectCreate(BaseModel):
@@ -97,6 +99,7 @@ class ShotUpdate(BaseModel):
     framing: str | None = Field(default=None, max_length=5000)
     camera: str | None = Field(default=None, max_length=5000)
     blocking: str | None = Field(default=None, max_length=5000)
+    post_dub_turns: list[int] | None = Field(default=None, max_length=30)
 
 
 class GenerateRequest(BaseModel):

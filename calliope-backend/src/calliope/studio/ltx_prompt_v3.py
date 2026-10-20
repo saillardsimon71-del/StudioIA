@@ -13,6 +13,7 @@ Le compilateur est volontairement déterministe : aucune dépendance au LLM.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from .h3_prompt import (
     dialogue_language,
@@ -77,18 +78,41 @@ def _unique_sentences(*values: str) -> str:
     return " ".join(result)
 
 
+def _fold_accents(value: str) -> str:
+    """Retire les accents pour comparer des descriptions sans dependance d'encodage."""
+    return "".join(
+        char for char in unicodedata.normalize("NFKD", value)
+        if not unicodedata.combining(char)
+    )
+
+
 def _voice_label(description: str) -> str:
-    text = str(description or "").casefold()
-    if any(word in text for word in ("grave", "rauque", "profond")):
+    """Traduit une description vocale en indication LTX courte.
+
+    Les nuances sont testees de la plus precise a la plus generale : une voix
+    "legerement plus grave" ne doit pas devenir "low, raspy" comme une voix
+    "tres grave, rauque", sinon l'identite vocale des personnages se confond.
+    """
+    text = _fold_accents(str(description or "").casefold())
+    if any(word in text for word in (
+        "legerement plus grave", "un peu plus grave",
+        "plus adulte", "moins enfantine", "moins enfantin",
+    )):
+        return "slightly lower, more mature"
+    if "medium-grave" in text:
+        return "warm, medium-low"
+    if any(word in text for word in ("tres grave", "rauque", "profond")):
         return "low, raspy"
     if any(word in text for word in ("aigu", "nasillard", "nasillarde")):
         return "high, nasal"
-    if any(word in text for word in ("calme", "posé", "pose", "posée")):
+    if any(word in text for word in ("calme", "pose")):
         return "calm, measured"
     if any(word in text for word in ("trembl", "nerveux", "nerveuse")):
         return "nervous, trembling"
-    if any(word in text for word in ("deep", "low", "masculine", "grave")):
+    if any(word in text for word in ("deep", "low", "masculine")):
         return "low, resonant"
+    if "grave" in text:
+        return "low"
     if any(word in text for word in ("bright", "young")):
         return "bright, youthful"
     if any(word in text for word in ("warm", "feminine")):
@@ -208,12 +232,19 @@ def compile_ltx_prompt(shot, context, first_frame):
             })
             _append_visual(parts, prose(turn.get("reaction") or ""), True, seen)
         parts.append({
+            "text": (
+                "Only the named speaker speaks; every other character stays "
+                "silent with their mouth closed."
+            ),
+            "optional": False,
+        })
+        parts.append({
             "text": "The voice stays in the foreground above the ambience.",
-            "optional": True,
+            "optional": False,
         })
         parts.append({
             "text": "Speak each quoted line exactly once, in order.",
-            "optional": True,
+            "optional": False,
         })
     else:
         parts.append({
@@ -230,11 +261,11 @@ def compile_ltx_prompt(shot, context, first_frame):
     ):
         parts.append({
             "text": "Each reply starts as the previous line ends, with brief natural breaths.",
-            "optional": True,
+            "optional": False,
         })
         parts.append({
             "text": "Perform the described gestures while speaking.",
-            "optional": True,
+            "optional": False,
         })
         parts.append({
             "text": "Use facial expressions and small motivated movements.",
@@ -247,9 +278,9 @@ def compile_ltx_prompt(shot, context, first_frame):
     else:
         soundscape = prose(shot.get("soundscape") or "")
         if soundscape and soundscape.casefold() != "n/a":
-            parts.append({"text": f"Ambient sound: {soundscape}", "optional": True})
+            parts.append({"text": f"Ambient sound: {soundscape}", "optional": False})
     if labels:
-        parts.append({"text": "No on-screen text, captions or subtitles.", "optional": True})
+        parts.append({"text": "No on-screen text, captions or subtitles.", "optional": False})
     if first_frame:
         parts.append({
             "text": "Do not re-describe the opening image; show only the new motion.",
@@ -259,8 +290,6 @@ def compile_ltx_prompt(shot, context, first_frame):
     parts = _limit_words(parts, LTX_PROMPT_TARGET_WORDS)
     prompt = re.sub(r"\s+", " ", " ".join(part["text"] for part in parts)).strip()
     return prompt
-
-    return "natural"
 
 
 def _limit_words(parts: list[dict], maximum: int) -> list[dict]:

@@ -83,15 +83,18 @@ def test_apply_to_shot_uses_tts_engine(client, prepared, monkeypatch, tmp_path, 
     monkeypatch.setattr(tts, "_matches", lambda *args: matches)
     if not matches:
         with pytest.raises(RuntimeError, match="valid"):
-            tts.apply_to_shot(shot)
+            tts.apply_to_shot(shot, turn_indexes=[0])
         assert service.board(project)["scenes"][0]["shots"][0]["approved"]
         return
-    updated = tts.apply_to_shot(shot)
+    updated = tts.apply_to_shot(shot, turn_indexes=[0])
     selected = next(t for t in updated["takes"] if t["id"] == updated["selected_video_id"])
     assert selected["output_path"].endswith("video-tts.mp4")
     assert inspect_media(selected["output_path"])["has_audio"] is True
     assert selected["metadata"]["model_revision"] == "original-revision"
     assert selected["metadata"]["director_shot_hash"] == "original-contract"
+    assert selected["metadata"]["tts"]["replaced_turns"] == [0]
+    assert selected["metadata"]["tts"]["voice_identity_status"] == "unverified"
+    assert selected["metadata"]["tts"]["lip_sync_status"] == "unverified"
     assert "dialogue_qc" not in selected["metadata"]
     assert "director_qc_review" not in selected["metadata"]
     assert not updated["approved"]
@@ -100,10 +103,10 @@ def test_apply_to_shot_uses_tts_engine(client, prepared, monkeypatch, tmp_path, 
     service.select_take(second_take["id"])
     second_shot = next(s for scene in service.board(project)["scenes"] for s in scene["shots"]
                        if s["id"] == shots[1]["id"])
-    second_updated = tts.apply_to_shot(second_shot)
+    second_updated = tts.apply_to_shot(second_shot, turn_indexes=[0])
     assert next(t for t in second_updated["takes"] if t["id"] == second_take["id"])["output_path"] != selected["output_path"]
     monkeypatch.setattr(FakeEngine, "synthesize", lambda *args, **kwargs: pytest.fail("Dub repeated"))
-    repeated = tts.apply_to_shot(updated)
+    repeated = tts.apply_to_shot(updated, turn_indexes=[0])
     assert next(t for t in repeated["takes"] if t["id"] == take["id"])["output_path"] == selected["output_path"]
 
 

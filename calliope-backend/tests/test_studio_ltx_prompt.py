@@ -81,3 +81,65 @@ def test_compile_video_prompt_routes_ltx_to_v3_and_keeps_h3_tags_for_fast():
     assert '"Bonjour."' in ltx
     fast = compile_video_prompt(shot, context, first_frame=False, video_profile="fast")
     assert "<d>" in fast
+
+
+def test_ltx_prompt_carries_momo_lower_voice_without_confusing_durio():
+    shot, context = sample()
+    context["render_canon"]["characters"]["lila"]["voice"] = (
+        "Masculine fran\u00e7aise adulte, l\u00e9g\u00e8rement plus grave que la voix "
+        "native valid\u00e9e, timbre pos\u00e9, calme, moins enfantine."
+    )
+    momo_prompt = compile_ltx_prompt(shot, context, first_frame=False)
+    assert "slightly lower, more mature French voice" in momo_prompt
+
+    context["render_canon"]["characters"]["lila"]["voice"] = (
+        "Masculine fran\u00e7aise, tr\u00e8s grave, rauque, puissante, diction agressive."
+    )
+    durio_prompt = compile_ltx_prompt(shot, context, first_frame=False)
+    assert "low, raspy French voice" in durio_prompt
+    assert "slightly lower, more mature French voice" not in durio_prompt
+
+
+def test_ltx_prompt_keeps_a_medium_low_voice_out_of_raspy():
+    shot, context = sample()
+    context["render_canon"]["characters"]["lila"]["voice"] = (
+        "Masculine fran\u00e7aise, m\u00e9dium-grave, pos\u00e9e, froide."
+    )
+    prompt = compile_ltx_prompt(shot, context, first_frame=False)
+    assert "warm, medium-low French voice" in prompt
+    assert "low, raspy French voice" not in prompt
+
+
+def test_ltx_prompt_keeps_critical_constraints_when_trimming_optional_prose():
+    shot, context = sample()
+    shot["soundscape"] = "quiet room tone"
+    context['directing_profile'] = {'dialogue_density': 'brisk', 'silences': 'brief'}
+    context['render_canon']['characters']['lila']['appearance'] = 'A long optional appearance ' * 40
+    shot["reaction"] = "A long optional reaction " * 20
+    prompt = compile_ltx_prompt(shot, context, first_frame=False)
+    assert "Only the named speaker speaks" in prompt
+    assert "Speak each quoted line exactly once" in prompt
+    assert "The voice stays in the foreground" in prompt
+    assert "Ambient sound: quiet room tone" in prompt
+    assert "brief natural breaths" in prompt
+    assert "Perform the described gestures while speaking" in prompt
+    assert len(prompt.split()) <= 200
+
+
+def test_ltx_prompt_rejects_an_ambience_that_cannot_fit_without_silent_loss():
+    shot, context = sample()
+    shot['soundscape'] = 'quiet room tone ' * 80
+    with pytest.raises(ValueError, match='trop long'):
+        compile_ltx_prompt(shot, context, first_frame=True)
+
+
+def test_ltx_prompt_fails_loudly_instead_of_dropping_critical_dialogue():
+    shot, context = sample()
+    long_line = "This line is deliberately long " * 8
+    shot["dialogue"] = " ".join([long_line] * 20)
+    shot["dialogue_turns"] = [
+        {"speaker": "lila", "text": long_line} for _ in range(20)
+    ]
+    with pytest.raises(ValueError, match="trop long même après réduction"):
+        compile_ltx_prompt(shot, context, first_frame=False)
+

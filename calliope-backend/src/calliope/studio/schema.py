@@ -1,6 +1,20 @@
 from calliope.db import get_db
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS studio_video_sources (
+    id TEXT PRIMARY KEY,
+    series_id INTEGER NOT NULL REFERENCES studio_series(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    path TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    source_language TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    worker_token TEXT NOT NULL DEFAULT '',
+    analysis_json TEXT NOT NULL DEFAULT '{}',
+    approved_hash TEXT,
+    error TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS studio_projects (
     project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
     aspect_ratio TEXT NOT NULL DEFAULT '16:9',

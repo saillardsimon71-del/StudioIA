@@ -152,7 +152,8 @@ def save_episode_plan(project_id, plan):
                                                 'language', 'purpose', 'dialogue_turns',
                                                 'soundscape', 'screen_text', 'blocking',
                                                 'listener_keys', 'prop_keys', 'start_state',
-                                                'end_state', 'cut_reason', 'source_beat_index')
+                                                'end_state', 'cut_reason', 'source_beat_index',
+                                                'post_dub_turns')
                                     if key in shot
                                 },
                                 "character_keys": shot.get("character_keys", []),
@@ -204,6 +205,36 @@ def save_episode_plan(project_id, plan):
             (project_id, json.dumps(audio_config)),
         )
         conn.commit()
+
+
+def editorial_review(project_id):
+    """Contrôle éditorial exécuté avant tout rendu et avant l'export.
+
+    Le linter existait mais n'était appelé par personne. Il vérifie les coupes,
+    la durée du CTA, les répliques ciblées du post-doublage et les états
+    déclarés entre deux plans. Ses avertissements sont conservés dans le plan.
+    """
+    from calliope.studio import editorial
+
+    with service.database() as conn:
+        row = conn.execute(
+            "SELECT plan_json FROM studio_episodes WHERE project_id=?", (project_id,)
+        ).fetchone()
+        plan = json.loads(row[0] or "{}") if row else {}
+    board = service.board(project_id)
+    review = editorial.validate_plan({
+        "post_dub": bool(plan.get("post_dub")),
+        "scenes": board["scenes"],
+    })
+    if review.get("warnings") or review.get("errors"):
+        plan["editorial_review"] = review
+        with service.database() as conn:
+            conn.execute(
+                "UPDATE studio_episodes SET plan_json=? WHERE project_id=?",
+                (json.dumps(plan), project_id),
+            )
+            conn.commit()
+    return review
 
 
 def ensure_midroll(project_id):
@@ -492,6 +523,26 @@ def apply_loudness(verdict, loudness):
     return verdict
 
 
+def apply_tts_status(verdict, metadata):
+    """Rend explicite ce qu'un post-doublage ne prouve pas.
+
+    Le texte transcrit peut etre exact alors que la voix, le locuteur et le
+    lip-sync ont change. Ces dimensions restent non verifiees et ne doivent
+    jamais etre presentees comme validees par le QC automatique.
+    """
+    tts = (metadata or {}).get("tts") or {}
+    replaced = list(tts.get("replaced_turns") or [])
+    if not replaced:
+        return verdict
+    verdict["replaced_turns"] = replaced
+    verdict["voice_identity_status"] = "unverified"
+    verdict["voice_identity_reason"] = tts.get("voice_identity_reason") or (
+        "Post-doublage : identite vocale non verifiee."
+    )
+    verdict["lip_sync_status"] = tts.get("lip_sync_status") or "unverified"
+    return verdict
+
+
 async def assess_take(shot):
     """Enregistre un diagnostic de parole pour la relecture de la prise."""
     from calliope.studio import pacing, transcription
@@ -499,6 +550,19 @@ async def assess_take(shot):
 
     take = selected_video(shot)
     metadata = (take or {}).get("metadata") or {}
+    if take and not settings.dry_run and Path(take.get('output_path') or '').is_file():
+        from calliope.studio import generated_text
+
+        stat = Path(take['output_path']).stat()
+        signature = [stat.st_size, stat.st_mtime_ns]
+        text_qc = metadata.get('text_qc') or {}
+        if text_qc.get('signature') != signature or text_qc.get('status') == 'unverified':
+            text_qc = await asyncio.to_thread(generated_text.scan, take['output_path'])
+            metadata['text_qc'] = text_qc | {'signature': signature}
+            with service.database() as conn:
+                conn.execute('UPDATE studio_takes SET metadata_json=? WHERE id=?',
+                             (json.dumps(metadata), take['id']))
+                conn.commit()
     override = metadata.get("dialogue_qc_override")
     if take and override:
         # Une validation supervisee enregistree ne doit pas etre ecrasee par
@@ -506,6 +570,7 @@ async def assess_take(shot):
         verdict = dict(metadata.get("dialogue_qc") or {})
         verdict["status"] = "unknown"
         verdict["reason"] = override.get("reason") or "Validation supervisee."
+        apply_tts_status(verdict, metadata)
         metadata["dialogue_qc"] = verdict
         with service.database() as conn:
             conn.execute(
@@ -521,12 +586,53 @@ async def assess_take(shot):
         metadata = take.get("metadata") or {}
         metadata.pop("dialogue_qc", None)
         verdict = None
-        if shot["audio_mode"] == "native" and metadata.get("has_audio") is False:
+        has_audio = metadata.get("has_audio") is not False
+        output = Path(take.get("output_path") or "")
+        if shot["audio_mode"] == "native" and not has_audio:
             verdict = {
                 "status": "inaudible",
                 "reason": "La piste sonore native attendue est absente.",
                 "voice": None,
             }
+        elif (
+            shot["audio_mode"] == "native"
+            and settings.studio_asr_checkpoint
+            and output.is_file()
+        ):
+            language = context.get("shot", {}).get("language") or context.get("language", "fr")
+            transcript = await asyncio.to_thread(
+                transcription.transcribe_dialogue,
+                str(output),
+                settings.studio_asr_checkpoint,
+                language,
+            )
+            heard = [
+                float(word.get("probability", 0))
+                for segment in transcript.get("segments") or []
+                for word in segment.get("words") or []
+            ]
+            mean = sum(heard) / len(heard) if heard else None
+            text = str(transcript.get("text") or "").strip()
+            if transcript.get("status") != "ok":
+                verdict = {
+                    "status": "unknown",
+                    "reason": transcript.get("reason") or "Parole non vérifiée.",
+                    "mean_word_probability": mean,
+                }
+            elif text and (mean is None or mean >= 0.75):
+                verdict = {
+                    "status": "unknown",
+                    "reason": f"Parole détectée dans un plan sans dialogue : {text[:160]}",
+                    "transcript": text,
+                    "mean_word_probability": mean,
+                }
+            else:
+                verdict = {
+                    "status": "ok",
+                    "reason": "Aucune parole détectée.",
+                    "mean_word_probability": mean,
+                }
+        if verdict:
             metadata["dialogue_qc"] = verdict
             service.render_event(take["id"], "DONE", verdict["reason"])
         with service.database() as conn:
@@ -571,7 +677,8 @@ async def assess_take(shot):
         language,
     ]
     cached = metadata.get("transcription_cache") or {}
-    if cached.get("signature") == signature:
+    if (cached.get("signature") == signature
+            and (cached.get('transcript') or {}).get('status') == 'ok'):
         transcript = cached["transcript"]
         voice = cached.get("activity")
     else:
@@ -614,7 +721,10 @@ async def assess_take(shot):
             verdict = transcription.assess_transcript_v2(
                 dialogue, transcript, language=language
             )
-    if turns and verdict["status"] not in (
+    has_word_timings = any(
+        segment.get("words") for segment in transcript.get("segments") or []
+    )
+    if turns and has_word_timings and verdict["status"] not in (
         "missing",
         "extra",
         "inaudible",
@@ -644,6 +754,7 @@ async def assess_take(shot):
     if diagnosis:
         verdict.update(status="extra", reason=diagnosis["reason"])
         verdict["diagnostic"] = diagnosis
+    apply_tts_status(verdict, metadata)
     metadata["dialogue_qc"] = verdict
     service.render_event(
         take["id"],
@@ -893,19 +1004,41 @@ async def render_shot(job, initial, should_stop):
                 from calliope.studio import tts
                 shot = await asyncio.to_thread(tts.apply_to_shot, shot)
             verdict = await assess_take(shot)
-        if verdict and verdict['status'] == 'ok':
+        text_qc = ((selected_video(shot) or {}).get('metadata') or {}).get('text_qc') or {}
+        if verdict and verdict['status'] == 'ok' and text_qc.get('status') != 'unexpected_text':
             trim_take(shot, verdict.get('voice'), verdict.get('trim_end_limit_sec'))
+        message = ('Texte parasite détecté dans la prise native. Prise conservée, non approuvée.'
+                   if text_qc.get('status') == 'unexpected_text' else
+                   'Prise conservee. Verifiez les paroles, locuteurs, image et raccords avant de continuer.')
         with service.database() as conn:
             conn.execute("UPDATE studio_productions SET status='paused',stage='qc',message=? WHERE project_id=?",
-                ('Prise conservee. Verifiez les paroles, locuteurs, image et raccords avant de continuer.', job['project_id']))
+                (message, job['project_id']))
             conn.commit()
         raise ProductionPausedError()
-    if not verdict or verdict["status"] == "ok":
+    clear = not verdict or verdict.get("status") == "ok"
+    if clear:
         trim_take(shot, (verdict or {}).get("voice"), (verdict or {}).get("trim_end_limit_sec"))
+    if verdict and verdict.get("replaced_turns"):
+        with service.database() as conn:
+            conn.execute(
+                "UPDATE studio_productions SET status='paused',stage='qc',message=? "
+                "WHERE project_id=?",
+                (
+                    "Voix remplacées en post-doublage : écoutez la prise, vérifiez "
+                    "locuteurs et synchronisation, puis validez ce plan avant le montage.",
+                    job["project_id"],
+                ),
+            )
+            conn.commit()
+        raise ProductionPausedError()
     if should_stop():
         raise asyncio.CancelledError()
     if queue_manager.is_cancelled(job["id"]):
         raise ProductionPausedError()
+    if not clear:
+        # Le QC n'a pas établi la conformité : la prise reste non approuvée
+        # et le montage s'arrêtera avant l'export. Aucun rerender automatique.
+        return
     try:
         service.approve_shot(shot["id"], True)
     except service.HTTPException as exc:
@@ -1084,6 +1217,16 @@ async def run_production(job, payload, should_stop):
                                  (' '.join(check['errors']), project_id))
                     conn.commit()
                 raise ProductionPausedError()
+        review = editorial_review(project_id)
+        if not has_director and not review["ok"]:
+            with service.database() as conn:
+                conn.execute(
+                    "UPDATE studio_productions SET status='paused',stage='review',message=? "
+                    "WHERE project_id=?",
+                    ("Montage refusé : " + " ".join(review["errors"]), project_id),
+                )
+                conn.commit()
+            raise ProductionPausedError()
         with service.database() as conn:
             snapshot = json.loads(episode["context_json"])
             expected_values = {
@@ -1170,6 +1313,33 @@ async def run_production(job, payload, should_stop):
                     conn.commit()
                     raise ProductionPausedError() from None
         await render_videos(job, shots, should_stop)
+        board = service.board(project_id)
+        waiting = [
+            shot for scene in board["scenes"] for shot in scene["shots"]
+            if not shot.get("approved")
+        ]
+        if waiting:
+            details = []
+            for item in waiting:
+                take = selected_video(item)
+                qc = ((take or {}).get("metadata") or {}).get("dialogue_qc") or {}
+                details.append(
+                    f"plan {item.get('order_index')}: {qc.get('status') or 'sans QC'}"
+                )
+            with service.database() as conn:
+                conn.execute(
+                    "UPDATE studio_productions SET status='paused',stage='qc',message=? "
+                    "WHERE project_id=?",
+                    (
+                        f"{len(waiting)} plan(s) sans validation humaine "
+                        f"({'; '.join(details[:6])}). Écoutez et validez les prises "
+                        "avant l'assemblage : un rendu terminé ne prouve ni la voix, "
+                        "ni le lip-sync, ni les raccords.",
+                        project_id,
+                    ),
+                )
+                conn.commit()
+            raise ProductionPausedError()
         message = "Musique, bruitages et assemblage du MP4"
         await checkpoint(job, "mixing", 0.9, message, should_stop)
         revision = service.board(project_id)["project"]["revision"]

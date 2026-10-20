@@ -58,7 +58,9 @@ def test_text_overlay_survives_real_export_and_is_persisted_in_metadata(tmp_path
         ]
     )
     image = Image.open(io.BytesIO(frame))
-    pixels = image.crop((250, 485, 470, 555)).convert("RGB").get_flattened_data()
+    box = (round(image.width * 250 / 720), round(image.height * 485 / 1280),
+           round(image.width * 470 / 720), round(image.height * 555 / 1280))
+    pixels = image.crop(box).convert("RGB").get_flattened_data()
     assert sum(min(pixel) > 180 for pixel in pixels) > 100
 
 

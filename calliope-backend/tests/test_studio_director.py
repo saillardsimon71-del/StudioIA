@@ -426,6 +426,105 @@ async def test_revision_keeps_unrequested_shots_and_rejects_llm_extra_ids(client
 
 
 @pytest.mark.asyncio
+async def test_revision_repairs_render_overflow_before_saving(client, prepared, monkeypatch):
+    from calliope.config import settings
+    from calliope.studio import director
+    monkeypatch.setattr(settings, 'studio_video_profile', 'ltx')
+    project, shots = prepared
+    before = director.state(project)
+    valid = copy.deepcopy(before['shots'][0]['contract'])
+    oversized = valid | {'action': 'The keeper slowly lifts the radio ' * 50}
+    calls = []
+
+    async def generate(messages, **options):
+        calls.append(copy.deepcopy(messages))
+        return {'shots': [{'id': shots[0]['id'], 'contract': oversized if len(calls) == 1 else valid}]}
+
+    monkeypatch.setattr(director, 'generate_structured', generate)
+    result = await director.revise(project, before['storyboard_hash'], [shots[0]['id']], 'Adjust staging.')
+    assert len(calls) == 2
+    assert 'trop long' in calls[1][-1]['content']
+    assert result['shots'][0]['contract']['dialogue'] == valid['dialogue']
+    assert result['shots'][1:] == before['shots'][1:]
+    with pytest.raises(service.HTTPException) as error:
+        await director.revise(project, result['storyboard_hash'], [shots[0]['id']], '',
+                              contracts=[{'id': shots[0]['id'], 'contract': oversized}])
+    assert 'trop long' in error.value.detail
+    assert director.state(project) == result
+
+
+@pytest.mark.parametrize('route', ['review', 'guard'])
+def test_detected_generated_text_blocks_take_approval(client, prepared, tmp_path, route):
+    from calliope.studio import director
+    from tests.test_studio import video_bytes
+    project, shots = prepared
+    current = approve(client, project)
+    take = service.store_upload(shots[0]['id'], video_bytes(tmp_path, audio=True), 'video')
+    service.select_take(take['id'])
+    with service.database() as conn:
+        row = conn.execute('SELECT metadata_json FROM studio_takes WHERE id=?', (take['id'],)).fetchone()
+        metadata = json.loads(row[0]) | {'text_qc': {'status': 'unexpected_text'}}
+        conn.execute('UPDATE studio_takes SET metadata_json=? WHERE id=?', (json.dumps(metadata), take['id']))
+        conn.commit()
+    if route == 'review':
+        response = client.post(f"/api/studio/projects/{project}/director/takes/{take['id']}/review", json={
+            'expected_hash': current['storyboard_hash'], 'approved': True,
+            'visual_ok': True, 'continuity_ok': True, 'speakers_ok': True, 'audio_ok': True})
+        assert response.status_code == 422
+        assert 'texte parasite' in response.json()['detail'].lower()
+    else:
+        with service.database() as conn:
+            shot = service.public_shot(conn, shots[0]['id'])
+            row = conn.execute('SELECT * FROM studio_takes WHERE id=?', (take['id'],)).fetchone()
+            with pytest.raises(service.HTTPException) as error:
+                director.guard_approval(conn, shot, row)
+            assert 'texte parasite' in error.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_native_qc_records_generated_text_scan_without_paid_services(client, prepared, tmp_path, monkeypatch):
+    from calliope.config import settings
+    from calliope.studio import generated_text, production, transcription
+    from tests.test_studio import video_bytes
+    _, shots = prepared
+    take = service.store_upload(shots[0]['id'], video_bytes(tmp_path, audio=True), 'video')
+    shot = service.select_take(take['id'])
+    monkeypatch.setattr(settings, 'dry_run', False)
+    monkeypatch.setattr(transcription, 'transcribe_dialogue', lambda *args: {'status': 'unknown'})
+    calls = []
+    def scan(path):
+        calls.append(path)
+        return {'status': 'unexpected_text', 'hits': [{'sample': 2, 'words': ['Dourze']}]}
+    monkeypatch.setattr(generated_text, 'scan', scan)
+    await production.assess_take(shot)
+    await production.assess_take(shot)
+    assert len(calls) == 1, 'Reuse the OCR result for the unchanged take'
+    with service.database() as conn:
+        row = conn.execute('SELECT metadata_json FROM studio_takes WHERE id=?', (take['id'],)).fetchone()
+    assert json.loads(row[0])['text_qc']['status'] == 'unexpected_text'
+
+
+@pytest.mark.asyncio
+async def test_unavailable_asr_cache_is_retried_without_regenerating_video(client, prepared, tmp_path, monkeypatch):
+    from calliope.studio import production, transcription
+    from tests.test_studio import video_bytes
+    _, shots = prepared
+    take = service.store_upload(shots[0]['id'], video_bytes(tmp_path, audio=True), 'video')
+    shot = service.select_take(take['id'])
+    calls = []
+    def transcribe(*args):
+        calls.append(args)
+        return {'status': 'unknown', 'reason': 'ModuleNotFoundError'}
+    monkeypatch.setattr(transcription, 'transcribe_dialogue', transcribe)
+    await production.assess_take(shot)
+    with service.database() as conn:
+        refreshed = service.public_shot(conn, shot['id'])
+    await production.assess_take(refreshed)
+    assert len(calls) == 2
+    assert refreshed['selected_video_id'] == take['id']
+
+
+@pytest.mark.asyncio
 async def test_contract_replaces_the_legacy_reaction_instead_of_replaying_it(client, prepared):
     from calliope.studio import director
     project, shots = prepared
@@ -586,11 +685,9 @@ def test_cost_reservations_block_multiple_takes_and_are_idempotent(client, prepa
 
 
 @pytest.mark.asyncio
-async def test_plan_to_qc_and_targeted_retake_without_gpu(client, prepared, monkeypatch, tmp_path):
-    from pathlib import Path
+async def test_plan_qc_rejects_fragmented_export_and_preserves_targeted_retake(client, prepared, monkeypatch, tmp_path):
     from calliope.agent import llm
     from calliope.studio import director, production, series, video_preparation
-    from calliope.studio.export import inspect_media
     from calliope.queue.manager import queue_manager
     from tests.test_studio import video_bytes
     project, shots = prepared
@@ -660,11 +757,11 @@ async def test_plan_to_qc_and_targeted_retake_without_gpu(client, prepared, monk
                   'visual_ok': True, 'continuity_ok': True, 'speakers_ok': True, 'audio_ok': True})
         assert reviewed.status_code == 200, reviewed.text
     series.resume(project)
-    outputs = await production.run_production(job, payload, lambda: False)
-    queue_manager.mark_done(old_job, outputs)
-    assert len(outputs) == 1 and Path(outputs[0]).is_file()
-    assert inspect_media(Path(outputs[0]))['has_audio'] is True
-    assert service.board(project)['production']['status'] == 'done'
+    with pytest.raises(RuntimeError, match='Trop de coupes'):
+        await production.run_production(job, payload, lambda: False)
+    queue_manager.mark_failed(old_job, 'Trop de coupes')
+    assert not any(item['output_path'] for item in service.board(project)['exports'])
+    assert service.board(project)['production']['status'] == 'failed'
     assert calls == [shot['id'] for shot in shots], 'Reviewed takes must never be rendered again'
     saved = {s['id']: s['selected_video_id'] for s in service.board(project)['scenes'][0]['shots']}
     retried = client.post(f"/api/studio/projects/{project}/shots/{shots[1]['id']}/retake",

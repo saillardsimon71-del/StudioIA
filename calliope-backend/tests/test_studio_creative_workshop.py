@@ -26,7 +26,8 @@ def selected_story(candidate_id='B'):
 
 def test_normal_preparation_does_not_rewrite_already_validated_states(client, monkeypatch):
     roles = []
-    replies = iter([{'candidates': candidates()}, selected_story(), technical_plan()])
+    replies = iter([{'candidates': candidates()}, selected_story(),
+                    {'approved': True, 'issues': []}, technical_plan()])
 
     async def generate(messages, **options):
         roles.append(options.get('role'))
@@ -50,7 +51,7 @@ def test_normal_preparation_does_not_rewrite_already_validated_states(client, mo
         if board['production']['status'] in ('paused', 'failed'):
             break
         time.sleep(0.05)
-    assert roles == ['story', 'script', 'planner']
+    assert roles == ['story', 'script', 'script', 'planner']
     assert board['production']['stage'] == 'review', board['production']
     assert sum(len(scene['shots']) for scene in board['scenes']) == 6
     assert all(shot.get('purpose') not in ('midroll', 'outro')
@@ -102,7 +103,8 @@ async def test_writer_uses_requested_rhythm_before_shortening_deepseek_dialogue(
 async def test_selected_scene_reaches_realization_without_the_rejected_candidates(monkeypatch):
     requests = []
     roles = []
-    replies = [{'candidates': candidates()}, selected_story(), technical_plan()]
+    replies = [{'candidates': candidates()}, selected_story(),
+               {'approved': True, 'issues': []}, technical_plan()]
 
     async def generate(messages, **options):
         requests.append(copy.deepcopy(messages))
@@ -115,7 +117,7 @@ async def test_selected_scene_reaches_realization_without_the_rejected_candidate
         'Une scène absurde au coffre.', '',
     )
     assert plan['creative_story'] == creative_story()
-    assert roles == ['story', 'script', 'planner']
+    assert roles == ['story', 'script', 'script', 'planner']
     assert plan['creative_workshop']['candidates'] == candidates()
     assert plan['creative_workshop']['selection']['candidate_id'] == 'B'
     realization = json.loads(requests[-1][1]['content'])
@@ -129,7 +131,8 @@ async def test_selected_scene_reaches_realization_without_the_rejected_candidate
 
 @pytest.mark.asyncio
 async def test_editor_cannot_claim_to_select_an_unknown_candidate(monkeypatch):
-    replies = iter([{'candidates': candidates()}, selected_story('unknown'), selected_story('C')])
+    replies = iter([{'candidates': candidates()}, selected_story('unknown'), selected_story('C'),
+                    {'approved': True, 'issues': []}])
 
     async def generate(messages, **options):
         return copy.deepcopy(next(replies))
@@ -143,7 +146,8 @@ async def test_editor_cannot_claim_to_select_an_unknown_candidate(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('invalid_id', [[], {}])
 async def test_malformed_editorial_choice_can_be_repaired(monkeypatch, invalid_id):
-    replies = iter([{'candidates': candidates()}, selected_story(invalid_id), selected_story('C')])
+    replies = iter([{'candidates': candidates()}, selected_story(invalid_id), selected_story('C'),
+                    {'approved': True, 'issues': []}])
 
     async def generate(messages, **options):
         return copy.deepcopy(next(replies))
@@ -155,7 +159,8 @@ async def test_malformed_editorial_choice_can_be_repaired(monkeypatch, invalid_i
 
 @pytest.mark.asyncio
 async def test_incomplete_candidate_pool_is_repaired_before_selection(monkeypatch):
-    replies = iter([{'candidates': [candidates()[0]]}, {'candidates': candidates()}, selected_story()])
+    replies = iter([{'candidates': [candidates()[0]]}, {'candidates': candidates()}, selected_story(),
+                    {'approved': True, 'issues': []}])
 
     async def generate(messages, **options):
         return copy.deepcopy(next(replies))
@@ -176,7 +181,7 @@ async def test_workshop_keeps_the_user_brief_and_series_canon_in_both_writing_st
     brief = 'Commencer par cette réplique exacte : Je n\'ai plus de maison.'
     objective = 'Fin complète, aucune suite prévue.'
     requests = []
-    replies = iter([{'candidates': candidates()}, selected_story()])
+    replies = iter([{'candidates': candidates()}, selected_story(), {'approved': True, 'issues': []}])
 
     async def generate(messages, **options):
         requests.append(json.loads(messages[1]['content']))
@@ -199,7 +204,8 @@ async def test_workshop_keeps_the_user_brief_and_series_canon_in_both_writing_st
 async def test_candidates_with_duplicate_ids_are_not_ambiguous_editorial_choices(monkeypatch):
     pool = candidates()
     pool[1]['id'] = 'A'
-    replies = iter([{'candidates': pool}, {'candidates': candidates()}, selected_story()])
+    replies = iter([{'candidates': pool}, {'candidates': candidates()}, selected_story(),
+                    {'approved': True, 'issues': []}])
 
     async def generate(messages, **options):
         return copy.deepcopy(next(replies))
@@ -221,7 +227,7 @@ async def test_writer_receives_canon_but_no_reference_generation_history(monkeyp
         'bible': {'past_events': 'Le robot a sauvé sa soeur.'}, 'history': [{'summary': 'Il a une dette.'}]}
     original = copy.deepcopy(context)
     requests = []
-    replies = iter([{'candidates': candidates()}, selected_story()])
+    replies = iter([{'candidates': candidates()}, selected_story(), {'approved': True, 'issues': []}])
 
     async def generate(messages, **options):
         requests.append(json.loads(messages[1]['content']))

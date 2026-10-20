@@ -145,5 +145,6 @@ async def test_automatic_dialogue_diagnostic_preserves_the_completed_take(
     monkeypatch.setattr(production, "generate_take", generate)
     monkeypatch.setattr(service, "approve_shot", lambda *args: approved.append(args))
     await production.render_shot(queue_manager.get_job(episode["job_id"]), shot, lambda: False)
-    assert approved == [(700, True)]
+    expected = [(700, True)] if status == "ok" else []
+    assert approved == expected
     assert retries == []

@@ -3,6 +3,7 @@
 	import { beforeNavigate } from '$app/navigation';
 	import ShotEditor from '$lib/studio/ShotEditor.svelte';
 	import DirectorWorkflow from '$lib/studio/DirectorWorkflow.svelte';
+	import SourceVideoComparison from '$lib/studio/SourceVideoComparison.svelte';
 	import PlannerDialog from '$lib/studio/PlannerDialog.svelte';
 	import SceneDialog from '$lib/studio/SceneDialog.svelte';
 	import ConfigDialog from '$lib/studio/ConfigDialog.svelte';
@@ -148,7 +149,7 @@
 {#if loading}<main class="loading"><p class="muted">Ouverture du projet...</p></main>
 {:else if !board}<main class="loading"><p class="error" role="alert">{connectionError || error || 'Projet introuvable.'}</p><button onclick={() => refresh()}>Réessayer</button></main>
 {:else}
-	{#if board.episode}<DirectorWorkflow {board} {active} onchanged={refresh} />{/if}
+	{#if board.episode}<SourceVideoComparison {board} /><DirectorWorkflow {board} {active} onchanged={refresh} />{/if}
 	<details open={!board.episode?.studio_director}>
 		<summary>Panneau expert : plans, montage, sons et anciennes prises</summary>
 	<div class:with-editor={!!selected} class="workspace">

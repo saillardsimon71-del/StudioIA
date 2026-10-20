@@ -70,6 +70,22 @@ def validate_contract(value, entities, props=()):
     return contract
 
 
+def validate_render_contract(value, shot, context):
+    if settings.studio_video_profile != 'ltx':
+        return
+    from calliope.studio.h3_prompt import compile_video_prompt
+
+    direction = context['shot'] | {
+        'action': value['action'], 'prompt': value['action'], 'reaction': '',
+        'dialogue': ' '.join(line['text'] for line in value['dialogue']),
+        'dialogue_turns': [line | {'action': '', 'reaction': ''} for line in value['dialogue']],
+        'character_keys': value['casting'], 'location_key': value['location'],
+        'framing': value['framing'], 'camera': value['camera'], 'soundscape': value['sound'],
+    }
+    compile_video_prompt(shot | direction, context | {'shot': direction},
+                         first_frame=True, video_profile='ltx')
+
+
 def live_shots(conn, project_id):
     return [
         service.public_shot(conn, row[0])
@@ -349,7 +365,8 @@ async def prepare(project_id, internal=False):
         plan = json.loads(row["plan_json"])
         props = plan.get("render_canon", {}).get("props", {})
         shots = live_shots(conn, project_id)
-        directions = {s["id"]: service.shot_context(conn, s["id"])["shot"] for s in shots}
+        render_contexts = {s['id']: service.shot_context(conn, s['id']) for s in shots}
+        directions = {key: context['shot'] for key, context in render_contexts.items()}
         baseline = digest([shots, directions])
     if not shots:
         raise HTTPException(409, "Preparez le storyboard avant le Director.")
@@ -528,6 +545,7 @@ async def prepare(project_id, internal=False):
                     value = value | {'initial_state': value['initial_state'] | requirements['continuation_state']}
                 valid = validate_contract(value, memory["entities"], props)
                 validate_speech_timing(valid)
+                validate_render_contract(valid, shot, render_contexts[shot['id']])
                 for field in ("casting", "location", "duration_sec"):
                     actual = set(valid[field]) if field == "casting" else valid[field]
                     wanted = set(requirements[field]) if field == "casting" else requirements[field]
@@ -628,6 +646,21 @@ def validate_live(conn, project_id, current, require_ready=True, speech_shot_ids
         (project_id,),
     ).fetchone()
     frozen, plan = json.loads(episode['context_json']), json.loads(episode['plan_json'])
+    if frozen.get('source_video') and require_ready:
+        from calliope.studio.series_planner import _validate_story_realization
+        from calliope.studio.source_video import validate_rhythm
+
+        story = plan.get('creative_story', {})
+        if not story.get('source_locked') or not story.get('source_timeline'):
+            raise HTTPException(422, 'Vidéo source : adaptation verrouillée absente.')
+        live = {'scenes': [{'shots': [shot | {
+            'source_beat_index': service.shot_context(conn, shot['id'])['shot'].get('source_beat_index')
+        } for shot in shots]}]}
+        try:
+            validate_rhythm(story, live)
+            _validate_story_realization(story, live)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
     if require_ready and plan.get('prompt_contract_version') == 2:
         seconds = sum(shot['duration_sec'] for shot in shots)
         target = float(frozen.get('target_seconds', 65))
@@ -635,6 +668,12 @@ def validate_live(conn, project_id, current, require_ready=True, speech_shot_ids
             raise HTTPException(
                 422, f'Durée prévue {seconds:g} s, cible {target:g} s : '
                 'repréparez le découpage sans ajouter de pauses de remplissage.')
+        if not frozen.get('source_video'):
+            from calliope.studio.editorial import validate_cuts
+
+            sequence = validate_cuts([shot['duration_sec'] for shot in shots])
+            if not sequence['ok']:
+                raise HTTPException(422, 'Montage non conforme avant GPU : ' + sequence['error'])
         try:
             supplied = authored_story(episode['idea'], frozen.get('entities', []))
         except ValueError as exc:
@@ -651,6 +690,7 @@ def validate_live(conn, project_id, current, require_ready=True, speech_shot_ids
                 entry["contract"], context["entities"],
                 context.get("render_canon", {}).get("props", {}),
             )
+            validate_render_contract(contract, shot, context)
         except ValueError as exc:
             raise HTTPException(422, f"Plan {plan_number}: {exc}") from None
         if contract["duration_sec"] != shot["duration_sec"]:
@@ -713,6 +753,11 @@ def build_image_prompt(entry, plan):
         lines.append("État initial : " + "; ".join(k + " = " + v for k, v in c["initial_state"].items()))
     if c.get("continuity"):
         lines.append("Continuité : " + " ".join(c["continuity"]))
+    if entry.get('composition_reference'):
+        lines.append('Référence de composition : ' + entry['composition_reference']
+                     + '. Utilise le cadrage et les poses uniquement. Remplace les personnages, '
+                     'décors, voix et textes source par ceux du canon et de ce contrat. '
+                     "L'image source n'est pas une première image de production.")
     return "\n".join(lines)
 
 def package(project_id):
@@ -734,7 +779,7 @@ def package(project_id):
                 "Generation MANUELLE dans une conversation ChatGPT.\n"
                 "Joins UNIQUEMENT ces fichiers a ChatGPT :\n"
                 "- prompts-episode-" + str(project_id) + ".txt (tous les plans a generer)\n"
-                "- les images du dossier references/ (4 images)\n"
+                "- les images du dossier references/ (personnages, décors et compositions source)\n"
                 "ChatGPT produit une image de depart par plan indique. Enregistre chaque "
                 "image sous le nom indique (ou tout autre nom), puis importe-les dans "
                 "Studio IA et choisis le plan correspondant dans le menu.\n"
@@ -749,6 +794,19 @@ def package(project_id):
             for index, entry in enumerate(current["shots"]):
                 context = service.shot_context(conn, entry["id"])
                 refs = []
+                from calliope.studio.source_video import composition_reference
+
+                composition = composition_reference(context)
+                if composition:
+                    path, name = composition
+                    if name not in written:
+                        archive.write(path, name)
+                        written.add(name)
+                    description = 'Composition et poses uniquement, identités et décors à remplacer.'
+                    refs.append({'key': 'source-composition', 'kind': 'composition',
+                                 'description': description, 'file': name, 'available': True})
+                    entry = entry | {'composition_reference': name}
+                    legend.setdefault(name, ('source-composition', description))
                 for entity in context["entities"]:
                     if entity["key"] not in entry["contract"]["references"]:
                         continue
@@ -874,6 +932,11 @@ def image_prompt(project_id, shot_id):
             raise HTTPException(404, "Plan introuvable.")
         if entry["continue_from_previous"]:
             raise HTTPException(409, "Ce plan est une continuation: aucune image de depart necessaire.")
+        from calliope.studio.source_video import composition_reference
+
+        composition = composition_reference(service.shot_context(conn, shot_id))
+        if composition:
+            entry = entry | {'composition_reference': composition[1]}
     plan = next(i + 1 for i, s in enumerate(current["shots"]) if s["id"] == shot_id)
     return {"shot_id": shot_id, "plan": plan, "prompt": build_image_prompt(entry, plan)}
 
@@ -1219,6 +1282,8 @@ async def revise(project_id, expected_hash, shot_ids, instruction, contracts=Non
         ).fetchone()
         memory = series.context(conn, episode[0])
         props = json.loads(episode["plan_json"]).get("render_canon", {}).get("props", {})
+        render_inputs = {shot['id']: (shot, service.shot_context(conn, shot['id']))
+                         for shot in live_shots(conn, project_id) if shot['id'] in wanted}
     if contracts is None:
         contract_schema = ShotContract.model_json_schema()
         schema = {
@@ -1276,6 +1341,7 @@ async def revise(project_id, expected_hash, shot_ids, instruction, contracts=Non
                 timing_errors = []
                 for item in contracts:
                     valid = validate_contract(item['contract'], memory['entities'], props)
+                    validate_render_contract(valid, *render_inputs[item['id']])
                     dialogue = [(line['speaker'], line['text']) for line in valid['dialogue']]
                     if item['id'] in proposed_dialogue and dialogue != proposed_dialogue[item['id']]:
                         raise ValueError('Conserver les paroles et locuteurs de la première proposition.')
@@ -1316,6 +1382,7 @@ async def revise(project_id, expected_hash, shot_ids, instruction, contracts=Non
         try:
             updates[item["id"]] = validate_contract(item["contract"], memory["entities"], props)
             validate_speech_timing(updates[item["id"]])
+            validate_render_contract(updates[item['id']], *render_inputs[item['id']])
         except (KeyError, ValueError) as exc:
             raise HTTPException(422, f"Contrat de revision invalide: {exc}") from None
         original = next(s for s in before["shots"] if s["id"] == item["id"])
@@ -1432,7 +1499,9 @@ async def verify_take(project_id, take_id):
         else "non vérifié"
         if verdict["status"] == "unknown"
         else "à corriger",
-        "vision": "a verifier",
+        "vision": "texte parasite détecté"
+        if (metadata.get('text_qc') or {}).get('status') == 'unexpected_text' else "a verifier",
+        "text_qc": metadata.get('text_qc') or {'status': 'unverified'},
         "speaker_identity": "a verifier",
     }
 
@@ -1441,6 +1510,8 @@ def guard_approval(conn, shot, take):
     if not enabled(conn, shot["project_id"]):
         return
     metadata = json.loads(take["metadata_json"] or "{}")
+    if (metadata.get('text_qc') or {}).get('status') == 'unexpected_text':
+        raise HTTPException(422, 'Texte parasite détecté dans la prise native : corrigez cette prise.')
     verdict = metadata.get("dialogue_qc") or {}
     if verdict.get("status") in (
         "extra", "missing", "inaudible", "duplicate", "repeated",
@@ -1483,6 +1554,8 @@ def review_take(project_id, take_id, payload):
                 422, "Ecoutez et verifiez toutes les dimensions du QC avant validation."
             )
         metadata = json.loads(take["metadata_json"])
+        if payload['approved'] and (metadata.get('text_qc') or {}).get('status') == 'unexpected_text':
+            raise HTTPException(422, 'Texte parasite détecté dans la prise native : corrigez cette prise.')
         if payload["approved"] and (metadata.get("dialogue_qc") or {}).get("status") in (
             "extra",
             "missing",

@@ -12,7 +12,9 @@ import tempfile
 from fractions import Fraction
 from pathlib import Path
 
-_SIZES = {"16:9": (1280, 720), "9:16": (720, 1280), "1:1": (960, 960)}
+from . import editorial
+
+_SIZES = {"16:9": (1280, 720), "9:16": (1080, 1920), "1:1": (960, 960)}
 _PROCESS_OPTIONS = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 
@@ -76,6 +78,61 @@ def inspect_media(path: Path) -> dict:
     }
 
 
+def inspect_audio(path: Path) -> dict:
+    """Caractéristiques de livraison de la piste audio."""
+    path = Path(path)
+    if not path.is_file():
+        raise ValueError(f"Vidéo introuvable: {path}")
+    result = subprocess.run(
+        [
+            _binary("ffprobe"), "-v", "error",
+            "-show_entries", "format=duration:stream=codec_type,sample_rate,channels,duration",
+            "-of", "json", str(path),
+        ],
+        capture_output=True,
+        **_PROCESS_OPTIONS,
+    )
+    if result.returncode or result.stderr.strip():
+        detail = result.stderr.decode("utf-8", "replace")[-1000:]
+        raise ValueError(f"Audio illisible: {path}. {detail}")
+    data = json.loads(result.stdout)
+    audio = next(
+        (stream for stream in data.get("streams", [])
+         if stream.get("codec_type") == "audio"),
+        None,
+    )
+    if not audio:
+        raise ValueError("Le MP4 final ne contient aucune piste audio.")
+    return {
+        "sample_rate": int(audio.get("sample_rate") or 0),
+        "channels": int(audio.get("channels") or 0),
+        "audio_duration_sec": float(audio.get("duration") or 0),
+        "video_duration_sec": float(data.get("format", {}).get("duration") or 0),
+    }
+
+
+def verify_delivery(path: Path, sample_rate: int = 48000, channels: int = 2) -> dict:
+    """Refuse un MP4 livrable hors norme (96 kHz, mono, audio tronqué).
+
+    Cette vérification a été ajoutée après un assemblage manuel sorti en
+    96 kHz et dont l'audio s'arrêtait avant l'image.
+    """
+    audio = inspect_audio(path)
+    errors = []
+    if audio["sample_rate"] != sample_rate:
+        errors.append(f"fréquence {audio['sample_rate']} Hz au lieu de {sample_rate} Hz")
+    if audio["channels"] != channels:
+        errors.append(f"{audio['channels']} canal(aux) au lieu de {channels}")
+    if audio["video_duration_sec"] - audio["audio_duration_sec"] > 0.25:
+        errors.append(
+            f"audio plus court que l'image de "
+            f"{audio['video_duration_sec'] - audio['audio_duration_sec']:.2f} s"
+        )
+    if errors:
+        raise ValueError("Livraison refusée: " + "; ".join(errors) + ".")
+    return audio
+
+
 def _check_cancel(cancel_check):
     if cancel_check and cancel_check():
         raise InterruptedError("Export annulé")
@@ -107,6 +164,8 @@ def _window_for(clip, probe):
         beat = 0.0
     if beat <= 0:
         return 0.0, probe_sec
+    if clip.get('preserve_source_timing'):
+        return pacing.explicit_window(0, min(beat, probe_sec), probe_sec)
     native = clip.get("prompt_contract_version") == 2
     if (
         clip.get("audio_mode") == "native"
@@ -220,7 +279,9 @@ async def assemble(
             raise ValueError("Une prise en mode son natif n'a pas de piste audio.")
     _check_cancel(cancel_check)
     windows = [
-        await asyncio.to_thread(_window_for, clip, probe)
+        await asyncio.to_thread(_window_for, clip | {
+            'preserve_source_timing': bool(frozen.get('source_reference'))
+            and clip.get('purpose') not in ('midroll', 'outro')}, probe)
         for clip, probe in zip(clips, probes)
     ]
     _check_cancel(cancel_check)
@@ -229,6 +290,14 @@ async def assemble(
     width, height = size
     durations = [max(0.0, end - start) for start, end in windows]
     total_duration = sum(durations)
+    if frozen.get('source_reference'):
+        from .source_video import validate_export_rhythm
+
+        validate_export_rhythm(frozen, durations, windows=windows)
+    else:
+        sequence = editorial.validate_cuts(durations)
+        if not sequence["ok"]:
+            raise ValueError("Montage non conforme : " + str(sequence["error"]))
     _check_target(total_duration, frozen.get("target_seconds"), "des fenêtres utiles")
     base = [ffmpeg, "-v", "error", "-nostdin", "-nostats", "-progress", "pipe:1", "-y"]
     with tempfile.TemporaryDirectory(prefix="studio-export-", dir=destination.parent) as temporary:
@@ -268,12 +337,22 @@ async def assemble(
                 overlays.append({"clip_id": clip.get("clip_id"), **overlay_data})
             if not native_audio:
                 command += ["-f", "lavfi", "-i", "anullsrc=cl=stereo:r=48000"]
-            video_filter = (
-                f"scale={width}:{height}:force_original_aspect_ratio=decrease:"
-                f"force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
-                "setsar=1,fps=24,format=yuv420p,setpts=PTS-STARTPTS"
-                + ("," + overlay_filter if overlay_filter else "")
-            )
+            if (width, height) == (1080, 1920):
+                # Le format social valide (V3/V4) remplit le cadre : un léger
+                # recadrage de 4:7 vers 9:16 évite les barres noires.
+                video_filter = (
+                    f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+                    f"crop={width}:{height},setsar=1,fps=24,format=yuv420p,"
+                    "setpts=PTS-STARTPTS"
+                )
+            else:
+                video_filter = (
+                    f"scale={width}:{height}:force_original_aspect_ratio=decrease:"
+                    f"force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
+                    "setsar=1,fps=24,format=yuv420p,setpts=PTS-STARTPTS"
+                )
+            if overlay_filter:
+                video_filter += "," + overlay_filter
             fade = (
                 frozen.get("transitions") == "scene_fades" and index > 0
                 and clip.get("scene_id") is not None
@@ -401,6 +480,42 @@ async def assemble(
         metadata = await asyncio.to_thread(inspect_media, ready)
         if abs(metadata["duration_sec"] - total_duration) > max(0.1, len(clips) / 24 + 0.01):
             raise ValueError("Durée du MP4 incohérente avec les plans conservés au montage.")
+        video_duration = float(metadata["duration_sec"])
+        padded = work / "final.mp4"
+        pad_audio_filter = f"apad=whole_dur={video_duration:.9f}"
+        final_audio = frozen.get("audio", {})
+        has_native_audio = any(
+            clip.get("audio_mode") == "native" and probe.get("has_audio")
+            for clip, probe in zip(clips, probes)
+        )
+        if has_native_audio and final_audio.get("loudnorm", True):
+            target = float(final_audio.get("loudness_target_lufs", -23))
+            peak = float(final_audio.get("true_peak_db", -1))
+            pad_audio_filter += (
+                f",loudnorm=I={target:g}:TP={peak:g}:LRA=11,"
+                "alimiter=limit=0.794328:level=false"
+            )
+        pad_audio_filter += ",aresample=48000"
+        pad_command = base + [
+            "-i", str(ready),
+            "-map", "0:v:0",
+            "-map", "0:a:0",
+            "-c:v", "copy",
+            "-af", pad_audio_filter,
+            "-t", f"{video_duration:.9f}",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-ar", "48000",
+            "-ac", "2",
+            "-movflags", "+faststart",
+            str(padded),
+        ]
+        await _run_ffmpeg(
+            pad_command, video_duration, 0.99, 0.995, "Alignement audio",
+            progress_callback, cancel_check,
+        )
+        ready = padded
+        metadata.update(await asyncio.to_thread(inspect_media, ready))
         warning = _check_target(
             metadata["duration_sec"], frozen.get("target_seconds"), "du MP4 réel"
         )
@@ -418,6 +533,8 @@ async def assemble(
         if overlays:
             metadata["screen_text"] = overlays
         metadata["audio"] = frozen.get("audio", {"enabled": False})
+        delivery = await asyncio.to_thread(verify_delivery, ready)
+        metadata["delivery"] = delivery
         _check_cancel(cancel_check)
         ready.replace(destination)
     await _progress(progress_callback, 1, "Film exporté")
