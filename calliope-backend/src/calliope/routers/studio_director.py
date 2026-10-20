@@ -38,6 +38,9 @@ class TakeReview(Review):
     continuity_ok: bool = False
     speakers_ok: bool = False
     audio_ok: bool = False
+    # Motif écrit d'une revue supervisée écartant un signalement OCR de texte
+    # parasite (faux positif vérifié image par image). 12 caractères minimum.
+    text_override_reason: str = Field(default="", max_length=600)
 
 
 @router.get("/projects/{project_id}/director")

@@ -1,4 +1,6 @@
 import copy
+import re
+import unicodedata
 from itertools import groupby
 
 
@@ -8,6 +10,127 @@ def action_sequence(shot):
                 for field in ('action', 'reaction')]
     actions.append(shot.get('reaction', ''))
     return list(dict.fromkeys(value.strip() for value in actions if value and value.strip()))
+
+
+def split_sentences(value):
+    return [part.strip() for part in re.split(r'(?<=[.!?])\s+', str(value or ''))
+            if part.strip()]
+
+
+def fold_text(value):
+    folded = unicodedata.normalize('NFKD', str(value or ''))
+    folded = ''.join(char for char in folded if not unicodedata.combining(char))
+    return folded.casefold()
+
+
+_STOPWORDS = frozenset("""
+a an and are as at be been being but by for from has have he her his in into is it its
+of on or she that the their then they this to was were with without
+à au aux ce cette ces dans de des du elle en et il ils la le les leur ma mais me mon
+ne nos notre on ou par pas plus pour qu que qui sa se ses son sur ta te tes to tu un
+une vos votre vous vers y déjà encore puis alors comme si donc car quand
+""".split())
+
+# Verbes d'attention/découverte : deux phrases qui font regarder/découvrir le
+# même objet au même personnage décrivent le même événement, même reformulées.
+_ATTENTION_VERBS = frozenset("""
+look looks looking look_at watch watches watching notice notices noticing
+discover discovers discovering see sees seeing spot spots spotting
+observe observes observing glance glances glancing stare stares staring
+peek peeks peeking check checks checking examine examines examining
+realise realizes realising realize recognizing recognise recognizes
+regarde regardent regarder remarque remarquent remarquer decouvre
+decouvrent decouvrir apercoit apercoivent apercevoir observe observent
+observer fixe fixent fixer voit voient voir
+""".split())
+
+
+def _stem(word):
+    for suffix in ('ing', 'ees', 'es', 'ed', 's'):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[:-len(suffix)]
+    return word
+
+
+def content_words(sentence):
+    """Mots porteurs de sens, sans accents, au singulier approximatif."""
+    words = re.findall(r'[a-z]+', fold_text(sentence))
+    return {_stem(word) for word in words
+            if word not in _STOPWORDS and len(word) >= 3 and word not in _ATTENTION_VERBS}
+
+
+def _attention_verbs(sentence):
+    words = re.findall(r'[a-z]+', fold_text(sentence))
+    return {_stem(word) for word in words if word in _ATTENTION_VERBS}
+
+
+def _actors(sentence):
+    """Noms propres (personnages) mentionnés dans la phrase, accents repliés.
+
+    Détecte les jetons commençant par une majuscule (y compris en début de
+    phrase, comme le faisait la version ASCII) ; les mots-outils sont écartés.
+    """
+    actors = set()
+    for token in re.findall(r'\S+', str(sentence or '')):
+        clean = token.strip(".,;:!?\"'()«»—…")
+        if clean[:1].isupper():
+            folded = fold_text(clean)
+            if folded and folded not in _STOPWORDS:
+                actors.add(folded)
+    return actors
+
+
+def repeated_pair(first, second):
+    """Décide si deux descriptions visuelles racontent le même événement.
+
+    Deux règles déterministes, sans LLM, volontairement conservatrices
+    (mieux vaut laisser passer un doublon douteux pour la revue humaine que
+    rejeter à tort deux événements distincts) :
+    - quasi-identité : les mots porteurs de sens se recouvrent (Jaccard >= 0.6) ;
+    - même acteur + même OBJET + verbe d'attention des deux côtés : la
+      « découverte du compteur » décrite avant puis après une réplique.
+    Retourne None ou une raison courte.
+    """
+    # Des chiffres différents ne sont jamais une répétition : la montée du
+    # compteur (000 puis 001) est une progression diégétique, pas un doublon.
+    if re.findall(r'\d+', fold_text(first)) != re.findall(r'\d+', fold_text(second)):
+        return None
+    left, right = content_words(first), content_words(second)
+    if not left or not right:
+        return None
+    overlap = left & right
+    if len(overlap) / len(left | right) >= 0.6:
+        return 'description presque identique'
+    actors = _actors(first) & _actors(second)
+    if actors and _attention_verbs(first) and _attention_verbs(second):
+        names = {fold_text(actor) for actor in actors}
+        objects = (left - names) & (right - names)
+        if objects:
+            return 'même personnage attentif au même objet'
+    return None
+
+
+def find_repeated_events(actions):
+    """Signale les événements décrits plusieurs fois dans une prise.
+
+    ``actions`` est la liste des textes visuels d'une prise (chronologie,
+    action, gestes par réplique). Retourne la liste des paires
+    ``(index_a, index_b, raison)`` dans l'ordre de détection. La conservation
+    littérale de chaque texte ne garantit pas l'unicité de l'événement :
+    un même geste répété à l'écran casse la continuité du pilote.
+    """
+    sentences = [(index, sentence)
+                 for index, action in enumerate(actions)
+                 for sentence in split_sentences(action)]
+    repeats = []
+    for position, (index_a, first) in enumerate(sentences):
+        for index_b, second in sentences[position + 1:]:
+            reason = repeated_pair(first, second)
+            if reason:
+                pair = (index_a, index_b, reason)
+                if pair not in repeats:
+                    repeats.append(pair)
+    return repeats
 
 
 def prepare_ltx_plan(plan):

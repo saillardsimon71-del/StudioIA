@@ -143,3 +143,47 @@ def test_ltx_prompt_fails_loudly_instead_of_dropping_critical_dialogue():
     with pytest.raises(ValueError, match="trop long même après réduction"):
         compile_ltx_prompt(shot, context, first_frame=False)
 
+
+
+def test_ltx_prompt_cues_prompt_dialogue_onset_by_default():
+    # Sans contrat, la parole démarre franchement : pas de longue amorce muette
+    # (la dérive d'onset documentée sur la 1re prise du compteur).
+    shot, context = sample()
+    prompt = compile_ltx_prompt(shot, context, first_frame=False)
+    assert "begins promptly as the shot opens" in prompt
+    assert "brief silent beat" not in prompt
+
+
+def test_ltx_prompt_cues_a_silent_beat_when_the_contract_delays_speech():
+    # Onset du contrat > 1,0 s : la consigne relative suit le contrat, jamais un
+    # timing absolu (interdit par le linter LTX).
+    shot, context = sample()
+    context["director_contract"] = {"dialogue": [
+        {"speaker": "lila", "text": "Bonjour.", "start_sec": 2.5, "end_sec": 3.0},
+    ]}
+    prompt = compile_ltx_prompt(shot, context, first_frame=False)
+    assert "begins only after a brief silent beat" in prompt
+    assert "begins promptly as the shot opens" not in prompt
+    lint_ltx_prompt(prompt)
+
+
+def test_ltx_prompt_restricts_visible_text_to_declared_counter_numerals():
+    shot, context = sample()
+    context["director_contract"] = {
+        "initial_state": {"compteur": "display reads 000"},
+        "final_state": {"compteur": "display reads 001"},
+    }
+    prompt = compile_ltx_prompt(shot, context, first_frame=False)
+    assert "the only visible characters are the numerals 000, 001" in prompt
+    assert "No subtitles, captions, speech bubbles, watermarks, logos" in prompt
+
+
+def test_ltx_prompt_deduplicates_a_repeated_discovery_gesture():
+    # La découverte du compteur décrite avant la réplique puis répétée ensuite
+    # (défaut du job 681) : la seconde formulation quasi identique est écartée.
+    shot, context = sample()
+    shot["prompt"] = "A small studio at night."
+    shot["action"] = "Marion notices the counter on her wrist."
+    shot["reaction"] = "Marion notices the counter at her wrist."
+    prompt = compile_ltx_prompt(shot, context, first_frame=False)
+    assert prompt.casefold().count("marion notices the counter") == 1

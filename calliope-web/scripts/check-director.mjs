@@ -25,6 +25,11 @@ assert.equal(captured.body.getAll('files')[0].name, 'ep-0007-shot-000041-abc.png
 await director.review(7, 9, 'snapshot', true, { visual_ok: true, continuity_ok: true, speakers_ok: true, audio_ok: true });
 assert.deepEqual(JSON.parse(captured.body), { expected_hash: 'snapshot', approved: true,
   visual_ok: true, continuity_ok: true, speakers_ok: true, audio_ok: true });
+await director.review(7, 9, 'snapshot', true, { visual_ok: true, continuity_ok: true, speakers_ok: true, audio_ok: true },
+  'Faux positif OCR vérifié image par image.');
+assert.deepEqual(JSON.parse(captured.body), { expected_hash: 'snapshot', approved: true,
+  visual_ok: true, continuity_ok: true, speakers_ok: true, audio_ok: true,
+  text_override_reason: 'Faux positif OCR vérifié image par image.' });
 globalThis.fetch = async () => Response.json({ detail: 'Storyboard obsolete' }, { status: 409 });
 await assert.rejects(() => director.approve(7, 'old-snapshot'), /Storyboard obsolete/);
 globalThis.fetch = async () => { throw new Error('offline'); };

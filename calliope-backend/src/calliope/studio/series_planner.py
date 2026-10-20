@@ -1430,21 +1430,36 @@ The number of source shots overrides the general minimum of two narrative takes.
                         [['scenes', index, 'shots'] for index in range(len(plan['scenes']))])
             if native and context.get('studio_director') and settings.studio_video_profile == 'ltx':
                 from calliope.studio.h3_prompt import compile_video_prompt
-                from calliope.studio.ltx_realization import action_sequence
+                from calliope.studio.ltx_realization import action_sequence, find_repeated_events
 
                 for scene_index, scene in enumerate(plan['scenes']):
                     for shot_index, shot in enumerate(scene['shots']):
-                        motion = ' '.join(action_sequence(shot))
+                        prefix = ['scenes', scene_index, 'shots', shot_index]
+                        paths = [prefix + [field] for field in ('action', 'reaction') if shot.get(field)]
+                        paths += [prefix + ['dialogue_turns', index, field]
+                                  for index, turn in enumerate(shot.get('dialogue_turns', []))
+                                  for field in ('action', 'reaction') if turn.get(field)]
+                        # Un même événement décrit dans plusieurs champs produit
+                        # un geste répété à l'écran : le faire condenser avant
+                        # toute image et tout GPU (réparation ciblée, paroles et
+                        # locuteurs verrouillés).
+                        actions = action_sequence(shot)
+                        repeats = find_repeated_events(actions)
+                        if repeats:
+                            first, second, reason = repeats[0]
+                            raise _NativeValidationError(
+                                f'Événement répété dans la prise ({reason}) : '
+                                f'« {actions[first][:100]} » et « {actions[second][:100]} ». '
+                                'Décrivez chaque événement une seule fois, au bon moment, '
+                                'sans supprimer un événement distinct ni modifier les '
+                                'paroles ou locuteurs.',
+                                paths or [prefix])
+                        motion = ' '.join(actions)
                         rendered = shot | {'action': motion, 'prompt': motion, 'dialogue_turns': [
                             turn | {'action': '', 'reaction': ''} for turn in shot.get('dialogue_turns', [])]}
                         try:
                             compile_video_prompt(rendered, context | plan, first_frame=True, video_profile='ltx')
                         except ValueError as exc:
-                            prefix = ['scenes', scene_index, 'shots', shot_index]
-                            paths = [prefix + [field] for field in ('action', 'reaction') if shot.get(field)]
-                            paths += [prefix + ['dialogue_turns', index, field]
-                                      for index, turn in enumerate(shot.get('dialogue_turns', []))
-                                      for field in ('action', 'reaction') if turn.get(field)]
                             raise _NativeValidationError(
                                 str(exc) + ' Condensez la réalisation en anglais, sans répétition, '
                                 'sans supprimer un événement ni modifier les paroles ou locuteurs.',

@@ -1,0 +1,201 @@
+{
+  "series": "COMPTEUR",
+  "episode": "Le compteur ne ment jamais",
+  "status": "Proposition éditoriale et contrats de référence — aucune génération GPU, aucune dépense par ce fichier.",
+  "source": "docs/studio/ARENA-REPRISE-BODYCOUNT-2026-10-20.md §4",
+  "target_seconds": 15,
+  "aspect_ratio": "9:16",
+  "language": "fr",
+  "budget_eur_ceiling": 4.0,
+  "estimated_eur": 3.1,
+  "production_rule": "Commencer par la prise A (5 s) seule, puis revue humaine. Ne pas mettre les prises B et C en file avant validation de A.",
+  "counter_sequence": ["000", "001", "001", "002"],
+  "entities": [
+    {
+      "key": "lea",
+      "kind": "character",
+      "name": "Léa",
+      "description": "Adulte, vingt-cinq à trente ans, pull sombre, cheveux attachés ; voix grave et posée."
+    },
+    {
+      "key": "max",
+      "kind": "character",
+      "name": "Max",
+      "description": "Adulte, vingt-cinq à trente ans, t-shirt clair, cheveux courts ; voix nette, légèrement aiguë."
+    },
+    {
+      "key": "studio",
+      "kind": "location",
+      "name": "Petit studio d'appartement",
+      "description": "Petit studio d'appartement contemporain le soir, lumière chaude, une table basse au centre."
+    }
+  ],
+  "props": [
+    {
+      "key": "compteur",
+      "name": "Compteur autonome",
+      "description": "Petit boîtier numérique autonome posé sur la table, écran à trois chiffres diégétiques ; aucun fruit, aucun logo."
+    }
+  ],
+  "shots": [
+    {
+      "id": "A",
+      "label": "0-5 s — accroche",
+      "continue_from_previous": false,
+      "contract": {
+        "summary": "Prise A — accroche : Léa découvre le compteur à zéro ; une seule impulsion le fait passer à 001.",
+        "casting": ["lea", "max"],
+        "location": "studio",
+        "first_frame": "Plan vertical 9:16 : gros plan sur le petit compteur autonome posé sur la table, écran affichant 000 ; au premier plan légèrement flou, Léa assise le désigne du regard sans le toucher.",
+        "positions": {
+          "lea": "au premier plan à gauche, assise face à la table",
+          "max": "hors cadre à droite, près de la table"
+        },
+        "eyelines": {
+          "lea": "vers l'écran du compteur posé sur la table",
+          "max": "vers le compteur, depuis le hors-cadre"
+        },
+        "framing": "Gros plan vertical 9:16 sur le compteur net au centre, Léa floue au premier plan.",
+        "camera": "Caméra fixe sur trépied, très léger respiré.",
+        "action": "Léa désigne l'écran du compteur du regard ; une unique impulsion sonore fait passer l'affichage de 000 à 001.",
+        "initial_state": {
+          "lea": "assise face à la table, calme",
+          "max": "debout près de la table, hors cadre",
+          "compteur": "posé sur la table, écran affichant 000"
+        },
+        "final_state": {
+          "lea": "assise face à la table, immobile, regard sur le compteur",
+          "max": "debout près de la table, hors cadre, vient de répondre",
+          "compteur": "posé sur la table, écran affichant 001"
+        },
+        "chronology": [
+          {"at_sec": 0.0, "action": "Léa fixe l'écran du compteur et le désigne du regard, sans le toucher."},
+          {"at_sec": 2.9, "action": "Max répond une courte phrase depuis le hors-cadre, immobile."},
+          {"at_sec": 4.3, "action": "Une unique impulsion sonore retentit ; l'affichage passe de 000 à 001."}
+        ],
+        "dialogue": [
+          {"speaker": "lea", "text": "Attends… ton bodycount, il est à zéro ?", "start_sec": 0.5, "end_sec": 2.8},
+          {"speaker": "max", "text": "Je te jure.", "start_sec": 3.0, "end_sec": 3.8}
+        ],
+        "sound": "Ambiance feutrée d'un petit studio d'appartement le soir ; une impulsion électronique nette et unique à la fin.",
+        "duration_sec": 5.0,
+        "references": ["lea", "max", "studio", "compteur"],
+        "continuity": [
+          "Même petit studio le soir, mêmes costumes, compteur posé à la même place sur la table.",
+          "Un seul changement d'affichage sur cette prise : 000 puis 001."
+        ],
+        "qc": [
+          "Le compteur affiche 000 au départ puis 001 après une seule impulsion.",
+          "Aucun sous-titre, bulle, logo ni mot incrusté ; seuls les chiffres du compteur sont visibles.",
+          "La première réplique démarre vers 0,5 s."
+        ]
+      }
+    },
+    {
+      "id": "B",
+      "label": "5-10 s — révélation impossible",
+      "continue_from_previous": false,
+      "contract": {
+        "summary": "Prise B — révélation impossible : le compteur reste à 001 ; Max recule, Léa interroge.",
+        "casting": ["lea", "max"],
+        "location": "studio",
+        "first_frame": "Plan vertical 9:16 : même table, le compteur au centre affiche 001 ; Léa et Max sont maintenant cadrés ensemble, Max commence à reculer en découvrant le chiffre.",
+        "positions": {
+          "lea": "à gauche, assise, immobile face à la table",
+          "max": "à droite, debout face à la table, amorce un recul"
+        },
+        "eyelines": {
+          "lea": "vers le compteur sur la table",
+          "max": "vers l'écran du compteur"
+        },
+        "framing": "Plan vertical 9:16 plus large : les deux personnages et le compteur à 001 au centre.",
+        "camera": "Caméra fixe sur trépied.",
+        "action": "Max recule d'un pas en découvrant le chiffre ; Léa reste immobile et interroge. Aucun nouvel effet sur le compteur.",
+        "initial_state": {
+          "lea": "assise face à la table, immobile, regard sur le compteur",
+          "max": "debout face à la table, découvre le chiffre",
+          "compteur": "posé sur la table, écran affichant 001"
+        },
+        "final_state": {
+          "lea": "assise face à la table, immobile, vient d'interroger",
+          "max": "reculé d'un pas, choqué par le chiffre",
+          "compteur": "posé sur la table, écran affichant 001"
+        },
+        "chronology": [
+          {"at_sec": 0.0, "action": "Max découvre le chiffre 001 et recule d'un pas."},
+          {"at_sec": 2.4, "action": "Léa, immobile, tourne la tête vers Max et interroge."}
+        ],
+        "dialogue": [
+          {"speaker": "max", "text": "Mais… j'ai rien fait !", "start_sec": 0.8, "end_sec": 2.3},
+          {"speaker": "lea", "text": "Alors pourquoi ça vient de monter ?", "start_sec": 2.6, "end_sec": 4.5}
+        ],
+        "sound": "Ambiance feutrée du studio le soir, silence tendu, aucun effet sur le compteur.",
+        "duration_sec": 5.0,
+        "references": ["lea", "max", "studio", "compteur"],
+        "continuity": [
+          "Même studio, mêmes costumes, compteur à la même place sur la table.",
+          "L'affichage reste à 001 du début à la fin de cette prise."
+        ],
+        "qc": [
+          "Le compteur reste à 001 pendant toute la prise, sans changement.",
+          "Aucun sous-titre ni texte incrusté ; seuls les chiffres 001 du compteur sont visibles.",
+          "Max et Léa clairement cadrés ensemble."
+        ]
+      }
+    },
+    {
+      "id": "C",
+      "label": "10-15 s — suspense",
+      "continue_from_previous": false,
+      "contract": {
+        "summary": "Prise C — suspense : trois coups à la porte, le compteur passe une seule fois à 002 ; Léa murmure, coupe noire.",
+        "casting": ["lea", "max"],
+        "location": "studio",
+        "first_frame": "Plan vertical 9:16 : le compteur sur la table affiche 001 ; Léa et Max tendus regardent vers la porte hors champ.",
+        "positions": {
+          "lea": "à gauche, assise, tendue, tournée vers la porte",
+          "max": "à droite, debout, tendu, tourné vers la porte"
+        },
+        "eyelines": {
+          "lea": "vers la porte hors champ à droite",
+          "max": "vers la porte hors champ à droite"
+        },
+        "framing": "Plan vertical 9:16 : les deux personnages tendus, le compteur à 001 au centre.",
+        "camera": "Caméra fixe sur trépied ; coupe noire franche à la toute fin.",
+        "action": "Trois coups sont frappés à la porte hors champ ; le compteur passe une seule fois de 001 à 002 ; Léa murmure une question, puis coupe noire avant la réponse.",
+        "initial_state": {
+          "lea": "assise face à la table, tendue",
+          "max": "debout face à la table, tendu",
+          "compteur": "posé sur la table, écran affichant 001"
+        },
+        "final_state": {
+          "lea": "assise, tendue, vient de murmurer",
+          "max": "debout, tendu, tourné vers la porte",
+          "compteur": "posé sur la table, écran affichant 002"
+        },
+        "chronology": [
+          {"at_sec": 0.5, "action": "Trois coups nets sont frappés à la porte hors champ."},
+          {"at_sec": 2.0, "action": "L'affichage du compteur passe une seule fois de 001 à 002."},
+          {"at_sec": 2.8, "action": "Léa murmure sa question, sans bouger."},
+          {"at_sec": 4.7, "action": "Coupe noire franche avant toute réponse."}
+        ],
+        "dialogue": [
+          {"speaker": "lea", "text": "Max… on est combien dans l'appart ?", "start_sec": 2.8, "end_sec": 4.6}
+        ],
+        "sound": "Trois coups frappés à la porte, ambiance tendue du studio le soir, puis silence coupé net.",
+        "duration_sec": 5.0,
+        "references": ["lea", "max", "studio", "compteur"],
+        "continuity": [
+          "Même studio, mêmes costumes, compteur à la même place sur la table.",
+          "Un seul changement d'affichage sur cette prise : 001 puis 002.",
+          "Coupe noire à la fin, avant la réponse."
+        ],
+        "qc": [
+          "Le compteur passe de 001 à 002 une seule fois, après les trois coups.",
+          "Aucun sous-titre ni texte incrusté ; seuls les chiffres du compteur sont visibles.",
+          "Coupe noire avant toute réponse ; Léa murmure vers 2,8 s."
+        ]
+      }
+    }
+  ]
+}

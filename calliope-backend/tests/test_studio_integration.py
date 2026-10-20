@@ -361,7 +361,8 @@ async def test_imported_take_qc_is_cached_and_unknown_is_visible(client, tmp_pat
         "transcribe_dialogue",
         lambda *args: (
             calls.append(args)
-            or {"status": "unknown", "reason": "checkpoint non configuré", "speech_intervals": []}
+            or {"status": "unknown", "reason": "Transcription incertaine ou aucune parole reconnue.",
+                "environment_failure": False, "speech_intervals": []}
         ),
     )
     for _ in range(2):
@@ -726,7 +727,8 @@ def test_export_checks_legacy_approved_takes_without_generating(
             calls.append(args)
             or {
                 "status": "unknown",
-                "reason": "checkpoint absent",
+                "reason": "Transcription incertaine ou aucune parole reconnue.",
+                "environment_failure": False,
                 "speech_intervals": [],
             }
         ),

@@ -120,13 +120,63 @@ def _voice_label(description: str) -> str:
     return "natural"
 
 
-def _append_visual(parts: list[dict], value: str, optional: bool, seen: set[str]) -> None:
+class _Seen:
+    """Suit les phrases visuelles déjà compilées.
+
+    Deux niveaux : l'identité exacte (dedup historique) et la quasi-identité
+    sémantique (filet contre les gestes répétés décrits dans plusieurs
+    champs). Des chiffres différents ne sont jamais des doublons : la montée
+    du compteur de la fiction est une progression, pas une répétition.
+    """
+
+    def __init__(self):
+        self.exact: set[str] = set()
+        self.content: list[set[str]] = []
+
+    def duplicate(self, sentence: str) -> bool:
+        from .ltx_realization import content_words, fold_text
+
+        key = sentence.casefold()
+        if key in self.exact:
+            return True
+        self.exact.add(key)
+        numbers = re.findall(r"\d+", fold_text(sentence))
+        words = content_words(sentence)
+        for previous_words, previous_numbers in self.content:
+            if numbers != previous_numbers:
+                continue
+            if words and previous_words and (
+                    len(words & previous_words) / len(words | previous_words) >= 0.6):
+                return True
+        if words:
+            self.content.append((words, numbers))
+        return False
+
+
+def _append_visual(parts: list[dict], value: str, optional: bool, seen: _Seen) -> None:
     """Ajoute les phrases visuelles encore absentes, une seule fois."""
     for sentence in _sentences(value):
-        key = sentence.casefold()
-        if key and key not in seen:
-            seen.add(key)
+        if sentence.strip() and not seen.duplicate(sentence):
             parts.append({"text": sentence, "optional": optional})
+
+
+def _declared_display_values(shot: dict, context: dict) -> list[str]:
+    """Chiffres diégétiques déclarés par les états d'objets (le compteur).
+
+    Ce sont les SEULS caractères visibles que le moteur est autorisé à
+    montrer : tout le reste (sous-titres, bulles, logos) est interdit.
+    """
+    values: list[str] = []
+    contract = context.get("director_contract") or {}
+    for source in (
+        shot.get("start_state"), contract.get("initial_state"),
+        shot.get("end_state"), contract.get("final_state"),
+    ):
+        for state in (source or {}).values():
+            for number in re.findall(r"\d+", str(state)):
+                if number not in values:
+                    values.append(number)
+    return values
 
 
 
@@ -162,7 +212,7 @@ def compile_ltx_prompt(shot, context, first_frame):
         list(shot.get("character_keys") or [])
         + [turn.get("speaker") for turn in turns if turn.get("speaker")]
     ))
-    seen: set[str] = set()
+    seen = _Seen()
 
     parts: list[dict] = [{"text": "A continuous cinematic shot.", "optional": True}]
     if first_frame:
@@ -271,6 +321,22 @@ def compile_ltx_prompt(shot, context, first_frame):
             "text": "Use facial expressions and small motivated movements.",
             "optional": True,
         })
+    if dialogue:
+        # Caler le début des paroles sur les temps de la prise : une longue
+        # amorce muette fait dériver la réplique (parole mesurée à 2 s dans
+        # une prise de 5 s) et casse le montage de 15 s. Consigne relative
+        # calée sur le contrat — jamais un timing absolu (interdit par le
+        # linter LTX).
+        contract_lines = (context.get("director_contract") or {}).get("dialogue") or []
+        onset = float(contract_lines[0].get("start_sec") or 0.0) if contract_lines else 0.0
+        parts.append({
+            "text": "The spoken exchange begins promptly as the shot opens, "
+                    "without a long silent lead-in."
+            if onset <= 1.0 else
+                    "The spoken exchange begins only after a brief silent beat, "
+                    "then stays continuous.",
+            "optional": False,
+        })
 
     _append_visual(parts, prose(shot.get("reaction") or ""), True, seen)
     if shot.get("audio_mode", "native") == "silent":
@@ -279,7 +345,21 @@ def compile_ltx_prompt(shot, context, first_frame):
         soundscape = prose(shot.get("soundscape") or "")
         if soundscape and soundscape.casefold() != "n/a":
             parts.append({"text": f"Ambient sound: {soundscape}", "optional": False})
-    if labels:
+    display_values = _declared_display_values(shot, context)
+    if display_values:
+        # Le compteur de la fiction est diégétique : ses chiffres déclarés sont
+        # les SEULS caractères visibles autorisés. Tout le reste (sous-titres,
+        # bulles, filigranes, logos, mots inventés) est interdit. Le QC OCR
+        # utilise la même liste blanche : il ne confond pas les chiffres du
+        # compteur avec un sous-titre parasite.
+        parts.append({
+            "text": "No subtitles, captions, speech bubbles, watermarks, logos or "
+                    "invented words anywhere in frame; the only visible characters "
+                    "are the numerals " + ", ".join(display_values) +
+                    " on the small physical counter display described above.",
+            "optional": False,
+        })
+    elif labels:
         parts.append({"text": "No on-screen text, captions or subtitles.", "optional": False})
     if first_frame:
         parts.append({

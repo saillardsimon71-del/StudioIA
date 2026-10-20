@@ -343,7 +343,7 @@ def test_package_uses_single_prompt_file(client, prepared):
     independent = [s for s in manifest["shots"] if not s["continuation"]]
     assert independent
     for shot in independent:
-        assert f"PLAN {shot["plan"]}" in text
+        assert f"PLAN {shot['plan']}" in text
         assert shot["filename"] in text
     assert [s["plan"] for s in manifest["shots"]] == list(range(1, len(manifest["shots"]) + 1))
 
@@ -492,8 +492,8 @@ async def test_native_qc_records_generated_text_scan_without_paid_services(clien
     monkeypatch.setattr(settings, 'dry_run', False)
     monkeypatch.setattr(transcription, 'transcribe_dialogue', lambda *args: {'status': 'unknown'})
     calls = []
-    def scan(path):
-        calls.append(path)
+    def scan(path, allowed=()):
+        calls.append((path, tuple(allowed)))
         return {'status': 'unexpected_text', 'hits': [{'sample': 2, 'words': ['Dourze']}]}
     monkeypatch.setattr(generated_text, 'scan', scan)
     await production.assess_take(shot)
@@ -1419,3 +1419,173 @@ def test_legacy_structure_editor_cannot_create_uncontracted_director_shots(clien
                        json={'description': 'New shot', 'prompt': 'A room.'}).status_code == 422
     assert client.delete(f"/api/studio/projects/{project}/shots/{shots[0]['id']}").status_code == 422
     assert state(client, project) == before
+
+
+# --- cohérence visuelle : l'image de départ montre l'état initial, jamais sa fin
+# Défaut documenté du job 681 : bouilloire « éteinte » dans le contrat mais
+# « allumée, vapeur visible » dans la composition t=0. Détection déterministe
+# (contradiction état final / first_frame), alimente la réparation en préparation
+# et les avertissements de preflight — jamais un blocage rétroactif.
+
+
+def test_consistency_notes_flags_a_first_frame_showing_the_final_state():
+    from calliope.studio import director
+    notes = director.consistency_notes({
+        'casting': ['marion'],
+        'first_frame': 'Gros plan sur la bouilloire allumée, vapeur déjà visible.',
+        'initial_state': {'bouilloire': 'éteinte, froide'},
+        'final_state': {'bouilloire': 'allumée, vapeur visible'},
+        'chronology': [{'at_sec': 0.0, 'action': 'Marion waits quietly.'}],
+    })
+    assert any('état final' in note or 'first_frame' in note for note in notes)
+
+
+def test_consistency_notes_accepts_a_first_frame_showing_the_initial_state():
+    from calliope.studio import director
+    assert director.consistency_notes({
+        'casting': ['marion'],
+        'first_frame': 'Gros plan sur la bouilloire éteinte et froide.',
+        'initial_state': {'bouilloire': 'éteinte, froide'},
+        'final_state': {'bouilloire': 'allumée, vapeur visible'},
+        'chronology': [{'at_sec': 0.0, 'action': 'Marion waits quietly.'}],
+    }) == []
+
+
+def test_consistency_notes_accepts_the_counter_showing_its_initial_value():
+    from calliope.studio import director
+    # 000 -> 001 est une progression diégétique ; t=0 montre 000 : aucune note.
+    assert director.consistency_notes({
+        'casting': ['lea'],
+        'first_frame': 'Gros plan sur le compteur affichant 000.',
+        'initial_state': {'compteur': 'affichant 000'},
+        'final_state': {'compteur': 'affichant 001'},
+        'chronology': [{'at_sec': 0.0, 'action': 'Léa waits.'}],
+    }) == []
+
+
+def test_consistency_notes_flags_a_counter_starting_at_its_final_value():
+    from calliope.studio import director
+    notes = director.consistency_notes({
+        'casting': ['lea'],
+        'first_frame': 'Gros plan sur le compteur affichant déjà 001.',
+        'initial_state': {'compteur': 'affichant 000'},
+        'final_state': {'compteur': 'affichant 001'},
+        'chronology': [{'at_sec': 0.0, 'action': 'Léa waits.'}],
+    })
+    assert notes, 't=0 shows the final counter value: must be flagged'
+
+
+# --- sous-titres parasites : revue supervisée motivée (faux positif OCR) -------
+# Un faux positif OCR ne doit pas être un faux rejet définitif : une revue
+# humaine supervisée, motivée par écrit et liée au fichier revu, peut écarter le
+# signalement. Sans motif, refus ; un override déjà valable n'exige pas de
+# re-motif à la re-revue.
+
+
+def _parasite_take(project, shots, tmp_path, with_override=False):
+    from calliope.studio.visual_identity import file_hash
+    from tests.test_studio import video_bytes
+    take = service.store_upload(shots[0]['id'], video_bytes(tmp_path, audio=True), 'video')
+    service.select_take(take['id'])
+    with service.database() as conn:
+        row = conn.execute('SELECT metadata_json FROM studio_takes WHERE id=?',
+                           (take['id'],)).fetchone()
+        metadata = json.loads(row[0]) | {'text_qc': {'status': 'unexpected_text'}}
+        if with_override:
+            metadata['text_qc_override'] = {
+                'reason': 'Revue supervisée : motif de la couverture vérifié image par image.',
+                'file_hash': file_hash(take['output_path']),
+                'at': service.utc_now(),
+            }
+        conn.execute('UPDATE studio_takes SET metadata_json=? WHERE id=?',
+                     (json.dumps(metadata), take['id']))
+        conn.commit()
+    return take
+
+
+def _review(client, project, take, hash_value, reason=None):
+    payload = {'expected_hash': hash_value, 'approved': True, 'visual_ok': True,
+               'continuity_ok': True, 'speakers_ok': True, 'audio_ok': True}
+    if reason is not None:
+        payload['text_override_reason'] = reason
+    return client.post(
+        f"/api/studio/projects/{project}/director/takes/{take['id']}/review", json=payload)
+
+
+def test_parasite_text_approval_requires_a_motivated_override(client, prepared, tmp_path):
+    project, shots = prepared
+    current = approve(client, project)
+    take = _parasite_take(project, shots, tmp_path)
+    refused = _review(client, project, take, current['storyboard_hash'])
+    assert refused.status_code == 422
+    assert 'texte parasite' in refused.json()['detail'].lower()
+
+
+def test_motivated_override_unblocks_parasite_text_and_is_recorded(client, prepared, tmp_path):
+    project, shots = prepared
+    current = approve(client, project)
+    take = _parasite_take(project, shots, tmp_path)
+    approved = _review(
+        client, project, take, current['storyboard_hash'],
+        reason='Faux positif OCR : le motif de la couverture, vérifié image par image.')
+    assert approved.status_code == 200, approved.text
+    with service.database() as conn:
+        row = conn.execute('SELECT metadata_json FROM studio_takes WHERE id=?',
+                           (take['id'],)).fetchone()
+        stored = json.loads(row[0])
+    assert stored['text_qc_override']['reason'].startswith('Faux positif OCR')
+    assert stored['text_qc_override']['file_hash']
+    # La prise approuvée n'est plus bloquée par le texte parasite.
+    from calliope.studio import director, generated_text
+    assert not generated_text.is_blocked(stored, take['output_path'])
+
+
+def test_existing_supervised_override_does_not_require_a_new_reason(client, prepared, tmp_path):
+    project, shots = prepared
+    current = approve(client, project)
+    take = _parasite_take(project, shots, tmp_path, with_override=True)
+    approved = _review(client, project, take, current['storyboard_hash'])
+    assert approved.status_code == 200, approved.text
+
+
+# --- continuité du compteur en surimpression d'un plan raccordé ---------------
+# 000 -> 001 -> 001 -> 002 : la valeur initiale d'un plan qui continue doit
+# égaler la valeur finale du plan précédent. Comparaison exacte, sans heuristique.
+
+
+def test_counter_continuity_rejects_a_value_that_does_not_follow():
+    from calliope.studio import director
+    previous = {'compteur': {'key': 'compteur', 'value': 0,
+                             'changes': [{'at_sec': 4.0, 'value': 1}]}}
+    labels = {'compteur': {'key': 'compteur', 'value': 0}}
+    with pytest.raises(director.HTTPException) as error:
+        director.check_counter_continuity(2, labels, previous)
+    assert 'continuite du compteur' in error.value.detail
+    assert error.value.status_code == 422
+
+
+def test_counter_continuity_accepts_the_declared_progression():
+    from calliope.studio import director
+    previous = {'compteur': {'key': 'compteur', 'value': 0,
+                             'changes': [{'at_sec': 4.0, 'value': 1}]}}
+    labels = {'compteur': {'key': 'compteur', 'value': 1}}
+    director.check_counter_continuity(2, labels, previous)
+
+
+def test_counter_continuity_uses_the_displayed_value_without_changes():
+    from calliope.studio import director
+    previous = {'compteur': {'key': 'compteur', 'value': 1}}
+    director.check_counter_continuity(2, {'compteur': {'value': 1}}, previous)
+    with pytest.raises(director.HTTPException):
+        director.check_counter_continuity(2, {'compteur': {'value': 2}}, previous)
+
+
+def test_counter_continuity_ignores_unrelated_keys_and_missing_values():
+    from calliope.studio import director
+    # clé non partagée → ignorée
+    director.check_counter_continuity(2, {'autre': {'value': 5}}, {'compteur': {'value': 1}})
+    # valeur absente d'un côté → ignorée (jamais de faux rejet)
+    director.check_counter_continuity(2, {'compteur': {}}, {'compteur': {'value': 1}})
+    director.check_counter_continuity(2, {'compteur': {'value': 1}}, {'compteur': {}})
+    # aucun plan précédent → ignoré
+    director.check_counter_continuity(2, {'compteur': {'value': 1}}, {})

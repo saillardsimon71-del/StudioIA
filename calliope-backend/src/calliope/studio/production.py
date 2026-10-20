@@ -543,6 +543,41 @@ def apply_tts_status(verdict, metadata):
     return verdict
 
 
+def apply_speech_onset_check(verdict, transcript, turns, timing_check):
+    """Contrôle la dérive du début de parole pour les profils sans timing absolu.
+
+    Les profils LTX v3 ne reçoivent aucun timing absolu dans le prompt (interdit
+    par le linter) ; la synchronisation des dialogues se vérifie donc ici, sur la
+    mesure. Le dossier du pilote exige des paroles calées sur les temps de prise :
+    une parole qui démarre à 2 s dans une prise de 5 s casse le montage de 15 s.
+
+    Une dérive supérieure à 1,0 s entre le début de parole mesuré et le début
+    déclaré par le contrat rend la prise « à recaler » (``timing_mismatch``),
+    sauf si un verdict plus grave (missing/extra/inaudible) prime déjà. Le
+    contrôle ne s'applique que quand le timing n'est pas déjà vérifié ailleurs
+    (``timing_check`` faux) et que le transcript est fiable avec un onset de
+    contrat connu — sinon il est ignoré (jamais de faux rejet).
+    """
+    if timing_check or transcript.get("status") != "ok" or not turns:
+        return verdict
+    if turns[0].get("start_sec") is None:
+        return verdict
+    intervals = transcript.get("speech_intervals") or []
+    onset = float(intervals[0][0]) if intervals else float(
+        (transcript.get("segments") or [{}])[0].get("start") or 0.0)
+    contract_onset = float(turns[0]["start_sec"])
+    drift = onset - contract_onset
+    verdict["speech_onset_sec"] = round(onset, 2)
+    verdict["contract_onset_sec"] = contract_onset
+    if abs(drift) > 1.0 and verdict["status"] in ("ok", "unknown"):
+        verdict.update(
+            status="timing_mismatch",
+            reason=(f"Début de parole mesuré à {onset:.2f} s, contrat à "
+                    f"{contract_onset:.2f} s (dérive {drift:+.2f} s) : "
+                    "les paroles doivent démarrer sur les temps de la prise."))
+    return verdict
+
+
 async def assess_take(shot):
     """Enregistre un diagnostic de parole pour la relecture de la prise."""
     from calliope.studio import pacing, transcription
@@ -557,8 +592,15 @@ async def assess_take(shot):
         signature = [stat.st_size, stat.st_mtime_ns]
         text_qc = metadata.get('text_qc') or {}
         if text_qc.get('signature') != signature or text_qc.get('status') == 'unverified':
-            text_qc = await asyncio.to_thread(generated_text.scan, take['output_path'])
-            metadata['text_qc'] = text_qc | {'signature': signature}
+            # Les chiffres diégétiques déclarés (compteur de la fiction,
+            # libellés d'overlays) ne sont pas des sous-titres parasites.
+            with service.database() as conn:
+                qc_context = service.shot_context(conn, shot['id'])
+            allowed = generated_text.allowed_display_tokens(qc_context)
+            text_qc = await asyncio.to_thread(
+                generated_text.scan, take['output_path'], allowed)
+            metadata['text_qc'] = text_qc | {
+                'signature': signature, 'allowed': sorted(set(allowed))}
             with service.database() as conn:
                 conn.execute('UPDATE studio_takes SET metadata_json=? WHERE id=?',
                              (json.dumps(metadata), take['id']))
@@ -677,8 +719,16 @@ async def assess_take(shot):
         language,
     ]
     cached = metadata.get("transcription_cache") or {}
+    cached_transcript = cached.get("transcript") or {}
+    # Un échec d'environnement (checkpoint absent, Whisper lancé depuis un
+    # mauvais environnement) n'est jamais réutilisé : la transcription doit
+    # être retentée après réparation. Seul un résultat honnête — ok, ou
+    # unknown d'analyse explicitement marqué — reste en cache pour le même
+    # fichier, afin de ne pas repayer Whisper à chaque contrôle.
     if (cached.get("signature") == signature
-            and (cached.get('transcript') or {}).get('status') == 'ok'):
+            and cached_transcript
+            and (cached_transcript.get("status") == "ok"
+                 or cached_transcript.get("environment_failure") is False)):
         transcript = cached["transcript"]
         voice = cached.get("activity")
     else:
@@ -742,6 +792,7 @@ async def assess_take(shot):
         verdict["mean_word_probability"] = turns_verdict.get("mean_word_probability")
         if turns_verdict["status"] != "ok":
             verdict.update(status=turns_verdict["status"], reason=turns_verdict["reason"])
+    verdict = apply_speech_onset_check(verdict, transcript, turns, timing_check)
     verdict.setdefault("voice", (
         transcript.get("speech_intervals") if transcript.get("status") == "ok" else None
     ))
@@ -1004,11 +1055,14 @@ async def render_shot(job, initial, should_stop):
                 from calliope.studio import tts
                 shot = await asyncio.to_thread(tts.apply_to_shot, shot)
             verdict = await assess_take(shot)
-        text_qc = ((selected_video(shot) or {}).get('metadata') or {}).get('text_qc') or {}
-        if verdict and verdict['status'] == 'ok' and text_qc.get('status') != 'unexpected_text':
+        from calliope.studio import generated_text
+
+        blocked_text = generated_text.is_blocked(
+            (selected_video(shot) or {}).get('metadata') or {})
+        if verdict and verdict['status'] == 'ok' and not blocked_text:
             trim_take(shot, verdict.get('voice'), verdict.get('trim_end_limit_sec'))
         message = ('Texte parasite détecté dans la prise native. Prise conservée, non approuvée.'
-                   if text_qc.get('status') == 'unexpected_text' else
+                   if blocked_text else
                    'Prise conservee. Verifiez les paroles, locuteurs, image et raccords avant de continuer.')
         with service.database() as conn:
             conn.execute("UPDATE studio_productions SET status='paused',stage='qc',message=? WHERE project_id=?",

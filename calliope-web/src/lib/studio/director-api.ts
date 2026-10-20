@@ -78,7 +78,10 @@ export const director = {
     request<{ shot_id: number; plan: number; prompt: string }>(`${path(id)}/shots/${shot}/image-prompt`),
   preflight: (id: number) => request<DirectorPreflight>(`${path(id)}/preflight`),
   budget: (id: number, budget: DirectorBudget) => request<DirectorState>(`${path(id)}/budget`, 'PATCH', budget),
-  verify: (id: number, take: number) => request<{ audio_label: string; dialogue: { status: string; reason: string } }>(`${path(id)}/takes/${take}/verify`, 'POST'),
-  review: (id: number, take: number, expected_hash: string, approved: boolean, checks: Record<string, boolean>) =>
-    request(`${path(id)}/takes/${take}/review`, 'POST', { expected_hash, approved, ...checks }),
+  verify: (id: number, take: number) => request<{ audio_label: string; dialogue: { status: string; reason: string }; vision?: string; text_qc?: { status: string }; text_qc_override?: { reason: string } | null }>(`${path(id)}/takes/${take}/verify`, 'POST'),
+  review: (id: number, take: number, expected_hash: string, approved: boolean, checks: Record<string, boolean>, text_override_reason = '') =>
+    request(`${path(id)}/takes/${take}/review`, 'POST', {
+      expected_hash, approved, ...checks,
+      ...(text_override_reason ? { text_override_reason } : {}),
+    }),
 };

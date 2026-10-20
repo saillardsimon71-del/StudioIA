@@ -215,3 +215,59 @@ async def test_dialogue_assessment_never_rerenders_and_only_approves_ok_takes(
         assert decisions == expected
     finally:
         queue_manager.paused = previous
+
+
+# --- synchronisation des dialogues : dérive du début de parole (profils LTX v3)
+# LTX ne reçoit aucun timing absolu ; la synchro se vérifie sur la mesure. Une
+# parole qui démarre loin du début déclaré par le contrat casse le montage.
+
+
+def test_speech_onset_drift_beyond_one_second_is_a_timing_mismatch():
+    verdict = {'status': 'ok', 'reason': ''}
+    transcript = {'status': 'ok', 'speech_intervals': [[2.5, 3.4]]}
+    out = production.apply_speech_onset_check(
+        verdict, transcript, [{'start_sec': 0.5}], timing_check=False)
+    assert out['status'] == 'timing_mismatch'
+    assert out['speech_onset_sec'] == 2.5
+    assert out['contract_onset_sec'] == 0.5
+    assert 'dérive' in out['reason']
+
+
+def test_prompt_speech_onset_within_one_second_is_ok():
+    verdict = {'status': 'ok', 'reason': ''}
+    transcript = {'status': 'ok', 'speech_intervals': [[0.8, 2.6]]}
+    out = production.apply_speech_onset_check(
+        verdict, transcript, [{'start_sec': 0.5}], timing_check=False)
+    assert out['status'] == 'ok'
+    assert out['speech_onset_sec'] == 0.8
+
+
+def test_speech_onset_check_respects_a_worse_existing_verdict():
+    # Un verdict déjà plus grave (missing) ne doit pas être écrasé.
+    verdict = {'status': 'missing', 'reason': 'Réplique absente.'}
+    transcript = {'status': 'ok', 'speech_intervals': [[4.0, 5.0]]}
+    out = production.apply_speech_onset_check(
+        verdict, transcript, [{'start_sec': 0.0}], timing_check=False)
+    assert out['status'] == 'missing'
+    assert out['speech_onset_sec'] == 4.0
+
+
+def test_speech_onset_check_is_skipped_when_timing_is_explicit():
+    verdict = {'status': 'ok', 'reason': ''}
+    transcript = {'status': 'ok', 'speech_intervals': [[5.0, 6.0]]}
+    out = production.apply_speech_onset_check(
+        verdict, transcript, [{'start_sec': 0.0}], timing_check=True)
+    assert out['status'] == 'ok'
+    assert 'speech_onset_sec' not in out
+
+
+def test_speech_onset_check_needs_a_reliable_transcript_and_contract_onset():
+    verdict = {'status': 'ok', 'reason': ''}
+    # transcript non fiable → ignoré
+    assert production.apply_speech_onset_check(
+        dict(verdict), {'status': 'unknown', 'speech_intervals': [[5.0, 6.0]]},
+        [{'start_sec': 0.0}], timing_check=False)['status'] == 'ok'
+    # pas d'onset de contrat → ignoré (jamais de faux rejet)
+    assert production.apply_speech_onset_check(
+        dict(verdict), {'status': 'ok', 'speech_intervals': [[5.0, 6.0]]},
+        [{'start_sec': None}], timing_check=False)['status'] == 'ok'

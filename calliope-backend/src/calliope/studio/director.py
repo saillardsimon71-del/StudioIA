@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import re
 import uuid
 import zipfile
 from pathlib import Path
@@ -70,6 +71,73 @@ def validate_contract(value, entities, props=()):
     return contract
 
 
+def consistency_notes(value):
+    """Contradictions état/image et événements répétés d'un contrat.
+
+    Source unique de vérité : la composition t=0 (``first_frame``) ne doit pas
+    décrire l'état FINAL d'un objet dont l'état initial déclaré diffère (une
+    bouilloire « éteinte » décrite « allumée, vapeur visible » dans l'image de
+    départ est le défaut documenté du job 681), et un même événement ne doit
+    pas être décrit plusieurs fois dans la chronologie (gestes répétés).
+
+    Une omission n'est pas signalée : le paquet d'images ajoute déjà la ligne
+    autoritaire « État initial : … ». Seule une contradiction réelle est
+    relevée. Ces contrôles heuristiques alimentent la réparation en préparation
+    et des avertissements de revue humaine (« à revoir ») au preflight — jamais
+    un blocage rétroactif d'un contrat approuvé, conformément au principe
+    « préférer un verdict à revoir à un faux succès ou un faux rejet ».
+    """
+    from calliope.studio.ltx_realization import _STOPWORDS, find_repeated_events, fold_text
+
+    def state_words(text):
+        return {word for word in re.findall(r'[a-z0-9]+', fold_text(text))
+                if len(word) >= 5 and word not in _STOPWORDS}
+
+    def state_numbers(text):
+        return set(re.findall(r'\d+', fold_text(text)))
+
+    notes = []
+    casting = set(value['casting'])
+    composition_words = state_words(value['first_frame'])
+    composition_numbers = state_numbers(value['first_frame'])
+    for key, state in sorted(value['initial_state'].items()):
+        if key in casting:
+            continue
+        final = value['final_state'].get(key)
+        if final is None or fold_text(final) == fold_text(state):
+            continue
+        leaked_words = (state_words(final) - state_words(state)) & composition_words
+        leaked_numbers = (state_numbers(final) - state_numbers(state)) & composition_numbers
+        if leaked_words or leaked_numbers:
+            notes.append(
+                f"La composition t=0 (first_frame) décrit l'état final de « {key} » "
+                f"(« {final} ») alors que son état initial déclaré est « {state} » : "
+                "l'image de départ montre l'état initial, jamais sa fin. Alignez "
+                "first_frame sur initial_state sans changer les paroles.")
+    beats = [beat['action'] for beat in value['chronology']]
+    for index_a, index_b, reason in find_repeated_events(beats):
+        notes.append(
+            f"Evénement peut-être répété dans la chronologie ({reason}) : "
+            f"« {beats[index_a]} » et « {beats[index_b]} ». Vérifiez qu'il s'agit "
+            "bien de deux événements distincts.")
+    return notes
+
+
+def validate_contract_consistency(value):
+    """Garde réparable : refuse une divergence état/image ou un geste répété.
+
+    Réservée aux boucles de préparation et de révision, où un refus déclenche
+    une réécriture texte par DeepSeek (aucun GPU). L'approbation et le
+    preflight n'utilisent que les avertissements (``consistency_notes``) :
+    un contrat déjà approuvé n'est jamais bloqué rétroactivement par une
+    heuristique.
+    """
+    notes = consistency_notes(value)
+    if notes:
+        raise ValueError(
+            notes[0] + " Corrigez le contrat sans changer les paroles ni les locuteurs.")
+
+
 def validate_render_contract(value, shot, context):
     if settings.studio_video_profile != 'ltx':
         return
@@ -82,7 +150,8 @@ def validate_render_contract(value, shot, context):
         'character_keys': value['casting'], 'location_key': value['location'],
         'framing': value['framing'], 'camera': value['camera'], 'soundscape': value['sound'],
     }
-    compile_video_prompt(shot | direction, context | {'shot': direction},
+    compile_video_prompt(shot | direction,
+                         context | {'shot': direction, 'director_contract': value},
                          first_frame=True, video_profile='ltx')
 
 
@@ -545,6 +614,7 @@ async def prepare(project_id, internal=False):
                     value = value | {'initial_state': value['initial_state'] | requirements['continuation_state']}
                 valid = validate_contract(value, memory["entities"], props)
                 validate_speech_timing(valid)
+                validate_contract_consistency(valid)
                 validate_render_contract(valid, shot, render_contexts[shot['id']])
                 for field in ("casting", "location", "duration_sec"):
                     actual = set(valid[field]) if field == "casting" else valid[field]
@@ -637,6 +707,32 @@ def approve(project_id, expected_hash):
     return state(project_id)
 
 
+def check_counter_continuity(plan_number, labels, previous_labels):
+    """Continuité d'un compteur en surimpression d'un plan raccordé au suivant.
+
+    Le compteur de la fiction poursuit sa valeur d'une prise à l'autre
+    (000 -> 001 -> 001 -> 002) : comparaison exacte de la valeur finale du plan
+    précédent (dernier changement, sinon la valeur affichée) et de la valeur
+    initiale du plan courant. Une remise à zéro volontaire n'est pas un raccord
+    et rompt la continuité. Les clés absentes d'un côté ou sans valeur sont
+    ignorées (jamais de faux rejet). Lève une 422 explicite en cas de rupture.
+    """
+    for key, label in (labels or {}).items():
+        source = (previous_labels or {}).get(key)
+        if not source:
+            continue
+        changes = source.get("changes") or []
+        expected = changes[-1]["value"] if changes else source.get("value")
+        actual = label.get("value")
+        if expected is None or actual is None:
+            continue
+        if int(actual) != int(expected):
+            raise HTTPException(
+                422, f"Plan {plan_number}: continuite du compteur « {key} » "
+                     f"rompue : valeur initiale {actual}, valeur finale du "
+                     f"plan precedent {expected}.")
+
+
 def validate_live(conn, project_id, current, require_ready=True, speech_shot_ids=None):
     from calliope.studio.authored_script import authored_story
 
@@ -683,6 +779,7 @@ def validate_live(conn, project_id, current, require_ready=True, speech_shot_ids
                 422, 'Ce scénario fourni a été réécrit par une ancienne préparation. '
                 "Recommencez cet épisode depuis son idée originale ; ses données seront archivées.")
     previous = None
+    previous_labels = {}
     for plan_number, (entry, shot) in enumerate(zip(current["shots"], shots), 1):
         context = service.shot_context(conn, shot["id"])
         try:
@@ -726,14 +823,21 @@ def validate_live(conn, project_id, current, require_ready=True, speech_shot_ids
             (t["speaker"], t["text"]) for t in contract["dialogue"]
         ]:
             raise HTTPException(422, f"Plan {plan_number}: attribution des voix differente.")
+        labels = {label.get("key"): label
+                  for label in (context["shot"].get("screen_text") or []) if label.get("key")}
         if shot["continue_from_previous"]:
             if previous is None or previous["location"] != contract["location"]:
                 raise HTTPException(422, "Raccord sans plan precedent dans le meme lieu.")
             for key, value in previous["final_state"].items():
                 if contract["initial_state"].get(key) != value:
                     raise HTTPException(422, f"Plan {plan_number}: raccord incompatible pour {key}.")
+            # Un compteur en surimpression poursuit sa valeur d'une prise a
+            # l'autre (000 -> 001 -> 001 -> 002) : comparaison exacte, sans
+            # heuristique. Une remise a zero volontaire n'est pas un raccord.
+            check_counter_continuity(plan_number, labels, previous_labels)
         if shot.get("purpose") not in ("midroll", "outro"):
             previous = contract
+            previous_labels = labels
 
 
 def build_image_prompt(entry, plan):
@@ -1075,6 +1179,13 @@ def preflight(project_id, shot_ids=None):
         for plan_number, (entry, shot) in enumerate(zip(current["shots"], live_shots(conn, project_id)), 1):
             if ids is not None and shot["id"] not in ids:
                 continue
+            # Divergences état/image et gestes peut-être répétés : revue humaine,
+            # jamais un blocage automatique (heuristiques).
+            try:
+                for note in consistency_notes(entry["contract"]):
+                    warnings.append(f"Plan {plan_number}: {note}")
+            except (KeyError, TypeError):
+                pass
             if shot["approved"] and shot["selected_video_id"]:
                 take = conn.execute(
                     "SELECT * FROM studio_takes WHERE id=?", (shot["selected_video_id"],)
@@ -1341,6 +1452,7 @@ async def revise(project_id, expected_hash, shot_ids, instruction, contracts=Non
                 timing_errors = []
                 for item in contracts:
                     valid = validate_contract(item['contract'], memory['entities'], props)
+                    validate_contract_consistency(valid)
                     validate_render_contract(valid, *render_inputs[item['id']])
                     dialogue = [(line['speaker'], line['text']) for line in valid['dialogue']]
                     if item['id'] in proposed_dialogue and dialogue != proposed_dialogue[item['id']]:
@@ -1448,7 +1560,7 @@ async def revise(project_id, expected_hash, shot_ids, instruction, contracts=Non
 async def verify_take(project_id, take_id):
     import asyncio
 
-    from calliope.studio import production, transcription
+    from calliope.studio import generated_text, production, transcription
 
     with service.database() as conn:
         take = conn.execute(
@@ -1500,8 +1612,12 @@ async def verify_take(project_id, take_id):
         if verdict["status"] == "unknown"
         else "à corriger",
         "vision": "texte parasite détecté"
-        if (metadata.get('text_qc') or {}).get('status') == 'unexpected_text' else "a verifier",
+        if generated_text.is_blocked(metadata, take["output_path"])
+        else "texte parasite — revue supervisée motivée"
+        if (metadata.get('text_qc') or {}).get('status') == 'unexpected_text'
+        else "a verifier",
         "text_qc": metadata.get('text_qc') or {'status': 'unverified'},
+        "text_qc_override": metadata.get('text_qc_override'),
         "speaker_identity": "a verifier",
     }
 
@@ -1509,8 +1625,10 @@ async def verify_take(project_id, take_id):
 def guard_approval(conn, shot, take):
     if not enabled(conn, shot["project_id"]):
         return
+    from calliope.studio import generated_text
+
     metadata = json.loads(take["metadata_json"] or "{}")
-    if (metadata.get('text_qc') or {}).get('status') == 'unexpected_text':
+    if generated_text.is_blocked(metadata, take["output_path"]):
         raise HTTPException(422, 'Texte parasite détecté dans la prise native : corrigez cette prise.')
     verdict = metadata.get("dialogue_qc") or {}
     if verdict.get("status") in (
@@ -1555,7 +1673,24 @@ def review_take(project_id, take_id, payload):
             )
         metadata = json.loads(take["metadata_json"])
         if payload['approved'] and (metadata.get('text_qc') or {}).get('status') == 'unexpected_text':
-            raise HTTPException(422, 'Texte parasite détecté dans la prise native : corrigez cette prise.')
+            # Un faux positif OCR ne doit pas être un faux rejet définitif :
+            # une revue humaine supervisée, motivée par écrit et liée au
+            # fichier revu, peut écarter le signalement. Sans motif, refus.
+            from calliope.studio import generated_text
+
+            already = generated_text.override_valid(metadata, take['output_path'])
+            reason = str(payload.get('text_override_reason') or '').strip()
+            if not already and len(reason) < 12:
+                raise HTTPException(
+                    422, 'Texte parasite détecté dans la prise native : corrigez cette '
+                    'prise, ou motivez une revue supervisée (text_override_reason, '
+                    '12 caractères minimum) après vérification image par image.')
+            if not already:
+                metadata['text_qc_override'] = {
+                    'reason': reason,
+                    'file_hash': file_hash(take['output_path']),
+                    'at': service.utc_now(),
+                }
         if payload["approved"] and (metadata.get("dialogue_qc") or {}).get("status") in (
             "extra",
             "missing",

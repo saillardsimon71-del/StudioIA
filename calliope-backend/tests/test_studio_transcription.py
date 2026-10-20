@@ -473,3 +473,73 @@ def test_qc_v2_aligns_multiple_tokens_to_their_original_word_times(text):
     )
     assert verdict["status"] == "ok"
     assert verdict["turns"][0]["interval"] == transcript["speech_intervals"][0]
+
+
+# --- environment_failure : échec d'environnement vs résultat honnête ---------
+# Un échec d'environnement (checkpoint absent, langue non configurée, Whisper
+# indisponible) ne doit jamais être mis en cache : il est retenté après
+# réparation. Un résultat honnête (parole incertaine ou absente, ou succès)
+# reste mis en cache pour ne pas repayer Whisper.
+
+
+def test_missing_or_absent_checkpoint_is_an_environment_failure(tmp_path):
+    assert transcription.transcribe_dialogue('take.mp4', '', 'fr')['environment_failure'] is True
+    absent = transcription.transcribe_dialogue('take.mp4', str(tmp_path / 'absent.pt'), 'fr')
+    assert absent['environment_failure'] is True
+    assert absent['status'] == 'unknown'
+
+
+def test_missing_language_is_an_environment_failure(tmp_path):
+    checkpoint = tmp_path / 'asr.pt'
+    checkpoint.write_bytes(b'x')
+    result = transcription.transcribe_dialogue('take.mp4', str(checkpoint), '')
+    assert result['environment_failure'] is True
+
+
+def test_whisper_crash_is_an_environment_failure(tmp_path, monkeypatch):
+    checkpoint = tmp_path / 'asr.pt'
+    checkpoint.write_bytes(b'x')
+
+    def boom(_checkpoint):
+        raise RuntimeError('whisper indisponible')
+
+    monkeypatch.setattr(transcription, '_load_transcriber', boom)
+    result = transcription.transcribe_dialogue('take.mp4', str(checkpoint), 'fr')
+    assert result['environment_failure'] is True
+    assert result['status'] == 'unknown'
+
+
+def test_honest_uncertain_transcription_is_cacheable(tmp_path, monkeypatch):
+    checkpoint = tmp_path / 'asr.pt'
+    checkpoint.write_bytes(b'x')
+
+    class Model:
+        def transcribe(self, *args, **kwargs):
+            return {'text': '', 'segments': []}
+
+    monkeypatch.setattr(transcription, '_load_transcriber', lambda _c: None)
+    monkeypatch.setattr(transcription, '_model', Model(), raising=False)
+    result = transcription.transcribe_dialogue('take.mp4', str(checkpoint), 'fr')
+    assert result['environment_failure'] is False
+    assert result['status'] == 'unknown'
+
+
+def test_successful_transcription_is_cacheable(tmp_path, monkeypatch):
+    checkpoint = tmp_path / 'asr.pt'
+    checkpoint.write_bytes(b'x')
+
+    class Model:
+        def transcribe(self, *args, **kwargs):
+            return {'text': 'Bonjour', 'segments': [{
+                'start': 0.0, 'end': 1.0, 'avg_logprob': -0.3,
+                'no_speech_prob': 0.1, 'compression_ratio': 1.5,
+                'words': [{'word': 'Bonjour', 'start': 0.0, 'end': 0.8,
+                           'probability': 0.9}],
+            }]}
+
+    monkeypatch.setattr(transcription, '_load_transcriber', lambda _c: None)
+    monkeypatch.setattr(transcription, '_model', Model(), raising=False)
+    result = transcription.transcribe_dialogue('take.mp4', str(checkpoint), 'fr')
+    assert result['environment_failure'] is False
+    assert result['status'] == 'ok'
+    assert result['speech_intervals'] == [[0.0, 0.8]]

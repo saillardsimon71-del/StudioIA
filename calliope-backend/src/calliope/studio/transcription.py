@@ -29,10 +29,20 @@ def warm_transcriber(checkpoint_path):
 
 
 def transcribe_dialogue(path, checkpoint_path, language):
+    """Transcrit une prise avec Whisper CPU.
+
+    ``environment_failure`` distingue un échec d'environnement (checkpoint
+    absent, langue non configurée, import/whisper indisponible) d'un résultat
+    d'analyse honnête (parole incertaine ou absente). Un échec d'environnement
+    ne doit jamais être mis en cache : après réparation du lanceur ou du
+    checkpoint, la transcription doit être retentée. Un résultat honnête,
+    ``ok`` ou ``unknown`` stable pour le même fichier, reste mis en cache pour
+    ne pas repayer Whisper à chaque contrôle.
+    """
     global _model, _checkpoint
     result = {
         "status": "unknown", "text": "", "segments": [], "speech_intervals": [],
-        "reason": "Checkpoint ASR local non configuré.",
+        "reason": "Checkpoint ASR local non configuré.", "environment_failure": True,
     }
     if not checkpoint_path:
         return result
@@ -78,14 +88,16 @@ def transcribe_dialogue(path, checkpoint_path, language):
             )
         if not certain:
             result["reason"] = "Transcription incertaine ou aucune parole reconnue."
+            result["environment_failure"] = False
             return result
         result["speech_intervals"] = [
             [segment["words"][0]["start"], segment["words"][-1]["end"]]
             for segment in result["segments"]
         ]
-        result.update(status="ok", reason="")
+        result.update(status="ok", reason="", environment_failure=False)
     except Exception as exc:
         result["reason"] = f"Transcription CPU indisponible ({type(exc).__name__})."
+        result["environment_failure"] = True
     return result
 
 

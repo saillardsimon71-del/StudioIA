@@ -15,6 +15,8 @@
   let selection = $state<number[]>([]);
   let expert = $state<Record<number, string>>({});
   let checks = $state<Record<number, Record<string, boolean>>>({});
+  let verifications = $state<Record<number, { vision?: string; text_qc?: { status: string }; text_qc_override?: { reason: string } | null }>>({});
+  let overrideReasons = $state<Record<number, string>>({});
   let loaded = '';
   const qcFields = [
     ['audio_ok', 'Paroles exactes, sans ajout ni doublon'],
@@ -236,9 +238,16 @@
           <p class="hint">Identités, locuteurs, cadrage, texte et raccords : à vérifier à l'image et à l'écoute.</p>
           {#each qcFields as [key, label]}<label class="row"><input type="checkbox" checked={checks[take.id]?.[key] ?? false}
             disabled={active || busy || shot.approved} onchange={event => checks[take.id] = { ...checks[take.id], [key]: event.currentTarget.checked }} />{label}</label>{/each}
-          <div class="row"><button disabled={busy || active} onclick={() => act(async () => { const result = await director.verify(board.project.id, take.id); notice = result.audio_label + ' : ' + result.dialogue.reason; })}>Vérifier cette prise</button>
+          {#if verifications[take.id]?.text_qc?.status === 'unexpected_text'}
+            <div class="stack">
+              <p class="hint">Texte parasite détecté par l'OCR ({verifications[take.id]?.vision ?? 'à vérifier'}). Corrigez cette prise, ou — après vérification image par image — motivez une revue supervisée pour écarter un faux positif (12 caractères minimum).</p>
+              <label>Revue supervisée (motif du faux positif)<textarea rows="2" value={overrideReasons[take.id] ?? ''}
+                disabled={active || busy || shot.approved} oninput={event => overrideReasons[take.id] = event.currentTarget.value}></textarea></label>
+            </div>
+          {/if}
+          <div class="row"><button disabled={busy || active} onclick={() => act(async () => { const result = await director.verify(board.project.id, take.id); verifications[take.id] = result; if (result.text_qc_override?.reason) overrideReasons[take.id] = result.text_qc_override.reason; notice = result.audio_label + ' : ' + result.dialogue.reason; })}>Vérifier cette prise</button>
             <button class="primary" disabled={busy || active || shot.approved || !qcFields.every(([key]) => checks[take.id]?.[key])}
-              onclick={() => act(() => director.review(board.project.id, take.id, current!.storyboard_hash, true, checks[take.id]))}>{shot.approved ? 'Prise validée' : 'Valider cette prise'}</button>
+              onclick={() => act(() => director.review(board.project.id, take.id, current!.storyboard_hash, true, checks[take.id], overrideReasons[take.id] ?? ''))}>{shot.approved ? 'Prise validée' : 'Valider cette prise'}</button>
             <button disabled={busy || active} onclick={() => act(() => director.review(board.project.id, take.id, current!.storyboard_hash, false, {}))}>Rejeter / retirer la validation</button>
             <button disabled={busy || active} onclick={() => retake(shot.id)}>Refaire ce plan et ses seuls raccords dépendants</button></div>
         </article>
