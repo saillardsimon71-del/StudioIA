@@ -78,7 +78,8 @@ def test_voice_over_is_audio_only_and_does_not_add_narrator_to_visual_cast(horro
     assert 'voice-over' in prompt.lower()
     assert "red hat" not in prompt
     assert 'Julien says' not in prompt
-    assert 'mouths closed' in prompt
+    assert "only the named on-screen speaker lip-syncs" in prompt.casefold()
+    assert "react silently" in prompt.casefold()
     assert 'Chaque nuit, le mur me réveillait.' in prompt
 
 

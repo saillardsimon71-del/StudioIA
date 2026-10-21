@@ -130,15 +130,17 @@ def compile_shot_prompt(project: Project, shot: Shot) -> str:
                 brief = " ".join(char.description.split()[:20]).rstrip(".,;:")
                 parts.append(f"{char.name} is {brief}.")
 
+    if shot.camera_setup:
+        parts.append(_clean_sentence(f"Starting composition: {shot.camera_setup}"))
+
     if shot.initial_state:
         parts.append(_clean_sentence(f"Initial state: {shot.initial_state}"))
 
     parts.append(_clean_sentence(shot.action))
 
-    if shot.final_state:
-        parts.append(_clean_sentence(f"End state: {shot.final_state}"))
-
     if shot.dialogue:
+        # `start_sec` remains planning/preflight metadata. LTX receives relative
+        # beats through `action`, not raw timestamps.
         announced: set[str] = set()
         for idx, line in enumerate(shot.dialogue):
             speaker = char_map.get(line.speaker_id)
@@ -156,9 +158,12 @@ def compile_shot_prompt(project: Project, shot: Shot) -> str:
                 announced.add(line.speaker_id)
             else:
                 parts.append(f'{speaker_name} {verb}: "{spoken}"')
-        parts.append("Clear foreground audio; non-speaking characters keep mouths closed.")
+        parts.append("Only the named on-screen speaker lip-syncs; other characters may react silently.")
     else:
         parts.append("Characters stay silent with expressive physical reactions.")
+
+    if shot.final_state:
+        parts.append(_clean_sentence(f"End state: {shot.final_state}"))
 
     if shot.display_overlay is not None:
         parts.append(

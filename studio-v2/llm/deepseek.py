@@ -32,14 +32,21 @@ CONSTRUIS L'HISTOIRE AVANT LES PLANS (préparation intérieure, seul le JSON fin
 - Choisis ensuite l'ouverture la plus intrigante. L'ordre du résumé utilisateur n'impose pas l'ordre d'exposition : si un événement fort suit une présentation banale, fais-le commencer au plan 1. Une tristesse générique, une attente ou un décor seuls ne suffisent pas : il faut un enjeu immédiat, une émotion précise ou un détail qui soulève une question concrète.
 - Découpe alors en plans utiles, sans répétition ni remplissage. Adapte accroche, respirations et fin au genre (humour, émotion, absurde, aventure, horreur), sans menace ni cliffhanger imposés ni surenchère permanente. Assume les anomalies de fiction demandées.
 - Choisis `narration_mode`: `voice_over` pour une demande de faceless, voix off ou narration immersive ; `dialogue` pour la fiction dialoguée / Fruit City. Le genre horreur seul n'impose pas la voix off. En voix off, assure un récit immersif suivi sur les plans (même voix), avec quelques dialogues motivés. `dialogue[].delivery` distingue `voice_over` (narrateur invisible), `off_screen` (voix du lieu invisible) et `on_screen` (personnage visible). Ne fais pas réciter le récit aux personnages.
-- Paroles en français oral, voix distinctes : la narration apporte vécu et suspense, les dialogues une intention, jamais une simple description de l'image.
+- Paroles en français oral, voix distinctes : chaque réplique cherche à obtenir quelque chose de quelqu'un, révèle un sous-texte ou fait évoluer la relation ; elle ne décrit pas simplement l'image.
 - Chaque changement de lieu doit servir une décision ou révélation. Fixe la géographie des pièces et des murs dans les décors ; ne déplace pas un même mur de chambre vers le couloir. Écarte les détours sans cause ni conséquence.
+
+MISE EN SCÈNE : TRADUIRE L'INTENTION EN COMPORTEMENTS (sans nouveau champ JSON) :
+- Pour chaque réplique, détermine en silence à qui elle s'adresse, ce que le locuteur veut obtenir et ce qu'il ressent ou dissimule ; cerne aussi ce que chaque autre personnage présent veut, ressent ou retient, et ce que la réplique change entre eux. Ne rends pas cette analyse : montre son résultat.
+- Dans `action`, fais jouer l'intention par un comportement précis et filmable : regard, posture, souffle, mains, hésitation, voix qui se brise ou reste trop contrôlée. Quand l'autre personnage est présent, donne-lui une réaction lisible. Un geste peut contredire les mots si cela révèle le sous-texte ; évite l'émotion générique et l'illustration littérale de chaque phrase.
+- Décris un beat continu où gestes, réplique et réaction s'enchaînent naturellement. Utilise `start_sec` et la durée pour réserver le temps de parler, d'écouter et de réagir ; le compilateur ne transmet pas `start_sec` comme horodatage à LTX, donc décris relativement dans `action` toute pause qui compte. N'empile pas des gestes impossibles dans le temps restant.
+- `initial_state` est l'image réellement visible avant le premier geste (expression, regard, posture, positions) ; `image_prompt` reprend cet instant et le cadrage de `camera_setup`. `action` mène de cette image à `final_state` sans commencer par le résultat.
+- `camera_setup` décrit seulement le cadrage de départ, en 8 mots anglais maximum. Un mouvement de caméra n'est utile que s'il rend plus claire une révélation, un changement d'attention ou de relation : décris-le dans `action`, lié à ce qu'il révèle. Sinon, garde la caméra immobile. N'impose jamais le même mouvement à chaque scène.
 
 DÉCOUPAGE ET CONTRAINTES TECHNIQUES LTX-2.5 :
 - Choisis des plans de 3.0 à 10.0 secondes selon l'action et les répliques, sans grille fixe (total proche de la durée cible).
 - Un décor stable et lisible, peu de personnages (1 à 3 maximum), actions physiques simples et filmables en continu.
-- Vise 2.5 mots parlés/seconde, maximum 3.2, dans le temps disponible APRÈS chaque `start_sec`, autres répliques et pauses comprises, sans chevauchement. Raccourcis les répliques ou adapte la durée.
-- En anglais visuel au présent : `action` vise 15-20 mots, un geste principal ; `initial_state` et `final_state` 8-12 mots chacun. Avec trois personnages ou deux répliques, vise les bornes basses : les 150 mots du prompt compilé incluent aussi apparences, voix et dialogues.
+- Vise 2.5 mots parlés/seconde, maximum 3.2, dans le temps disponible APRÈS chaque `start_sec`, pauses et répliques comprises, sans chevauchement. Garde aussi un instant pour écouter ou réagir ; raccourcis les répliques ou adapte la durée si nécessaire.
+- En anglais visuel au présent : `action` vise 15-20 mots pour un beat principal (et une caméra motivée seulement si utile) ; `initial_state` et `final_state` 8-12 mots chacun. Avec trois personnages ou deux répliques, vise les bornes basses : les 150 mots du prompt compilé incluent aussi cadrage, apparences, voix et dialogues.
 - `characters[].description` décrit l'apparence physique fixe en anglais visuel court (15–25 mots).
 - `voice_hint` tient en un ou deux mots anglais.
 - Le premier plan a `continue_from_previous: false`. Ensuite `true` UNIQUEMENT si la dernière image précédente permet réellement la suite : même lieu, angle, cadrage, positions et état. Réutilise alors le même `camera_setup` (courte description anglaise de la composition fixe, incluant les éléments nécessaires à la suite). Un gros plan après un plan large exige `false` et une nouvelle image, même au même instant. Une coupe ne remet jamais les états à zéro.
@@ -48,7 +55,7 @@ DÉCOUPAGE ET CONTRAINTES TECHNIQUES LTX-2.5 :
 
 VÉRIFIE AVANT DE RÉPONDRE (dans cette génération, sans rapport ni champ JSON supplémentaire) :
 - Si `continue_from_previous: true`, recopie à l'identique le `final_state` précédent dans `initial_state`. Montre chaque nouveau geste, déplacement, apparition ou départ dans `action`, jamais déjà accompli à l'ouverture. Une coupe ne justifie pas un objet déjà saisi ou un déplacement inexpliqué.
-- Vérifie l'accroche du plan 1, les décisions motivées par ce que chacun sait et veut, les identités, les `speaker_id` déclarés et le temps de parole. Livre uniquement le scénario.
+- Vérifie l'accroche du plan 1, l'intention rendue visible pour chaque réplique, les réactions, la motivation d'un éventuel mouvement caméra, l'alignement image initiale → action → état final, les identités, les `speaker_id` déclarés et le temps de parole. Livre uniquement le scénario.
 
 SCHÉMA JSON STRICT ATTENDU (réponds UNIQUEMENT par un objet JSON valide) :
 {
@@ -79,7 +86,7 @@ SCHÉMA JSON STRICT ATTENDU (réponds UNIQUEMENT par un objet JSON valide) :
       "final_state": "Exact physical ending state at end of shot in short English.",
       "image_prompt": "Complete English prompt for one vertical 9:16 starting still, including character appearances, clothing, setting, framing and a non-graphic pose. No text.",
       "continue_from_previous": false,
-      "camera_setup": "Fixed medium shot facing the bedroom wall and bedside table",
+      "camera_setup": "Medium shot facing the bedroom wall",
       "time_transition": "continuous",
       "decor_id": "lieu_unique",
       "dialogue": [
@@ -98,7 +105,7 @@ DÉCORS POUR LES IMAGES (métadonnées du même scénario, sans changer les règ
 
 IMAGES META AI (préparées dans ce même appel, sans réécrire la narration) :
 - Pour chaque plan, `image_prompt` est un prompt autonome en anglais de 40 à 80 mots pour une seule image verticale 9:16 à t=0, sans texte ni succession d'actions. Inclus les identités et apparences des personnages présents, leurs vêtements, le décor, le cadrage et leurs positions : aucune bible ne sera ajoutée à ce prompt.
-- `initial_state` est la source de vérité de cette image AVANT `action`. Ne dessine jamais le résultat ou un geste en cours : endormi avant de se redresser ; papier peint encore en place avant de dévoiler la porte ; oreille au mur avant de reculer. Vérifie cette correspondance pour CHAQUE plan. N'ajoute aucun personnage qui doit entrer ensuite. Utilise exactement le même `visual_style` dans tous les prompts, jamais de 3D imposée à un projet réaliste.
+- `initial_state` est la source de vérité de cette image AVANT `action`. Ne dessine jamais le résultat ou un geste en cours : endormi avant de se redresser ; papier peint encore en place avant de dévoiler la porte ; oreille au mur avant de reculer. L'image, les positions et le cadrage doivent correspondre à `camera_setup`; n'ajoute aucun personnage qui doit entrer ensuite. Utilise exactement le même `visual_style` dans tous les prompts, jamais de 3D imposée à un projet réaliste.
 - Décris une scène visuellement non graphique : pose au repos ou préparatoire, avant tout impact ou contact violent. Écarte blessures visibles, mutilation, nudité et sexualisation du visuel. Si l'état narratif impose un instant graphique, prépare une alternative calme avant le geste, dans le même lieu avec les mêmes personnages. Décris réellement cette autre image ; ne masque pas une agression en changeant seulement les mots.
 - Conserve les émotions et le style demandés. Ne transforme pas une scène de menace en contact physique pour renforcer l'image. Le prompt doit décrire ce qui est visible, sans raconter les conséquences ni les enjeux violents de l'histoire.
 - Les descriptions fixes de personnages et de décors servent aussi aux références visuelles : apparence, vêtements, mobilier, couleurs et lumière, sans ajouter de scène de violence ou de blessures à ces références.
