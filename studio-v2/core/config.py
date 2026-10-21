@@ -46,6 +46,11 @@ class V2Settings(BaseModel):
     deepseek_model: str = "deepseek-chat"
     deepseek_api_key: str = ""
     deepseek_timeout_s: float = 90.0
+
+    # Service Meta AI non officiel (metaai-api), lancé séparément
+    metaai_api_url: str = "http://127.0.0.1:8000"
+    metaai_api_key: str = ""
+    metaai_timeout_s: float = 180.0
     deepseek_input_usd_per_1m: float = 0.27
     deepseek_output_usd_per_1m: float = 1.10
 
@@ -152,6 +157,8 @@ class V2Settings(BaseModel):
             "deepseek_base_url": self.deepseek_base_url,
             "deepseek_model": self.deepseek_model,
             "deepseek_api_key_configured": bool(self.effective_deepseek_key()),
+            "metaai_api_url": self.metaai_api_url,
+            "metaai_api_key_configured": bool(self.metaai_api_key),
             "modal_app_name": self.modal_app_name,
             "modal_function_name": self.modal_function_name,
             "gpu_label": self.gpu_label,

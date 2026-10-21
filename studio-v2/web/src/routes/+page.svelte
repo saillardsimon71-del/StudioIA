@@ -40,6 +40,7 @@
 	let libKind = $state<'character' | 'decor' | 'frame'>('character');
 	let libName = $state('');
 	let libDesc = $state('');
+	let metaImagePrompt = $state('');
 	let dragOverKey = $state('');
 
 	// Autorisation explicite par plan (jamais activée par défaut)
@@ -49,6 +50,7 @@
 
 	// Paramètres éditables
 	let apiKeyInput = $state('');
+	let metaAiKeyInput = $state('');
 
 	async function refreshGlobal() {
 		const [h, m, s, plist, alist, cost] = await Promise.all([
@@ -263,6 +265,24 @@
 		}
 	}
 
+	async function generateLibraryImage() {
+		if (!metaImagePrompt.trim()) {
+			errorBanner = 'Saisissez un prompt pour générer une image.';
+			return;
+		}
+		busy = true;
+		errorBanner = '';
+		try {
+			await api.generateLibraryAsset(metaImagePrompt.trim(), libKind, libName || 'Image Meta AI', libDesc);
+			assets = await api.listAssets();
+			infoBanner = 'Image générée par Meta AI et ajoutée à la bibliothèque. Vérifiez-la avant utilisation.';
+		} catch (e: any) {
+			errorBanner = e.message;
+		} finally {
+			busy = false;
+		}
+	}
+
 	async function handleShotImageFile(shotId: string, files: FileList | null) {
 		if (!project || !files || files.length === 0) return;
 		busy = true;
@@ -397,11 +417,16 @@
 				whisper_model_or_path: settings.whisper_model_or_path,
 				ocr_enabled: Boolean(settings.ocr_enabled)
 			};
+			patch.metaai_api_url = settings.metaai_api_url;
 			if (apiKeyInput.trim()) {
 				patch.deepseek_api_key = apiKeyInput.trim();
 			}
+			if (metaAiKeyInput.trim()) {
+				patch.metaai_api_key = metaAiKeyInput.trim();
+			}
 			settings = await api.updateSettings(patch);
 			apiKeyInput = '';
+			metaAiKeyInput = '';
 			await refreshGlobal();
 			await runPrepare(false);
 			showSettings = false;
@@ -490,6 +515,15 @@
 					<label>Clé API DeepSeek ({settings.deepseek_api_key_configured ? 'configurée' : 'absente'})
 						<input type="password" placeholder="sk-..." bind:value={apiKeyInput} />
 					</label>
+				</div>
+				<div>
+					<label>URL du service metaai-api
+						<input placeholder="http://127.0.0.1:8000" bind:value={settings.metaai_api_url} />
+					</label>
+					<label>Clé API MetaAI ({settings.metaai_api_key_configured ? 'configurée' : 'optionnelle / absente'})
+						<input type="password" placeholder="Clé du serveur metaai-api si définie" bind:value={metaAiKeyInput} />
+					</label>
+					<small>Les cookies Meta restent configurés uniquement sur le serveur metaai-api, jamais dans StudioIA.</small>
 				</div>
 				<div>
 					<label>Modèle DeepSeek
@@ -860,6 +894,17 @@
 							<option value="frame">Image initiale de plan</option>
 						</select>
 						<input placeholder="Nom du visuel (ex. Inspecteur Zeste face)" bind:value={libName} />
+						<textarea
+							placeholder="Prompt d'image — description, cadrage, style…"
+							bind:value={metaImagePrompt}
+							rows="3"
+						></textarea>
+						<button class="primary" disabled={busy || !settings?.metaai_api_url} onclick={generateLibraryImage}>
+							{busy ? 'Génération…' : 'Générer avec Meta AI'}
+						</button>
+						<p style="color: var(--muted); font-size: 0.78rem; margin: 0;">
+							Nécessite le service metaai-api configuré dans Paramètres. La génération peut prendre 30–40 s.
+						</p>
 						<div
 							role="region"
 							aria-label="Zone de dépôt bibliothèque"
