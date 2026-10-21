@@ -61,6 +61,12 @@ export const api = {
 		}).then((r) => parseResponse<{ project: Project; llm_meta: Record<string, any> }>(r)),
 
 	listAssets: () => fetch('/api/assets').then((r) => parseResponse<LibraryAsset[]>(r)),
+	generateLibraryAsset: (prompt: string, kind: string, name: string, description: string) =>
+		fetch('/api/assets/generate', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ prompt, kind, name, description })
+		}).then((r) => parseResponse<LibraryAsset>(r)),
 	uploadLibraryAsset: (file: File, kind: 'character' | 'decor' | 'frame', name: string, description: string) => {
 		const fd = new FormData();
 		fd.append('file', file);

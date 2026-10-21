@@ -15,6 +15,9 @@ import mimetypes
 import shutil
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
+
+import httpx
 from typing import Callable
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
@@ -63,6 +66,13 @@ class AssignAssetRequest(BaseModel):
 
 class ValidateImageRequest(BaseModel):
     validated: bool = True
+
+
+class GenerateImageRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=4000)
+    kind: str = "character"
+    name: str = "Image Meta AI"
+    description: str = ""
 
 
 class RenderShotRequest(BaseModel):
@@ -351,6 +361,68 @@ def create_app(
     @app.get("/api/assets")
     def list_assets(kind: str | None = None) -> list[dict]:
         return app.state.repo.list_assets(kind=kind)
+
+    @app.post("/api/assets/generate")
+    def generate_library_asset(req: GenerateImageRequest) -> dict:
+        """Generate an image through a separately hosted metaai-api instance."""
+        if req.kind not in {"character", "decor", "frame"}:
+            raise HTTPException(400, "Type d'asset invalide (`character`, `decor`, `frame`).")
+        cfg: V2Settings = app.state.settings
+        base_url = cfg.metaai_api_url.rstrip("/")
+        if not base_url.startswith(("http://", "https://")):
+            raise HTTPException(400, "L'URL Meta AI doit commencer par http:// ou https://.")
+        headers = {"Content-Type": "application/json"}
+        if cfg.metaai_api_key:
+            headers["Authorization"] = f"Bearer {cfg.metaai_api_key}"
+        try:
+            with httpx.Client(timeout=cfg.metaai_timeout_s, follow_redirects=True) as client:
+                response = client.post(f"{base_url}/image", json={"prompt": req.prompt}, headers=headers)
+                response.raise_for_status()
+                payload = response.json()
+                urls = payload.get("image_urls") or payload.get("images") or []
+                if isinstance(urls, str):
+                    urls = [urls]
+                if not payload.get("success", True) or not urls:
+                    raise ValueError("Le service n'a renvoyé aucune image.")
+                image_url = str(urls[0])
+                parsed = urlparse(image_url)
+                if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                    raise ValueError("URL d'image renvoyée invalide.")
+                image_response = client.get(image_url)
+                image_response.raise_for_status()
+                raw = image_response.content
+                if not raw or len(raw) > 25 * 1024 * 1024:
+                    raise ValueError("Image vide ou supérieure à la limite de 25 Mo.")
+        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            raise HTTPException(502, f"Échec du service Meta AI : {exc}") from exc
+
+        dest_dir = Path(cfg.media_dir) / "library" / req.kind
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        target = dest_dir / f"{uuid.uuid4().hex[:12]}.img"
+        target.write_bytes(raw)
+        try:
+            with Image.open(target) as img:
+                image_format = (img.format or "WEBP").lower()
+                img.verify()
+            with Image.open(target) as img:
+                width, height = img.size
+            suffix = {"jpeg": ".jpg", "png": ".png", "webp": ".webp", "gif": ".gif", "bmp": ".bmp"}.get(image_format)
+            if not suffix:
+                raise ValueError(f"Format d'image non pris en charge : {image_format}")
+            final_target = target.with_suffix(suffix)
+            target.replace(final_target)
+            target = final_target
+        except (OSError, ValueError, UnidentifiedImageError) as exc:
+            target.unlink(missing_ok=True)
+            raise HTTPException(502, "Meta AI a renvoyé un fichier image invalide ou non pris en charge.") from exc
+        return app.state.repo.add_asset(
+            kind=req.kind,
+            name=req.name.strip() or "Image Meta AI",
+            description=req.description.strip() or req.prompt,
+            file_path=target,
+            width=width,
+            height=height,
+        )
 
     @app.post("/api/assets/upload")
     def upload_library_asset(

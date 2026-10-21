@@ -72,6 +72,14 @@ Le script demande confirmation (`OUI`), exécute **une seule prise** sans retry 
 
 ---
 
+## Génération d'images Meta AI (optionnelle / expérimentale)
+
+StudioIA v2 peut appeler un serveur séparé `metaai-api` depuis la bibliothèque visuelle. Installez et lancez ce projet selon sa documentation, configurez-y `META_AI_DATR` et `META_AI_ECTO_1_SESS` (et `META_AI_API_KEY` si souhaité), puis renseignez son URL dans **Paramètres → URL du service metaai-api**. Si une clé serveur est activée, saisissez-la également dans les paramètres StudioIA. Les cookies Meta restent côté serveur `metaai-api`.
+
+Dans l'étape **ASSETS**, choisissez le type d'image, entrez un prompt puis cliquez **Générer avec Meta AI**. StudioIA télécharge la première image produite et l'enregistre localement dans la bibliothèque ; il faut ensuite la vérifier et l'affecter au personnage ou au plan comme d'habitude. Le serveur attendu expose `POST /image` et renvoie `image_urls`.
+
+Cette intégration est expérimentale : `metaai-api` est non officiel, repose sur l'automatisation du navigateur et des cookies susceptibles d'expirer ; disponibilité, conditions d'utilisation Meta et stabilité ne sont pas garanties. La génération prend typiquement 30–40 secondes. Cela ne génère pas les vidéos.
+
 ## Bible créative permanente (DeepSeek)
 
 Les trois documents `creative-guides/01_attention.md`, `02_retention.md` et `03_narration.md` sont automatiquement lus à **chaque génération de scénario**. Ils s'ajoutent au prompt système existant, sans nouveau modèle, sans agent ni appel API supplémentaire. Les consignes sont des principes éditoriaux adaptables, pas une chronologie imposée.
