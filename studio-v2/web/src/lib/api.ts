@@ -15,9 +15,13 @@ async function parseResponse<T>(res: Response): Promise<T> {
 		} catch {
 			detail = await res.text();
 		}
-		throw new Error(detail);
+		throw Object.assign(new Error(detail), { status: res.status });
 	}
 	return (await res.json()) as T;
+}
+
+function imageServiceUnavailable(error: any): boolean {
+	return error instanceof TypeError || [401, 403, 429].includes(error.status) || error.status >= 500;
 }
 
 export function mediaUrl(filePath: string | null | undefined): string {
@@ -52,6 +56,12 @@ export const api = {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(project)
 		}).then((r) => parseResponse<Project>(r)),
+	replaceScenario: (projectId: string, text: string) =>
+		fetch(`/api/projects/${projectId}/replace-scenario`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(JSON.parse(text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i, '$1')))
+		}).then((r) => parseResponse<Project>(r)),
 
 	generateScenario: (projectId: string, idea: string, target_duration_s: number) =>
 		fetch(`/api/projects/${projectId}/generate-scenario`, {
@@ -61,6 +71,84 @@ export const api = {
 		}).then((r) => parseResponse<{ project: Project; llm_meta: Record<string, any> }>(r)),
 
 	listAssets: () => fetch('/api/assets').then((r) => parseResponse<LibraryAsset[]>(r)),
+	generateDecor: (name: string, description: string) =>
+		fetch('/api/assets/generate-decor', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name, description })
+		}).then((r) => parseResponse<LibraryAsset>(r)),
+	generateShotImage: (projectId: string, shotId: string) =>
+		fetch(`/api/projects/${projectId}/shots/${shotId}/generate-image`, { method: 'POST' })
+			.then((r) => parseResponse<Project>(r)),
+	getShotImagePrompt: (projectId: string, shotId: string) =>
+		fetch(`/api/projects/${projectId}/shots/${shotId}/image-prompt`)
+			.then((r) => parseResponse<{ prompt: string }>(r)),
+	saveShotImagePrompt: (projectId: string, shotId: string, prompt: string) =>
+		fetch(`/api/projects/${projectId}/shots/${shotId}/image-prompt`, {
+			method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt })
+		}).then((r) => parseResponse<Project>(r)),
+	generateReferenceImage: (projectId: string, kind: 'character' | 'decor', id: string) =>
+		fetch(`/api/projects/${projectId}/${kind === 'character' ? 'characters' : 'decors'}/${id}/generate-image`, { method: 'POST' })
+			.then((r) => parseResponse<Project>(r)),
+	assignAssetToDecor: (projectId: string, decorId: string, assetId: string) =>
+		fetch(`/api/projects/${projectId}/decors/${decorId}/assign-asset`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ asset_id: assetId })
+		}).then((r) => parseResponse<Project>(r)),
+	generateProjectImages: async (
+		project: Project,
+		onUpdate: (updated: Project, key: string, error: string) => void,
+		onStart: (label: string) => void,
+		shouldStop: () => boolean = () => false
+	): Promise<Project> => {
+		let current = project;
+		const references = [
+			...project.characters.filter((char) => !char.image_ref).map((char) => ({ kind: 'character' as const, id: char.id, name: char.name })),
+			...project.decors.filter((decor) => !decor.asset_id).map((decor) => ({ kind: 'decor' as const, id: decor.id, name: decor.name }))
+		];
+		for (const item of references) {
+			if (shouldStop()) return current;
+			onStart(`${item.kind === 'character' ? 'Personnage' : 'Décor'} : ${item.name || item.id}`);
+			let error = '';
+			try {
+				current = await api.generateReferenceImage(project.id, item.kind, item.id);
+			} catch (e: any) {
+				error = e.message;
+				if (imageServiceUnavailable(e)) {
+					onUpdate(current, `${item.kind}:${item.id}`, error);
+					return current;
+				}
+			}
+			onUpdate(current, `${item.kind}:${item.id}`, error);
+		}
+		onStart('Images des plans');
+		return api.generateShotImages(current, (updated, id, error) => onUpdate(updated, id, error), undefined, shouldStop);
+	},
+	generateShotImages: async (
+		project: Project,
+		onUpdate: (updated: Project, shotId: string, error: string) => void,
+		shotIds?: string[],
+		shouldStop: () => boolean = () => false
+	): Promise<Project> => {
+		let current = project;
+		for (const shot of project.shots) {
+			if (shouldStop()) break;
+			if (shot.image_ref || (shotIds && !shotIds.includes(shot.id))) continue;
+			let error = '';
+			try {
+				current = await api.generateShotImage(project.id, shot.id);
+			} catch (e: any) {
+				error = e.message;
+				if (imageServiceUnavailable(e)) {
+					onUpdate(current, shot.id, error);
+					break;
+				}
+			}
+			onUpdate(current, shot.id, error);
+		}
+		return current;
+	},
 	generateLibraryAsset: (prompt: string, kind: string, name: string, description: string) =>
 		fetch('/api/assets/generate', {
 			method: 'POST',
@@ -121,12 +209,44 @@ export const api = {
 				max_budget_per_take_eur: number;
 			}>(r)
 		),
-	renderShot: (projectId: string, shotId: string, authorized_by_human: boolean, max_budget_eur: number) =>
+	renderShot: (projectId: string, shotId: string, authorized_by_human: boolean) =>
 		fetch(`/api/projects/${projectId}/shots/${shotId}/render`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ authorized_by_human, max_budget_eur })
+			body: JSON.stringify({ authorized_by_human })
 		}).then((r) => parseResponse<{ project: Project; take: Record<string, any>; qc: Record<string, any> }>(r)),
+	renderMissingShots: async (project: Project, options: {
+		authorizedByHuman: boolean;
+		onUpdate: (updated: Project, shotId: string, error: string) => void;
+		onStart?: (shotId: string) => void;
+		shouldStop?: () => boolean;
+	}): Promise<Project> => {
+		if (!options.authorizedByHuman) throw new Error('Une autorisation du lot est nécessaire avant le rendu GPU.');
+		const pending = project.shots.filter((shot) => !shot.rendered_video_ref).map((shot) => shot.id);
+		let current = project;
+		for (const id of pending) {
+			if (options.shouldStop?.()) break;
+			try {
+				const prepared = await api.prepareRender(project.id, false);
+				current = prepared.project;
+				if (options.shouldStop?.()) break;
+				const shot = current.shots.find((item) => item.id === id);
+				if (!shot) throw new Error(`Plan ${id} introuvable dans le projet.`);
+				if (!shot.rendered_video_ref) {
+					const report = prepared.shots.find((item) => item.shot_id === id);
+					if (!report?.ready_for_gpu) throw new Error(report?.blocking_reason || 'Prérequis du plan non satisfaits.');
+					options.onStart?.(id);
+					const result = await api.renderShot(project.id, id, true);
+					current = result.project;
+				}
+				options.onUpdate(current, id, '');
+			} catch (e: any) {
+				options.onUpdate(current, id, e.message);
+				break;
+			}
+		}
+		return current;
+	},
 	uploadManualTake: (projectId: string, shotId: string, file: File) => {
 		const fd = new FormData();
 		fd.append('file', file);

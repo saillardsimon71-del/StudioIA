@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from core.config import STUDIO_V2_ROOT, V2Settings, load_settings, save_settings
 from core.export import export_project_mp4
@@ -36,6 +36,7 @@ from core.ltx_prompt import (
     validate_ltx_prompt,
 )
 from core.scenario import Character, DialogueLine, Project, Shot
+from core.storyboard import build_shot_image_prompt, storyboard_issues
 from core.storage import StudioRepository
 from engines.video import (
     AuthorizationRequiredError,
@@ -73,6 +74,15 @@ class GenerateImageRequest(BaseModel):
     kind: str = "character"
     name: str = "Image Meta AI"
     description: str = ""
+
+
+class ImagePromptRequest(BaseModel):
+    prompt: str = Field(max_length=4000)
+
+
+class GenerateDecorRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=2000)
 
 
 class RenderShotRequest(BaseModel):
@@ -314,6 +324,32 @@ def create_app(
         deleted = app.state.repo.delete_project(project_id)
         return {"deleted": deleted}
 
+    @app.post("/api/projects/{project_id}/replace-scenario")
+    def replace_scenario(project_id: str, payload: dict) -> Project:
+        existing = _project_or_404(project_id)
+        if "characters" not in payload or "shots" not in payload:
+            raise HTTPException(422, "Le JSON doit contenir les listes characters et shots.")
+        merged = {**existing.model_dump(mode="json"), "decors": [], **payload, "id": project_id}
+        try:
+            replacement = Project.model_validate(merged)
+        except ValidationError as exc:
+            detail = "; ".join(f"{'.'.join(map(str, err['loc']))}: {err['msg']}"
+                               for err in exc.errors(include_input=False))
+            raise HTTPException(422, f"Scenario invalide : {detail}") from exc
+        previous = {shot.id: shot for shot in existing.shots}
+        reference_changes = (replacement.characters != existing.characters
+                             or replacement.decors != existing.decors
+                             or replacement.aspect_ratio != existing.aspect_ratio)
+        operational = {"ltx_prompt", "image_prompt", "image_validated", "rendered_video_ref", "human_validated"}
+        for shot in replacement.shots:
+            old = previous.get(shot.id)
+            if reference_changes or old is None or shot.model_dump(exclude=operational) != old.model_dump(exclude=operational):
+                shot.ltx_prompt = ""
+                shot.image_validated = False
+                shot.rendered_video_ref = None
+                shot.human_validated = False
+        return app.state.repo.save_project(replacement)
+
     # ── Étape 2 : SCENARIO (1 clic = 1 appel DeepSeek, zéro agent critique) ──
 
     @app.post("/api/projects/{project_id}/generate-scenario")
@@ -393,8 +429,21 @@ def create_app(
                 raw = image_response.content
                 if not raw or len(raw) > 25 * 1024 * 1024:
                     raise ValueError("Image vide ou supérieure à la limite de 25 Mo.")
-        except (httpx.HTTPError, ValueError, KeyError) as exc:
-            raise HTTPException(502, f"Échec du service Meta AI : {exc}") from exc
+        except httpx.HTTPStatusError as exc:
+            messages = {
+                401: "Meta AI demande une reconnexion. Verifiez la session et la cle du service local.",
+                422: "Meta AI refuse ce visuel. Pour un plan : Assets > Adapter le visuel, puis decrivez un instant calme avant le geste et relancez ce plan.",
+                429: "Meta AI demande d'attendre. Le lot est arrete ; reprenez les visuels manquants plus tard.",
+                503: "Le service Meta AI est occupe ou temporairement indisponible. Reessayez plus tard.",
+                504: "Meta AI n'a pas renvoye d'image a temps. Le lot est arrete ; les images deja enregistrees sont conservees.",
+            }
+            status = exc.response.status_code
+            raise HTTPException(status if status in messages else 502,
+                                messages.get(status, "Echec du service Meta AI. Reessayez plus tard.")) from None
+        except httpx.RequestError:
+            raise HTTPException(503, "Le service Meta AI local ne repond pas. Verifiez son demarrage avant de reprendre le lot.") from None
+        except (ValueError, KeyError):
+            raise HTTPException(502, "Meta AI n'a pas renvoye d'image utilisable. Reessayez le visuel concerne.") from None
 
         dest_dir = Path(cfg.media_dir) / "library" / req.kind
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -423,6 +472,17 @@ def create_app(
             width=width,
             height=height,
         )
+
+    @app.post("/api/assets/generate-decor")
+    def generate_decor(req: GenerateDecorRequest) -> dict:
+        name = req.name.strip()
+        if not name:
+            raise HTTPException(422, "Renseignez le nom du decor.")
+        return generate_library_asset(GenerateImageRequest(
+            kind="decor", name=name, description=req.description.strip() or name,
+            prompt=(f"Vertical 9:16 cinematic establishing image of a recurring setting: {name}. "
+                    f"{req.description.strip()}. Empty location. No characters, no people, no text or captions."),
+        ))
 
     @app.post("/api/assets/upload")
     def upload_library_asset(
@@ -495,6 +555,93 @@ def create_app(
         project.shots[idx].image_validated = False
         return app.state.repo.save_project(project)
 
+    def _image_prompt_or_422(project: Project, shot: Shot) -> str:
+        decor = None
+        if shot.decor_asset_id:
+            decor = app.state.repo.get_asset(shot.decor_asset_id)
+            if not decor or decor["kind"] != "decor":
+                raise HTTPException(422, f"Plan {shot.id} : decor introuvable dans la bibliotheque.")
+        elif shot.decor_id:
+            decor = next(item for item in project.decors if item.id == shot.decor_id).model_dump()
+        try:
+            return build_shot_image_prompt(project, shot, decor)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/shots/{shot_id}/image-prompt")
+    def get_image_prompt(project_id: str, shot_id: str) -> dict:
+        project = _project_or_404(project_id)
+        shot = project.shots[_shot_index_or_404(project, shot_id)]
+        return {"prompt": _image_prompt_or_422(project, shot)}
+
+    @app.put("/api/projects/{project_id}/shots/{shot_id}/image-prompt")
+    def save_image_prompt(project_id: str, shot_id: str, req: ImagePromptRequest) -> Project:
+        project = _project_or_404(project_id)
+        project.shots[_shot_index_or_404(project, shot_id)].image_prompt = req.prompt.strip()
+        return app.state.repo.save_project(project)
+
+    @app.post("/api/projects/{project_id}/shots/{shot_id}/generate-image")
+    def generate_shot_image(project_id: str, shot_id: str) -> Project:
+        project = _project_or_404(project_id)
+        shot = project.shots[_shot_index_or_404(project, shot_id)]
+        if shot.image_ref:
+            return project
+        prompt = _image_prompt_or_422(project, shot)
+        asset = generate_library_asset(GenerateImageRequest(
+            prompt=prompt, kind="frame", name=f"{project.title or project.id} - {shot_id}",
+        ))
+        current = _project_or_404(project_id)
+        updated = current.shots[_shot_index_or_404(current, shot_id)]
+        if updated.image_ref or _image_prompt_or_422(current, updated) != prompt:
+            return current
+        return assign_asset_to_shot(project_id, shot_id, AssignAssetRequest(asset_id=asset["id"]))
+
+    @app.post("/api/projects/{project_id}/characters/{char_id}/generate-image")
+    def generate_character_image(project_id: str, char_id: str) -> Project:
+        project = _project_or_404(project_id)
+        char = next((item for item in project.characters if item.id == char_id), None)
+        if char is None:
+            raise HTTPException(404, f"Personnage {char_id} introuvable.")
+        if char.image_ref:
+            return project
+        asset = generate_library_asset(GenerateImageRequest(
+            kind="character", name=char.name, description=char.description,
+            prompt=(f"Vertical 9:16 character reference portrait. {char.name}: {char.description}. "
+                    "Single character, full body, neutral pose, simple background. No text or captions."),
+        ))
+        current = _project_or_404(project_id)
+        updated = next((item for item in current.characters if item.id == char_id), None)
+        if updated is None or updated.image_ref or updated.description != char.description or updated.name != char.name:
+            return current
+        return assign_asset_to_character(project_id, char_id, AssignAssetRequest(asset_id=asset["id"]))
+
+    @app.post("/api/projects/{project_id}/decors/{decor_id}/assign-asset")
+    def assign_asset_to_decor(project_id: str, decor_id: str, req: AssignAssetRequest) -> Project:
+        project = _project_or_404(project_id)
+        decor = next((item for item in project.decors if item.id == decor_id), None)
+        if decor is None:
+            raise HTTPException(404, f"Decor {decor_id} introuvable.")
+        asset = app.state.repo.get_asset(req.asset_id)
+        if asset is None or asset["kind"] != "decor":
+            raise HTTPException(422, "Choisissez un decor de la bibliotheque.")
+        decor.asset_id = asset["id"]
+        return app.state.repo.save_project(project)
+
+    @app.post("/api/projects/{project_id}/decors/{decor_id}/generate-image")
+    def generate_decor_image(project_id: str, decor_id: str) -> Project:
+        project = _project_or_404(project_id)
+        decor = next((item for item in project.decors if item.id == decor_id), None)
+        if decor is None:
+            raise HTTPException(404, f"Decor {decor_id} introuvable.")
+        if decor.asset_id:
+            return project
+        asset = generate_decor(GenerateDecorRequest(name=decor.name, description=decor.description))
+        current = _project_or_404(project_id)
+        updated = next((item for item in current.decors if item.id == decor_id), None)
+        if updated is None or updated.asset_id or updated.description != decor.description or updated.name != decor.name:
+            return current
+        return assign_asset_to_decor(project_id, decor_id, AssignAssetRequest(asset_id=asset["id"]))
+
     @app.post("/api/projects/{project_id}/characters/{char_id}/assign-asset")
     def assign_asset_to_character(
         project_id: str, char_id: str, req: AssignAssetRequest
@@ -533,11 +680,14 @@ def create_app(
         project = _project_or_404(project_id)
         engine = _engine()
         shot_reports: list[dict] = []
+        issues = storyboard_issues(project)
 
         for idx, shot in enumerate(project.shots):
-            compile_error: str | None = None
+            compile_error: str | None = "; ".join(issues.get(shot.id, [])) or None
             prompt_info: dict | None = None
             try:
+                if compile_error:
+                    raise PromptCapacityError(compile_error)
                 if recompile_prompts or not shot.ltx_prompt.strip():
                     shot.ltx_prompt = compile_shot_prompt(project, shot)
                 prompt_info = validate_ltx_prompt(shot.ltx_prompt, shot_id=shot.id)
@@ -575,11 +725,14 @@ def create_app(
                     "max_words": MAX_LTX_PROMPT_WORDS,
                     "ready_for_gpu": payload_ready,
                     "blocking_reason": payload_issue,
+                    "warnings": ["Raccord ancien sans composition declaree : a confirmer visuellement."]
+                    if shot.continue_from_previous and not shot.camera_setup else [],
                     "cost": cost_info,
                 }
             )
 
-        app.state.repo.save_project(project)
+        if not issues:
+            app.state.repo.save_project(project)
         all_known = all(r["cost"]["estimated_cost_eur"] is not None for r in shot_reports)
         total_est = (
             round(sum(r["cost"]["estimated_cost_eur"] for r in shot_reports), 4)
@@ -601,6 +754,9 @@ def create_app(
         project = _project_or_404(project_id)
         idx = _shot_index_or_404(project, shot_id)
         shot = project.shots[idx]
+        issues = storyboard_issues(project).get(shot.id, [])
+        if issues:
+            raise HTTPException(422, "; ".join(issues))
         engine = _engine()
 
         prev_video = (

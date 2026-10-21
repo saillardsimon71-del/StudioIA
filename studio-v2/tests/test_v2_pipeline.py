@@ -304,6 +304,32 @@ def test_5_cost_estimation_honesty_authorization_and_ceiling(isolated_settings: 
         engine.render(shot)
 
 
+@pytest.mark.parametrize("rate", [None, 1.0])
+def test_authorized_render_without_budget_ignores_legacy_default(isolated_settings, tmp_path, rate):
+    settings = isolated_settings.model_copy(update={
+        "gpu_usd_per_sec": rate, "max_budget_eur_per_take": 0.01,
+    })
+    image = tmp_path / "reference.png"
+    image.write_bytes(_make_png_bytes())
+    calls = []
+
+    def fake_modal(payload):
+        calls.append(payload)
+        return {"video_base64": base64.b64encode(b"fake-video").decode("ascii")}
+
+    engine = LtxModalEngine(settings, modal_runner=fake_modal)
+    shot = Shot(
+        id="s1", duration_s=3, action="Zeste blinks.", image_ref=str(image),
+        image_validated=True, ltx_prompt="Vertical shot. Zeste blinks once.",
+    )
+    engine.arm_single_take(project_id="p", shot_id="s1", authorized_by_human=True)
+    assert Path(engine.render(shot)).read_bytes() == b"fake-video"
+    assert len(calls) == 1
+    with pytest.raises(AuthorizationRequiredError):
+        engine.render(shot)
+    assert len(calls) == 1
+
+
 def test_6_single_shot_retake_preserves_other_shots_and_records_failures(
     isolated_settings: V2Settings, tmp_path: Path
 ):
@@ -338,12 +364,17 @@ def test_6_single_shot_retake_preserves_other_shots_and_records_failures(
                 id="shot_1",
                 duration_s=5.0,
                 action="Zeste opens a folder on the desk.",
+                initial_state="Zeste sits at the desk with the folder closed.",
+                final_state="Zeste sits at the desk with the folder open.",
+                camera_setup="desk-medium-fixed",
                 dialogue=[DialogueLine(speaker_id="zeste", text="Premier plan validé.")],
             ),
             Shot(
                 id="shot_2",
                 duration_s=5.0,
                 action="Zeste looks up surprised at the door.",
+                initial_state="Zeste sits at the desk with the folder open.",
+                camera_setup="desk-medium-fixed",
                 continue_from_previous=True,
                 dialogue=[DialogueLine(speaker_id="zeste", text="Qui est là ?")],
             ),

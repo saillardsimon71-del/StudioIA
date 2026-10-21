@@ -32,6 +32,7 @@ def draft():
                 "initial_state": "Fraise sits beside a mirror.",
                 "final_state": "Fraise leans back. El Diablo faces her.",
                 "continue_from_previous": False,
+                "camera_setup": "bedroom-fixed-medium",
                 "dialogue": [{"speaker_id": "fraise", "text": "Vous êtes qui ?", "start_sec": 0.4}],
             },
             {
@@ -40,6 +41,7 @@ def draft():
                 "initial_state": "Fraise leans back. El Diablo faces her.",
                 "final_state": "His hand remains extended. Fraise folds her arms.",
                 "continue_from_previous": True,
+                "camera_setup": "bedroom-fixed-medium",
                 "dialogue": [{"speaker_id": "el_diablo", "text": "Donne-moi ta main.", "start_sec": 0.3}],
             },
         ],
@@ -107,7 +109,7 @@ def test_http_single_call_preserves_brief_and_json_roundtrip(monkeypatch, draft,
     assert Project.model_validate_json(project.model_dump_json()) == project
     assert "Préparation interne" not in project.model_dump_json()
     for shot, expected in zip(project.shots, draft["shots"]):
-        assert shot.dialogue[0].model_dump() == expected["dialogue"][0]
+        assert shot.dialogue[0].model_dump() == {**expected["dialogue"][0], "delivery": "on_screen"}
         assert validate_ltx_prompt(shot.ltx_prompt)["ok"]
     assert meta["warnings"] == []
 
@@ -127,6 +129,28 @@ def test_custom_endpoint_keeps_existing_request_contract(draft):
     assert "thinking" not in requests[0]
     assert "reasoning_effort" not in requests[0]
     assert requests[0]["max_tokens"] == 3000
+
+
+def test_same_call_prepares_recurring_decors_and_shot_associations(draft):
+    draft["decors"] = [{"id": "chambre", "name": "Chambre", "description": "Stylized bedroom, oak vanity, round mirror, blue walls"}]
+    for shot in draft["shots"]:
+        shot["decor_id"] = "chambre"
+    requests = []
+
+    def respond(body):
+        requests.append(body)
+        return {"choices": [{"message": {"content": json.dumps(draft)}}]}
+
+    project, _ = ds.generate_scenario_once(
+        settings=V2Settings(), idea="Un pacte dans une chambre.", transport_fn=respond,
+    )
+    assert len(requests) == 1
+    assert project.decors[0].name == "Chambre"
+    assert project.decors[0].asset_id is None
+    assert [shot.decor_id for shot in project.shots] == ["chambre", "chambre"]
+    assert '"decors"' in requests[0]["messages"][0]["content"]
+    assert '"decor_id"' in requests[0]["messages"][0]["content"]
+    assert Project.model_validate_json(project.model_dump_json()) == project
 
 
 @pytest.mark.parametrize("failure", ["json", "schema", "speaker", "timing", "length", "http", "timeout"])
@@ -178,3 +202,32 @@ def test_unavailable_guide_stops_before_transport(tmp_path, monkeypatch, missing
         ds.generate_scenario_once(
             settings=V2Settings(), idea="Un pacte.", transport_fn=forbidden_transport,
         )
+
+
+def test_same_call_prepares_independent_image_prompts_without_changing_video_story(draft):
+    from core.ltx_prompt import compile_shot_prompt
+
+    image_prompt = "Vertical 9:16 still, t=0. A red strawberry in pajamas waits by a bedroom mirror. No text."
+    draft["shots"][0]["image_prompt"] = image_prompt
+    calls = []
+
+    def respond(body):
+        calls.append(body)
+        return {"choices": [{"message": {"content": json.dumps(draft)}}]}
+
+    project, _ = ds.generate_scenario_once(settings=V2Settings(), idea="Une rencontre.", transport_fn=respond)
+    assert len(calls) == 1
+    assert project.shots[0].image_prompt == image_prompt
+    assert project.shots[1].image_prompt == ""
+    assert '"image_prompt"' in calls[0]["messages"][0]["content"]
+    original_video_prompt = compile_shot_prompt(project, project.shots[0])
+    project.shots[0].image_prompt = "Another non-graphic still."
+    assert compile_shot_prompt(project, project.shots[0]) == original_video_prompt
+    for shot, expected in zip(project.shots, draft["shots"]):
+        assert shot.action == expected["action"]
+        assert shot.initial_state == expected["initial_state"]
+        assert shot.final_state == expected["final_state"]
+        assert [line.model_dump() for line in shot.dialogue] == [
+            {**line, "delivery": "on_screen"} for line in expected["dialogue"]
+        ]
+    assert Project.model_validate_json(project.model_dump_json()) == project

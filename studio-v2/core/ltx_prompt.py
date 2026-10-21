@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 
 from core.scenario import Character, Project, Shot
+from core.storyboard import visual_style
 
 MAX_LTX_PROMPT_WORDS = 150
 
@@ -96,7 +97,8 @@ def compile_shot_prompt(project: Project, shot: Shot) -> str:
     char_map: dict[str, Character] = {c.id: c for c in project.characters}
     has_visual_ref = bool(shot.image_ref or shot.continue_from_previous)
 
-    speaking_ids = [line.speaker_id for line in shot.dialogue]
+    speaking_ids = [line.speaker_id for line in shot.dialogue if line.delivery == "on_screen"]
+    audio_only_ids = {line.speaker_id for line in shot.dialogue if line.delivery != "on_screen"}
     mentioned_ids: list[str] = []
     haystack = f"{shot.action} {shot.initial_state} {shot.final_state}".casefold()
     for char in project.characters:
@@ -106,11 +108,13 @@ def compile_shot_prompt(project: Project, shot: Shot) -> str:
             or char.name.casefold() in haystack
         ):
             mentioned_ids.append(char.id)
-    cast_ids = list(dict.fromkeys(mentioned_ids or [c.id for c in project.characters[:2]]))
+    cast_ids = list(dict.fromkeys(mentioned_ids or [
+        c.id for c in project.characters if c.id not in audio_only_ids
+    ][:2]))
 
     parts: list[str] = []
     if has_visual_ref:
-        parts.append("Vertical cinematic shot continuing directly from the reference frame.")
+        parts.append(f"Vertical {visual_style(project)} shot continuing directly from the reference frame.")
         for cid in cast_ids:
             char = char_map.get(cid)
             if char:
@@ -119,7 +123,7 @@ def compile_shot_prompt(project: Project, shot: Shot) -> str:
         if cast_ids:
             parts.append("Keep exact characters and setting without duplicating anyone.")
     else:
-        parts.append("Vertical 9:16 stylized 3D cinema shot.")
+        parts.append(f"Vertical {project.aspect_ratio} {visual_style(project)} shot.")
         for cid in cast_ids:
             char = char_map.get(cid)
             if char:
@@ -141,15 +145,18 @@ def compile_shot_prompt(project: Project, shot: Shot) -> str:
             speaker_name = speaker.name if speaker else line.speaker_id
             spoken = line.text.replace('"', "'").strip()
             verb = "says" if idx == 0 else "replies"
+            if line.delivery != "on_screen":
+                cue = _voice_cue(speaker.voice_hint if speaker else "")
+                kind = "Voice-over" if line.delivery == "voice_over" else "Off-screen voice"
+                parts.append(f'{kind}, {speaker_name}, {cue}: "{spoken}"')
+                continue
             if line.speaker_id not in announced:
                 cue = _voice_cue(speaker.voice_hint if speaker else "")
                 parts.append(f'{speaker_name} {verb} in a {cue}: "{spoken}"')
                 announced.add(line.speaker_id)
             else:
                 parts.append(f'{speaker_name} {verb}: "{spoken}"')
-        parts.append(
-            "Voices start promptly in clear foreground audio; non-speaking characters keep mouths closed."
-        )
+        parts.append("Clear foreground audio; non-speaking characters keep mouths closed.")
     else:
         parts.append("Characters stay silent with expressive physical reactions.")
 

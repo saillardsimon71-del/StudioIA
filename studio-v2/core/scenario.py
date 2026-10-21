@@ -47,6 +47,16 @@ class DialogueLine(BaseModel):
     speaker_id: str = Field(min_length=1, max_length=80)
     text: str = Field(min_length=1, max_length=600)
     start_sec: float | None = Field(default=None, ge=0.0, allow_inf_nan=False)
+    delivery: Literal["on_screen", "voice_over", "off_screen"] = "on_screen"
+
+
+class Decor(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1, max_length=2000)
+    asset_id: str | None = None
 
 
 class DisplayChange(BaseModel):
@@ -94,8 +104,13 @@ class Shot(BaseModel):
     dialogue: list[DialogueLine] = Field(default_factory=list)
     initial_state: StateText = ""
     final_state: StateText = ""
+    image_prompt: str = Field(default="", max_length=4000)
     image_ref: str | None = None
     continue_from_previous: bool = False
+    camera_setup: str = Field(default="", max_length=120)
+    time_transition: Literal["continuous", "ellipse", "flashback"] = "continuous"
+    decor_id: str | None = None
+    decor_asset_id: str | None = None
     ltx_prompt: str = ""
 
     # Métadonnées opérationnelles rattachées au même objet Shot (aucun modèle dupliqué)
@@ -133,7 +148,10 @@ class Project(BaseModel):
     idea: str = Field(min_length=1, max_length=4000)
     aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
     target_duration_s: float = Field(default=15.0, gt=1.0, le=120.0, allow_inf_nan=False)
+    narration_mode: Literal["dialogue", "voice_over"] = "dialogue"
+    visual_style: str = Field(default="", max_length=160)
     characters: list[Character] = Field(default_factory=list)
+    decors: list[Decor] = Field(default_factory=list)
     shots: list[Shot] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -143,11 +161,17 @@ class Project(BaseModel):
             raise ValueError("Identifiants de personnages dupliqués dans le projet.")
         known_speakers = set(char_ids)
 
+        decor_ids = [decor.id for decor in self.decors]
+        if len(decor_ids) != len(set(decor_ids)):
+            raise ValueError("Identifiants de decors dupliques dans le projet.")
+
         shot_ids = [s.id for s in self.shots]
         if len(shot_ids) != len(set(shot_ids)):
             raise ValueError("Identifiants de plans dupliqués dans le projet.")
 
         for index, shot in enumerate(self.shots):
+            if shot.decor_id is not None and shot.decor_id not in decor_ids:
+                raise ValueError(f"Plan {shot.id} : decor inconnu {shot.decor_id}.")
             if index == 0 and shot.continue_from_previous:
                 raise ValueError(
                     f"Le premier plan (« {shot.id} ») ne peut pas continuer depuis un plan précédent."

@@ -240,9 +240,8 @@ def test_migration_doc_and_check_script_exist():
     assert "0,00" in check_txt or "0.00" in check_txt or "Aucun GPU" in check_txt
 
 
-def test_check_modal_no_gpu_invocation(tmp_path: Path):
+def test_check_modal_no_gpu_invocation(tmp_path: Path, monkeypatch):
     """La vérif de dispo n'appelle jamais Modal runner avec payload GPU."""
-    from unittest.mock import MagicMock
 
     def forbidden_runner(payload: dict):
         raise AssertionError("check_modal_status ne doit JAMAIS appeler le runner GPU !")
@@ -256,6 +255,10 @@ def test_check_modal_no_gpu_invocation(tmp_path: Path):
     assert status["ok"] is True
     assert "Runner Modal personnalisé" in status["message"]
     # Sans runner, check tente hydrate (qui échoue en sandbox sans token — ok=False)
+    def disconnected_modal():
+        raise RuntimeError("Modal non connecte dans ce test hors ligne")
+
+    monkeypatch.setattr("engines.video._load_modal", disconnected_modal)
     engine2 = LtxModalEngine(cfg)
     status2 = engine2.check_modal_status()
     assert status2["ok"] is False

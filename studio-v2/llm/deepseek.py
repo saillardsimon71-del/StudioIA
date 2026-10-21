@@ -21,7 +21,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from core.config import V2Settings
 from core.ltx_prompt import MAX_LTX_PROMPT_WORDS, PromptCapacityError, compile_shot_prompt
-from core.scenario import Character, Project, Shot
+from core.scenario import Character, Decor, Project, Shot
+from core.storyboard import prepare_storyboard
 
 SYSTEM_PROMPT = """Tu es scénariste-réalisateur de courts métrages verticaux (9:16) percutants en français pour le moteur vidéo LTX-2.5.
 
@@ -30,7 +31,9 @@ CONSTRUIS L'HISTOIRE AVANT LES PLANS (préparation intérieure, seul le JSON fin
 - Détermine le désir ou conflit, le déclencheur réel, les décisions et changements successifs, la progression des enjeux, puis la révélation, chute ou résolution finale.
 - Choisis ensuite l'ouverture la plus intrigante. L'ordre du résumé utilisateur n'impose pas l'ordre d'exposition : si un événement fort suit une présentation banale, fais-le commencer au plan 1. Une tristesse générique, une attente ou un décor seuls ne suffisent pas : il faut un enjeu immédiat, une émotion précise ou un détail qui soulève une question concrète.
 - Découpe alors en plans utiles, sans répétition ni remplissage. Adapte accroche, respirations et fin au genre (humour, émotion, absurde, aventure, horreur), sans menace ni cliffhanger imposés ni surenchère permanente. Assume les anomalies de fiction demandées.
-- Dialogues en français oral, courts, voix distinctes : une intention ou une information nécessaire au choix, jamais l'explication de l'image ni le résumé du plan précédent.
+- Choisis `narration_mode`: `voice_over` pour une demande de faceless, voix off ou narration immersive ; `dialogue` pour la fiction dialoguée / Fruit City. Le genre horreur seul n'impose pas la voix off. En voix off, assure un récit immersif suivi sur les plans (même voix), avec quelques dialogues motivés. `dialogue[].delivery` distingue `voice_over` (narrateur invisible), `off_screen` (voix du lieu invisible) et `on_screen` (personnage visible). Ne fais pas réciter le récit aux personnages.
+- Paroles en français oral, voix distinctes : la narration apporte vécu et suspense, les dialogues une intention, jamais une simple description de l'image.
+- Chaque changement de lieu doit servir une décision ou révélation. Fixe la géographie des pièces et des murs dans les décors ; ne déplace pas un même mur de chambre vers le couloir. Écarte les détours sans cause ni conséquence.
 
 DÉCOUPAGE ET CONTRAINTES TECHNIQUES LTX-2.5 :
 - Choisis des plans de 3.0 à 10.0 secondes selon l'action et les répliques, sans grille fixe (total proche de la durée cible).
@@ -39,7 +42,8 @@ DÉCOUPAGE ET CONTRAINTES TECHNIQUES LTX-2.5 :
 - En anglais visuel au présent : `action` vise 15-20 mots, un geste principal ; `initial_state` et `final_state` 8-12 mots chacun. Avec trois personnages ou deux répliques, vise les bornes basses : les 150 mots du prompt compilé incluent aussi apparences, voix et dialogues.
 - `characters[].description` décrit l'apparence physique fixe en anglais visuel court (15–25 mots).
 - `voice_hint` tient en un ou deux mots anglais.
-- Le premier plan a `continue_from_previous: false`. Ensuite, même lieu et même instant : `true` ; ellipse ou changement de lieu explicites : `false`. Changer de cadrage ne remet pas les personnages ou objets à zéro.
+- Le premier plan a `continue_from_previous: false`. Ensuite `true` UNIQUEMENT si la dernière image précédente permet réellement la suite : même lieu, angle, cadrage, positions et état. Réutilise alors le même `camera_setup` (courte description anglaise de la composition fixe, incluant les éléments nécessaires à la suite). Un gros plan après un plan large exige `false` et une nouvelle image, même au même instant. Une coupe ne remet jamais les états à zéro.
+- `time_transition` vaut `continuous`, `ellipse` ou `flashback`. Une horloge ne recule pas sans transition temporelle explicite et lisible. Les changements d'overlay restent dans la durée du plan, avec des positions normalisées entre 0 et 1. Vérifie aussi la somme des durées.
 - Ne demande JAMAIS de sous-titres ni de texte généré par LTX. Si un compteur ou affichage précis est utile à l'intrigue, utilise `display_overlay` (l'écran dans l'image reste vierge/noir et FFmpeg incruste les chiffres exacts au montage).
 
 VÉRIFIE AVANT DE RÉPONDRE (dans cette génération, sans rapport ni champ JSON supplémentaire) :
@@ -49,12 +53,21 @@ VÉRIFIE AVANT DE RÉPONDRE (dans cette génération, sans rapport ni champ JSON
 SCHÉMA JSON STRICT ATTENDU (réponds UNIQUEMENT par un objet JSON valide) :
 {
   "title": "Titre court en français",
+  "narration_mode": "dialogue",
+  "visual_style": "Consistent English visual style from the brief, shared by images and video",
   "characters": [
     {
       "id": "identifiant_snake_case",
       "name": "Nom affiché",
       "description": "Short concrete visual appearance in English (15-25 words)",
       "voice_hint": "warm medium-low / bright / calm / raspy"
+    }
+  ],
+  "decors": [
+    {
+      "id": "lieu_unique",
+      "name": "Nom du lieu",
+      "description": "Fixed visual setting in English: layout, furniture, colors, lighting, visual style. No characters."
     }
   ],
   "shots": [
@@ -64,14 +77,32 @@ SCHÉMA JSON STRICT ATTENDU (réponds UNIQUEMENT par un objet JSON valide) :
       "action": "Concise physical camera and character action in present-tense English.",
       "initial_state": "Exact physical starting state at t=0 in short English.",
       "final_state": "Exact physical ending state at end of shot in short English.",
+      "image_prompt": "Complete English prompt for one vertical 9:16 starting still, including character appearances, clothing, setting, framing and a non-graphic pose. No text.",
       "continue_from_previous": false,
+      "camera_setup": "Fixed medium shot facing the bedroom wall and bedside table",
+      "time_transition": "continuous",
+      "decor_id": "lieu_unique",
       "dialogue": [
-        {"speaker_id": "identifiant_snake_case", "text": "Réplique naturelle en français.", "start_sec": 0.4}
+        {"speaker_id": "identifiant_snake_case", "text": "Réplique naturelle en français.", "start_sec": 0.4, "delivery": "on_screen"}
       ],
       "display_overlay": null
     }
   ]
 }
+
+DÉCORS POUR LES IMAGES (métadonnées du même scénario, sans changer les règles narratives ci-dessus) :
+- Déclare dans `decors` chaque lieu utile à l'histoire une seule fois, à partir de l'idée (ex. cellule, cantine, promenade).
+- Décris uniquement son aspect fixe, sans personnages ni actions ; conserve le style visuel demandé dans les descriptions de personnages et de décors.
+- Chaque plan indique dans `decor_id` l'identifiant du lieu déclaré correspondant. Réutilise cet identifiant quand le lieu revient.
+- Ces descriptions servent à préparer les images de référence et les images initiales, sans autre appel de scénarisation.
+
+IMAGES META AI (préparées dans ce même appel, sans réécrire la narration) :
+- Pour chaque plan, `image_prompt` est un prompt autonome en anglais de 40 à 80 mots pour une seule image verticale 9:16 à t=0, sans texte ni succession d'actions. Inclus les identités et apparences des personnages présents, leurs vêtements, le décor, le cadrage et leurs positions : aucune bible ne sera ajoutée à ce prompt.
+- `initial_state` est la source de vérité de cette image AVANT `action`. Ne dessine jamais le résultat ou un geste en cours : endormi avant de se redresser ; papier peint encore en place avant de dévoiler la porte ; oreille au mur avant de reculer. Vérifie cette correspondance pour CHAQUE plan. N'ajoute aucun personnage qui doit entrer ensuite. Utilise exactement le même `visual_style` dans tous les prompts, jamais de 3D imposée à un projet réaliste.
+- Décris une scène visuellement non graphique : pose au repos ou préparatoire, avant tout impact ou contact violent. Écarte blessures visibles, mutilation, nudité et sexualisation du visuel. Si l'état narratif impose un instant graphique, prépare une alternative calme avant le geste, dans le même lieu avec les mêmes personnages. Décris réellement cette autre image ; ne masque pas une agression en changeant seulement les mots.
+- Conserve les émotions et le style demandés. Ne transforme pas une scène de menace en contact physique pour renforcer l'image. Le prompt doit décrire ce qui est visible, sans raconter les conséquences ni les enjeux violents de l'histoire.
+- Les descriptions fixes de personnages et de décors servent aussi aux références visuelles : apparence, vêtements, mobilier, couleurs et lumière, sans ajouter de scène de violence ou de blessures à ces références.
+- Ces consignes d'image ne changent ni `action`, ni `initial_state`, ni `final_state`, ni les dialogues, ni les règles narratives ci-dessus. L'acceptation finale des images dépend de Meta AI.
 
 Si `display_overlay` est utilisé sur un plan, sa structure est :
 {"initial_text": "000", "x": 0.5, "y": 0.14, "font_size": 0.05, "color": "00FF88", "box_bg": "101418", "changes": [{"at_sec": 3.8, "text": "001"}]}
@@ -115,7 +146,10 @@ class ScenarioDraft(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     title: str = ""
+    narration_mode: str | None = None
+    visual_style: str = ""
     characters: list[Character] = Field(min_length=1)
+    decors: list[Decor] = Field(default_factory=list)
     shots: list[Shot] = Field(min_length=1)
 
 
@@ -224,7 +258,14 @@ def generate_scenario_once(
             idea=clean_idea,
             aspect_ratio="9:16",
             target_duration_s=target_duration_s,
+            narration_mode=draft.narration_mode or (
+                "voice_over" if any(term in clean_idea.casefold() for term in (
+                    "faceless", "voix off", "voice-over", "narration immersive",
+                )) else "dialogue"
+            ),
+            visual_style=draft.visual_style,
             characters=draft.characters,
+            decors=draft.decors,
             shots=draft.shots,
         )
     except ValidationError as exc:
@@ -237,7 +278,10 @@ def generate_scenario_once(
             raw_content=str(raw_content)[:2000],
         ) from exc
 
-    prompt_warnings: list[str] = []
+    try:
+        prompt_warnings = prepare_storyboard(project)
+    except ValueError as exc:
+        raise ScenarioGenerationError(str(exc), raw_content=str(raw_content)[:2000]) from exc
     for shot in project.shots:
         try:
             shot.ltx_prompt = compile_shot_prompt(project, shot)

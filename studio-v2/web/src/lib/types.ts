@@ -10,6 +10,14 @@ export interface DialogueLine {
 	speaker_id: string;
 	text: string;
 	start_sec: number | null;
+	delivery?: 'on_screen' | 'voice_over' | 'off_screen';
+}
+
+export interface Decor {
+	id: string;
+	name: string;
+	description: string;
+	asset_id: string | null;
 }
 
 export interface DisplayChange {
@@ -34,8 +42,13 @@ export interface Shot {
 	dialogue: DialogueLine[];
 	initial_state: string;
 	final_state: string;
+	image_prompt: string;
 	image_ref: string | null;
 	continue_from_previous: boolean;
+	camera_setup?: string;
+	time_transition?: 'continuous' | 'ellipse' | 'flashback';
+	decor_id: string | null;
+	decor_asset_id: string | null;
 	ltx_prompt: string;
 	seed: number;
 	image_validated: boolean;
@@ -50,7 +63,10 @@ export interface Project {
 	idea: string;
 	aspect_ratio: '9:16' | '16:9' | '1:1';
 	target_duration_s: number;
+	narration_mode?: 'dialogue' | 'voice_over';
+	visual_style?: string;
 	characters: Character[];
+	decors: Decor[];
 	shots: Shot[];
 }
 
@@ -91,5 +107,6 @@ export interface ShotPrepReport {
 	max_words: number;
 	ready_for_gpu: boolean;
 	blocking_reason: string | null;
+	warnings?: string[];
 	cost: CostBreakdown;
 }

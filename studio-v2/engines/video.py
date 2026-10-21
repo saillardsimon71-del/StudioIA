@@ -5,7 +5,7 @@ Garanties strictes V2 :
    image initiale lisible et validée par l'humain).
 2. Estimation transparente fondée sur le tarif réel du fournisseur Modal + durée observée/calibrée,
    avec affichage explicite de la fourchette et des incertitudes (`None` si tarif non configuré).
-3. Autorisation humaine explicite obligatoire à chaque prise + respect du plafond configurable.
+3. Autorisation humaine explicite obligatoire à chaque prise ; plafond uniquement si fourni.
 4. Une seule prise à la fois, AUCUN retry GPU automatique, relâchement immédiat du conteneur.
 5. Enregistrement systématique du coût réel et des erreurs dans `v2.db` et `COSTS.md`.
 """
@@ -181,11 +181,7 @@ class LtxModalEngine(VideoEngine):
             "project_id": project_id,
             "shot_id": shot_id,
             "authorized_by_human": bool(authorized_by_human),
-            "max_budget_eur": (
-                max_budget_eur
-                if max_budget_eur is not None
-                else self.settings.max_budget_eur_per_take
-            ),
+            "max_budget_eur": max_budget_eur,
             "aspect_ratio": aspect_ratio,
             "previous_video_path": previous_video_path,
         }

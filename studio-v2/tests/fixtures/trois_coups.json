@@ -1,0 +1,322 @@
+{
+  "id": "proj-f0df5bbb",
+  "title": "Trois coups à 3h17",
+  "idea": "narration immersive et angoissante. Histoire originale : un homme vient d’emménager dans un vieil immeuble parisien. Chaque nuit à 3h17, il entend trois coups derrière le mur de sa chambre. Au début il pense que c’est un voisin. Puis il découvre qu’il n’y a officiellement aucun appartement de l’autre côté du mur. La vidéo doit commencer par une accroche très forte dans les 3 premières secondes, puis faire monter la tension avec des détails visuels inquiétants : couloir vide, papier peint ancien, lumière faible, fissures dans le mur, bruit sourd, reflet étrange. Finir sur un twist inquiétant : en collant son oreille au mur, il entend une voix murmurer son prénom. Style cinématographique, sombre, réaliste, très immersif. Structure : hook immédiat, montée progressive, révélation finale.",
+  "aspect_ratio": "9:16",
+  "target_duration_s": 60,
+  "characters": [
+    {
+      "id": "julien",
+      "name": "Julien",
+      "description": "Lean man in his early thirties, short dark hair, light stubble, drawn tired face, grey t-shirt and worn jeans.",
+      "image_ref": null,
+      "voice_hint": "low tense"
+    },
+    {
+      "id": "madame_roussel",
+      "name": "Madame Roussel",
+      "description": "Small woman in her seventies, grey bun, round glasses, thick brown knit cardigan, heavy key ring at her belt.",
+      "image_ref": null,
+      "voice_hint": "dry breathy"
+    },
+    {
+      "id": "voix_du_mur",
+      "name": "La voix",
+      "description": "Unseen presence behind the bricked wall, suggested only by a close dry whisper, never visible on screen.",
+      "image_ref": null,
+      "voice_hint": "hollow whisper"
+    }
+  ],
+  "decors": [
+    {
+      "id": "chambre",
+      "name": "Chambre du vieil appartement",
+      "description": "Old Parisian bedroom at night: faded floral wallpaper, cracked plaster, iron bed with grey sheets, small wooden nightstand, bare floorboards, cold blue moonlight through slatted shutters. Dark realistic style.",
+      "asset_id": null
+    },
+    {
+      "id": "couloir",
+      "name": "Couloir de l'immeuble",
+      "description": "Narrow old Parisian hallway: worn green wallpaper, peeling paint, single weak ceiling bulb, dark wooden doors, faded runner carpet, dusty skirting boards. Dark realistic style.",
+      "asset_id": null
+    },
+    {
+      "id": "salle_de_bain",
+      "name": "Salle de bain",
+      "description": "Small old bathroom: chipped white tiles, oval mirror above a stained sink, single dim bulb, damp patches on the ceiling, rusty tap. Dark realistic style.",
+      "asset_id": null
+    }
+  ],
+  "shots": [
+    {
+      "id": "shot_1",
+      "duration_s": 6.5,
+      "action": "Three heavy knocks boom; Julien jolts upright in bed, gripping the sheet, staring at the flowered wall.",
+      "dialogue": [
+        {
+          "speaker_id": "julien",
+          "text": "Trois coups. Toujours à la même heure.",
+          "start_sec": 2.4
+        }
+      ],
+      "initial_state": "Julien lies asleep on his back in the dark bedroom, sheet half over him.",
+      "final_state": "Julien sits upright in bed, fists in the sheet, staring at the wall.",
+      "image_prompt": "Vertical 9:16 cinematic still, dark realistic style: a lean man in his early thirties with short dark hair and stubble sits up in an old iron bed, grey t-shirt, faded floral wallpaper and cracked plaster behind him, cold blue moonlight through slatted shutters, no lamp, film grain, shallow focus.",
+      "image_ref": null,
+      "continue_from_previous": false,
+      "decor_id": "chambre",
+      "decor_asset_id": null,
+      "ltx_prompt": "Vertical 9:16 stylized 3D cinema shot. Julien is Lean man in his early thirties, short dark hair, light stubble, drawn tired face, grey t-shirt and worn jeans. Initial state: Julien lies asleep on his back in the dark bedroom, sheet half over him. Three heavy knocks boom; Julien jolts upright in bed, gripping the sheet, staring at the flowered wall. End state: Julien sits upright in bed, fists in the sheet, staring at the wall. Julien says in a low tense French voice: \"Trois coups. Toujours à la même heure.\" Voices start promptly in clear foreground audio; non-speaking characters keep mouths closed. The reserved display screen stays completely blank and dark with zero digits or letters.",
+      "seed": 42,
+      "image_validated": false,
+      "display_overlay": {
+        "initial_text": "03:17",
+        "x": 0.5,
+        "y": 0.12,
+        "font_size": 0.06,
+        "color": "FF3B3B",
+        "box_bg": "0A0C10",
+        "changes": [
+          {
+            "at_sec": 4.8,
+            "text": "03:18"
+          }
+        ]
+      },
+      "rendered_video_ref": null,
+      "human_validated": false
+    },
+    {
+      "id": "shot_2",
+      "duration_s": 5.5,
+      "action": "Julien steps into the corridor, stops before the blank wallpapered wall and flattens his palm on it.",
+      "dialogue": [
+        {
+          "speaker_id": "julien",
+          "text": "Pas de porte. Y en a jamais eu.",
+          "start_sec": 1.2
+        }
+      ],
+      "initial_state": "Julien stands in his doorway, hand on the frame, looking down the empty corridor.",
+      "final_state": "Julien faces the blank wallpapered wall, right palm flat on the paper.",
+      "image_prompt": "Vertical 9:16 cinematic still, dark realistic style: a lean man in his early thirties with short dark hair and stubble, grey t-shirt and worn jeans, stands in a narrow old Parisian hallway, worn green wallpaper and peeling paint, one weak ceiling bulb, faded runner carpet, his hand reaching toward a seamless blank wall.",
+      "image_ref": null,
+      "continue_from_previous": false,
+      "decor_id": "couloir",
+      "decor_asset_id": null,
+      "ltx_prompt": "Vertical 9:16 stylized 3D cinema shot. Julien is Lean man in his early thirties, short dark hair, light stubble, drawn tired face, grey t-shirt and worn jeans. Initial state: Julien stands in his doorway, hand on the frame, looking down the empty corridor. Julien steps into the corridor, stops before the blank wallpapered wall and flattens his palm on it. End state: Julien faces the blank wallpapered wall, right palm flat on the paper. Julien says in a low tense French voice: \"Pas de porte. Y en a jamais eu.\" Voices start promptly in clear foreground audio; non-speaking characters keep mouths closed.",
+      "seed": 42,
+      "image_validated": false,
+      "display_overlay": null,
+      "rendered_video_ref": null,
+      "human_validated": false
+    },
+    {
+      "id": "shot_3",
+      "duration_s": 6,
+      "action": "Madame Roussel shuffles in with her key ring, stops beside him and taps the wall twice.",
+      "dialogue": [
+        {
+          "speaker_id": "madame_roussel",
+          "text": "Derrière ce mur ? Rien. L'ascenseur. Condamné depuis 79.",
+          "start_sec": 1
+        }
+      ],
+      "initial_state": "Julien faces the blank wallpapered wall, right palm flat on the paper.",
+      "final_state": "Madame Roussel stands beside Julien, key ring in hand, both facing the blank wall.",
+      "image_prompt": "Vertical 9:16 cinematic still, dark realistic style: a small woman in her seventies with a grey bun, round glasses and a thick brown cardigan holds a heavy key ring in a narrow hallway, beside a lean dark-haired man in a grey t-shirt, both facing worn green wallpaper under a weak ceiling bulb.",
+      "image_ref": null,
+      "continue_from_previous": true,
+      "decor_id": "couloir",
+      "decor_asset_id": null,
+      "ltx_prompt": "Vertical cinematic shot continuing directly from the reference frame. Julien (Lean man in his early thirties, short dark hair, light stubble, drawn). Madame Roussel (Small woman in her seventies, grey bun, round glasses, thick brown knit). Keep exact characters and setting without duplicating anyone. Initial state: Julien faces the blank wallpapered wall, right palm flat on the paper. Madame Roussel shuffles in with her key ring, stops beside him and taps the wall twice. End state: Madame Roussel stands beside Julien, key ring in hand, both facing the blank wall. Madame Roussel says in a dry breathy French voice: \"Derrière ce mur ? Rien. L'ascenseur. Condamné depuis 79.\" Voices start promptly in clear foreground audio; non-speaking characters keep mouths closed.",
+      "seed": 42,
+      "image_validated": false,
+      "display_overlay": null,
+      "rendered_video_ref": null,
+      "human_validated": false
+    },
+    {
+      "id": "shot_4",
+      "duration_s": 5.5,
+      "action": "Julien raps his knuckles on the wall; a hollow thud answers and a thin crack opens by his hand.",
+      "dialogue": [
+        {
+          "speaker_id": "julien",
+          "text": "Ça sonne creux.",
+          "start_sec": 2.8
+        }
+      ],
+      "initial_state": "Madame Roussel stands beside Julien, key ring in hand, both facing the blank wall.",
+      "final_state": "Julien's knuckles rest on the wall, a fresh hairline crack under his hand.",
+      "image_prompt": "Vertical 9:16 cinematic still, dark realistic style: close view of a man's knuckles resting against old green floral wallpaper in a dim hallway, a thin hairline crack spreading in the plaster, dust on the skirting board, weak warm bulb light, shallow depth of field.",
+      "image_ref": null,
+      "continue_from_previous": true,
+      "decor_id": "couloir",
+      "decor_asset_id": null,
+      "ltx_prompt": "Vertical cinematic shot continuing directly from the reference frame. Julien (Lean man in his early thirties, short dark hair, light stubble, drawn). Madame Roussel (Small woman in her seventies, grey bun, round glasses, thick brown knit). Keep exact characters and setting without duplicating anyone. Initial state: Madame Roussel stands beside Julien, key ring in hand, both facing the blank wall. Julien raps his knuckles on the wall; a hollow thud answers and a thin crack opens by his hand. End state: Julien's knuckles rest on the wall, a fresh hairline crack under his hand. Julien says in a low tense French voice: \"Ça sonne creux.\" Voices start promptly in clear foreground audio; non-speaking characters keep mouths closed.",
+      "seed": 42,
+      "image_validated": false,
+      "display_overlay": null,
+      "rendered_video_ref": null,
+      "human_validated": false
+    },
+    {
+      "id": "shot_5",
+      "duration_s": 6,
+      "action": "Julien peels a long strip of wallpaper down, uncovering the bricked outline of an old door.",
+      "dialogue": [
+        {
+          "speaker_id": "julien",
+          "text": "Une porte. Murée.",
+          "start_sec": 3.4
+        }
+      ],
+      "initial_state": "Julien stands before the bedroom wall holding a loose corner of wallpaper.",
+      "final_state": "A long strip of wallpaper hangs from his hand, an outline of bricked-up door exposed.",
+      "image_prompt": "Vertical 9:16 cinematic still, dark realistic style: a lean dark-haired man in his thirties, grey t-shirt, peels faded floral wallpaper from a bedroom wall, revealing old bricks forming the outline of a sealed door, bedside lamp glow, cracked plaster, bare floorboards.",
+      "image_ref": null,
+      "continue_from_previous": false,
+      "decor_id": "chambre",
+      "decor_asset_id": null,
+      "ltx_prompt": "Vertical 9:16 stylized 3D cinema shot. Julien is Lean man in his early thirties, short dark hair, light stubble, drawn tired face, grey t-shirt and worn jeans. Initial state: Julien stands before the bedroom wall holding a loose corner of wallpaper. Julien peels a long strip of wallpaper down, uncovering the bricked outline of an old door. End state: A long strip of wallpaper hangs from his hand, an outline of bricked-up door exposed. Julien says in a low tense French voice: \"Une porte. Murée.\" Voices start promptly in clear foreground audio; non-speaking characters keep mouths closed.",
+      "seed": 42,
+      "image_validated": false,
+      "display_overlay": null,
+      "rendered_video_ref": null,
+      "human_validated": false
+    },
+    {
+      "id": "shot_6",
+      "duration_s": 5.5,
+      "action": "He presses a drinking glass against the bricks and puts his ear to it; the lamp flickers.",
+      "dialogue": [],
+      "initial_state": "A long strip of wallpaper hangs from his hand, an outline of bricked-up door exposed.",
+      "final_state": "Julien holds the glass to the bricks, ear pressed against it, lamp dimming.",
+      "image_prompt": "Vertical 9:16 cinematic still, dark realistic style: a lean man in a grey t-shirt holds a clear drinking glass flat against exposed old bricks, ear pressed to the glass, eyes shut, faded wallpaper torn around him, one bedside lamp flickering, deep shadows.",
+      "image_ref": null,
+      "continue_from_previous": true,
+      "decor_id": "chambre",
+      "decor_asset_id": null,
+      "ltx_prompt": "Vertical cinematic shot continuing directly from the reference frame. Julien (Lean man in his early thirties, short dark hair, light stubble, drawn). Keep exact characters and setting without duplicating anyone. Initial state: A long strip of wallpaper hangs from his hand, an outline of bricked-up door exposed. He presses a drinking glass against the bricks and puts his ear to it; the lamp flickers. End state: Julien holds the glass to the bricks, ear pressed against it, lamp dimming. Characters stay silent with expressive physical reactions.",
+      "seed": 42,
+      "image_validated": false,
+      "display_overlay": null,
+      "rendered_video_ref": null,
+      "human_validated": false
+    },
+    {
+      "id": "shot_7",
+      "duration_s": 6,
+      "action": "Behind him in the oval mirror the doorway blackens; he spins around, the doorway is lit and empty.",
+      "dialogue": [
+        {
+          "speaker_id": "julien",
+          "text": "Y a quelqu'un ?",
+          "start_sec": 2.6
+        }
+      ],
+      "initial_state": "Julien stands at the sink, water running, looking into the oval mirror.",
+      "final_state": "Julien grips the sink edge, turned toward the open bathroom door, alone.",
+      "image_prompt": "Vertical 9:16 cinematic still, dark realistic style: a lean dark-haired man in a grey t-shirt stands at a stained sink in a small tiled bathroom, looking into an oval mirror, chipped white tiles, single dim bulb, damp patches, an open doorway reflected behind him.",
+      "image_ref": null,
+      "continue_from_previous": false,
+      "decor_id": "salle_de_bain",
+      "decor_asset_id": null,
+      "ltx_prompt": "Vertical 9:16 stylized 3D cinema shot. Julien is Lean man in his early thirties, short dark hair, light stubble, drawn tired face, grey t-shirt and worn jeans. Initial state: Julien stands at the sink, water running, looking into the oval mirror. Behind him in the oval mirror the doorway blackens; he spins around, the doorway is lit and empty. End state: Julien grips the sink edge, turned toward the open bathroom door, alone. Julien says in a low tense French voice: \"Y a quelqu'un ?\" Voices start promptly in clear foreground audio; non-speaking characters keep mouths closed.",
+      "seed": 42,
+      "image_validated": false,
+      "display_overlay": null,
+      "rendered_video_ref": null,
+      "human_validated": false
+    },
+    {
+      "id": "shot_8",
+      "duration_s": 6,
+      "action": "Julien kneels and presses his ear flat to the bricks, holding his breath in the silence.",
+      "dialogue": [
+        {
+          "speaker_id": "julien",
+          "text": "Réponds.",
+          "start_sec": 4.4
+        }
+      ],
+      "initial_state": "Julien kneels beside the exposed bricks, ear close to the wall.",
+      "final_state": "Julien's ear is pressed flat to the bricks, eyes shut, jaw tight.",
+      "image_prompt": "Vertical 9:16 cinematic still, dark realistic style: a lean man in a grey t-shirt kneels on bare floorboards, cheek and ear pressed to a wall of exposed old bricks, torn floral wallpaper hanging beside him, cold moonlight, deep shadows, tense closed eyes.",
+      "image_ref": null,
+      "continue_from_previous": false,
+      "decor_id": "chambre",
+      "decor_asset_id": null,
+      "ltx_prompt": "Vertical 9:16 stylized 3D cinema shot. Julien is Lean man in his early thirties, short dark hair, light stubble, drawn tired face, grey t-shirt and worn jeans. Initial state: Julien kneels beside the exposed bricks, ear close to the wall. Julien kneels and presses his ear flat to the bricks, holding his breath in the silence. End state: Julien's ear is pressed flat to the bricks, eyes shut, jaw tight. Julien says in a low tense French voice: \"Réponds.\" Voices start promptly in clear foreground audio; non-speaking characters keep mouths closed. The reserved display screen stays completely blank and dark with zero digits or letters.",
+      "seed": 42,
+      "image_validated": false,
+      "display_overlay": {
+        "initial_text": "03:17",
+        "x": 0.5,
+        "y": 0.12,
+        "font_size": 0.06,
+        "color": "FF3B3B",
+        "box_bg": "0A0C10",
+        "changes": []
+      },
+      "rendered_video_ref": null,
+      "human_validated": false
+    },
+    {
+      "id": "shot_9",
+      "duration_s": 5.5,
+      "action": "Three heavy knocks slam from inside the bricks; dust puffs out and Julien scrambles backward.",
+      "dialogue": [
+        {
+          "speaker_id": "julien",
+          "text": "Ça vient de l'intérieur.",
+          "start_sec": 2
+        }
+      ],
+      "initial_state": "Julien's ear is pressed flat to the bricks, eyes shut, jaw tight.",
+      "final_state": "Julien sits on the floor, back against the bed, staring at the wall, dust drifting.",
+      "image_prompt": "Vertical 9:16 cinematic still, dark realistic style: a lean dark-haired man in a grey t-shirt sits on bare floorboards, back against an iron bed frame, staring at a bricked-up wall, thin dust drifting in cold moonlight, torn wallpaper, tense posture.",
+      "image_ref": null,
+      "continue_from_previous": true,
+      "decor_id": "chambre",
+      "decor_asset_id": null,
+      "ltx_prompt": "Vertical cinematic shot continuing directly from the reference frame. Julien (Lean man in his early thirties, short dark hair, light stubble, drawn). Keep exact characters and setting without duplicating anyone. Initial state: Julien's ear is pressed flat to the bricks, eyes shut, jaw tight. Three heavy knocks slam from inside the bricks; dust puffs out and Julien scrambles backward. End state: Julien sits on the floor, back against the bed, staring at the wall, dust drifting. Julien says in a low tense French voice: \"Ça vient de l'intérieur.\" Voices start promptly in clear foreground audio; non-speaking characters keep mouths closed.",
+      "seed": 42,
+      "image_validated": false,
+      "display_overlay": null,
+      "rendered_video_ref": null,
+      "human_validated": false
+    },
+    {
+      "id": "shot_10",
+      "duration_s": 5.5,
+      "action": "The lamp dies; Julien freezes as a dry whisper slides out of the crack in the bricks.",
+      "dialogue": [
+        {
+          "speaker_id": "voix_du_mur",
+          "text": "Julien...",
+          "start_sec": 1.8
+        },
+        {
+          "speaker_id": "voix_du_mur",
+          "text": "Bienvenue chez toi.",
+          "start_sec": 3.3
+        }
+      ],
+      "initial_state": "Julien sits on the floor, back against the bed, staring at the wall.",
+      "final_state": "Julien stares at the dark wall, mouth open, moonlight across his face.",
+      "image_prompt": "Vertical 9:16 cinematic still, dark realistic style: a lean man in a grey t-shirt sits frozen on the floor of a dark bedroom, mouth slightly open, cold moonlight striping his face, bricked-up wall and torn floral wallpaper in shadow behind him, film grain.",
+      "image_ref": null,
+      "continue_from_previous": true,
+      "decor_id": "chambre",
+      "decor_asset_id": null,
+      "ltx_prompt": "Vertical cinematic shot continuing directly from the reference frame. Julien (Lean man in his early thirties, short dark hair, light stubble, drawn). La voix (Unseen presence behind the bricked wall, suggested only by a close dry). Keep exact characters and setting without duplicating anyone. Initial state: Julien sits on the floor, back against the bed, staring at the wall. The lamp dies; Julien freezes as a dry whisper slides out of the crack in the bricks. End state: Julien stares at the dark wall, mouth open, moonlight across his face. La voix says in a hollow whisper French voice: \"Julien...\" La voix replies: \"Bienvenue chez toi.\" Voices start promptly in clear foreground audio; non-speaking characters keep mouths closed.",
+      "seed": 42,
+      "image_validated": false,
+      "display_overlay": null,
+      "rendered_video_ref": null,
+      "human_validated": false
+    }
+  ]
+}

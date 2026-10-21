@@ -58,7 +58,7 @@ EXPECTED_SIZES: dict[str, int | None] = {
 
 VOLUME_MOUNT = Path("/mnt/ltx-models")
 
-app = modal.App("studio-ia-ltx-setup")
+app = modal.App("studio-ia-ltx-setup", secrets=[modal.Secret.from_name("huggingface-token")])
 volume = modal.Volume.from_name(LTX_VOLUME_NAME, create_if_missing=True)
 
 image = (
@@ -140,7 +140,7 @@ def download_one(key: str, force: bool = False) -> dict:
     hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
     local_path = hf_hub_download(
         repo_id=HF_REPO,
-        filename=filename,
+        filename=f"{subfolder}/{filename}",
         revision=LTX_MODEL_REVISION,
         token=hf_token or None,
     )
@@ -171,7 +171,7 @@ def download_all(force: bool = False) -> dict:
         # Téléchargement
         local_path = hf_hub_download(
             repo_id=HF_REPO,
-            filename=filename,
+            filename=f"{subfolder}/{filename}",
             revision=LTX_MODEL_REVISION,
             token=hf_token or None,
         )

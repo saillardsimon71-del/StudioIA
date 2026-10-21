@@ -41,12 +41,24 @@
 	let libName = $state('');
 	let libDesc = $state('');
 	let metaImagePrompt = $state('');
+	let imageErrors = $state<Record<string, string>>({});
+	let imagePromptDrafts = $state<Record<string, string>>({});
+	let imageStage = $state('');
+	let imageBatchRunning = $state(false);
+	let stopImageBatch = $state(false);
+	let showScenarioTransfer = $state(false);
+	let scenarioText = $state('');
 	let dragOverKey = $state('');
 
 	// Autorisation explicite par plan (jamais activée par défaut)
 	let authorizedByShot = $state<Record<string, boolean>>({});
-	let ceilingByShot = $state<Record<string, number>>({});
 	let reviewNotesByShot = $state<Record<string, string>>({});
+	let batchAuthorized = $state(false);
+	let videoBatchRunning = $state(false);
+	let stopVideoBatch = $state(false);
+	let currentVideoShot = $state('');
+	let videoErrors = $state<Record<string, string>>({});
+	let pendingVideoShots = $derived(project?.shots.filter((shot) => !shot.rendered_video_ref) ?? []);
 
 	// Paramètres éditables
 	let apiKeyInput = $state('');
@@ -71,6 +83,12 @@
 
 	async function selectProject(id: string) {
 		errorBanner = '';
+		imageErrors = {};
+		imagePromptDrafts = {};
+		videoErrors = {};
+		batchAuthorized = false;
+		showScenarioTransfer = false;
+		scenarioText = '';
 		const [p, t, ex] = await Promise.all([
 			api.getProject(id),
 			api.listTakes(id),
@@ -80,11 +98,6 @@
 		takes = t;
 		exportsList = ex;
 		authorizedByShot = {};
-		const caps: Record<string, number> = {};
-		for (const sh of p.shots) {
-			caps[sh.id] = settings?.max_budget_eur_per_take ?? 1.0;
-		}
-		ceilingByShot = caps;
 		await runPrepare(false);
 	}
 
@@ -164,6 +177,10 @@
 		try {
 			const res = await api.generateScenario(project.id, project.idea, project.target_duration_s);
 			project = res.project;
+			imageErrors = {};
+			imagePromptDrafts = {};
+			videoErrors = {};
+			batchAuthorized = false;
 			await refreshGlobal();
 			await runPrepare(false);
 			activeStep = 'SCENARIO';
@@ -192,6 +209,57 @@
 		];
 	}
 
+	async function copyScenario() {
+		if (!project || busy) return;
+		scenarioText = JSON.stringify(project, null, 2);
+		try {
+			await navigator.clipboard.writeText(scenarioText);
+			infoBanner = 'Scénario complet copié : idée, personnages, décors, plans, dialogues et références.';
+		} catch {
+			showScenarioTransfer = true;
+			infoBanner = 'Sélectionnez le texte ci-dessous et copiez-le avec Ctrl+C.';
+		}
+	}
+
+	async function replaceScenario() {
+		if (!project || busy) return;
+		busy = true;
+		errorBanner = '';
+		infoBanner = '';
+		try {
+			project = await api.replaceScenario(project.id, scenarioText);
+			imageErrors = {};
+			imagePromptDrafts = {};
+			videoErrors = {};
+			batchAuthorized = false;
+			authorizedByShot = {};
+			showScenarioTransfer = false;
+			scenarioText = '';
+			await refreshGlobal();
+			await runPrepare(false);
+			infoBanner = 'Scénario remplacé et enregistré. Vérifiez les images des plans modifiés avant le rendu.';
+		} catch (e: any) {
+			errorBanner = e instanceof SyntaxError ? 'JSON invalide. Collez le scénario complet copié, puis corrigé.' : e.message;
+		} finally {
+			busy = false;
+		}
+	}
+
+	function addDecor() {
+		if (!project) return;
+		let idx = project.decors.length + 1;
+		while (project.decors.some((decor) => decor.id === `decor_${idx}`)) idx++;
+		project.decors = [...project.decors, {
+			id: `decor_${idx}`, name: `Décor ${idx}`, description: 'Lieu à décrire : mobilier, couleurs, lumière et style visuel.', asset_id: null
+		}];
+	}
+
+	function removeDecor(id: string) {
+		if (!project) return;
+		project.decors = project.decors.filter((decor) => decor.id !== id);
+		for (const shot of project.shots) if (shot.decor_id === id) shot.decor_id = null;
+	}
+
 	function removeCharacter(idx: number) {
 		if (!project) return;
 		project.characters = project.characters.filter((_, i) => i !== idx);
@@ -210,8 +278,11 @@
 				dialogue: [{ speaker_id: defaultSpeaker, text: 'Nouvelle réplique en français.', start_sec: 0.3 }],
 				initial_state: 'Character stands calm at opening frame.',
 				final_state: 'Character finishes speaking with an expressive look.',
+				image_prompt: '',
 				image_ref: null,
 				continue_from_previous: idx > 1,
+				decor_id: project.decors[0]?.id ?? null,
+				decor_asset_id: null,
 				ltx_prompt: '',
 				seed: 42 + idx,
 				image_validated: false,
@@ -246,7 +317,7 @@
 	}
 
 	async function handleLibraryDrop(files: FileList | null) {
-		if (!files || files.length === 0) return;
+		if (busy || !files || files.length === 0) return;
 		busy = true;
 		errorBanner = '';
 		try {
@@ -266,14 +337,18 @@
 	}
 
 	async function generateLibraryImage() {
-		if (!metaImagePrompt.trim()) {
-			errorBanner = 'Saisissez un prompt pour générer une image.';
+		if (libKind === 'decor' ? !libName.trim() : !metaImagePrompt.trim()) {
+			errorBanner = libKind === 'decor' ? 'Saisissez le nom du décor.' : 'Saisissez un prompt pour générer une image.';
 			return;
 		}
 		busy = true;
 		errorBanner = '';
 		try {
-			await api.generateLibraryAsset(metaImagePrompt.trim(), libKind, libName || 'Image Meta AI', libDesc);
+			if (libKind === 'decor') {
+				await api.generateDecor(libName.trim(), libDesc.trim());
+			} else {
+				await api.generateLibraryAsset(metaImagePrompt.trim(), libKind, libName || 'Image Meta AI', libDesc);
+			}
 			assets = await api.listAssets();
 			infoBanner = 'Image générée par Meta AI et ajoutée à la bibliothèque. Vérifiez-la avant utilisation.';
 		} catch (e: any) {
@@ -283,12 +358,118 @@
 		}
 	}
 
+	async function editImagePrompt(shotId: string) {
+		if (!project || busy) return;
+		if (imagePromptDrafts[shotId] !== undefined) {
+			const drafts = { ...imagePromptDrafts };
+			delete drafts[shotId];
+			imagePromptDrafts = drafts;
+			return;
+		}
+		busy = true;
+		errorBanner = '';
+		try {
+			const preview = await api.getShotImagePrompt(project.id, shotId);
+			imagePromptDrafts = { ...imagePromptDrafts, [shotId]: preview.prompt };
+		} catch (e: any) {
+			errorBanner = e.message;
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function saveImagePrompt(shotId: string) {
+		if (!project || busy) return;
+		busy = true;
+		errorBanner = '';
+		try {
+			project = await api.saveShotImagePrompt(project.id, shotId, imagePromptDrafts[shotId]);
+			infoBanner = `Prompt image de ${shotId} enregistré. L'action vidéo et les dialogues sont conservés.`;
+		} catch (e: any) {
+			errorBanner = e.message;
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function generateShotImages(shotId?: string) {
+		if (!project || busy) return;
+		busy = true;
+		imageBatchRunning = !shotId;
+		stopImageBatch = false;
+		errorBanner = '';
+		infoBanner = '';
+		try {
+			if (!shotId) {
+				project = await api.saveProject(project);
+				activeStep = 'ASSETS';
+			}
+			for (const shot of project.shots) {
+				const draft = imagePromptDrafts[shot.id];
+				if (!shot.image_ref && (!shotId || shot.id === shotId) && draft !== undefined && draft.trim() !== shot.image_prompt) {
+					project = await api.saveShotImagePrompt(project.id, shot.id, draft);
+				}
+			}
+			const onUpdate = (updated: Project, id: string, error: string) => {
+				project = updated;
+				imageErrors = { ...imageErrors, [id]: error };
+				if (error) errorBanner = error;
+			};
+			project = shotId
+				? await api.generateShotImages(project, onUpdate, [shotId])
+				: await api.generateProjectImages(project, onUpdate, (stage) => { imageStage = stage; }, () => stopImageBatch);
+			assets = await api.listAssets();
+			await runPrepare(false);
+			if (stopImageBatch) infoBanner = 'Lot arrete. Les images deja enregistrees sont conservees.';
+		} catch (e: any) {
+			errorBanner = e.message;
+		} finally {
+			busy = false;
+			imageStage = '';
+			imageBatchRunning = false;
+		}
+	}
+
+	async function generateReferenceImage(kind: 'character' | 'decor', id: string) {
+		if (!project || busy) return;
+		busy = true;
+		errorBanner = '';
+		try {
+			project = await api.saveProject(project);
+			project = await api.generateReferenceImage(project.id, kind, id);
+			imageErrors = { ...imageErrors, [`${kind}:${id}`]: '' };
+			assets = await api.listAssets();
+		} catch (e: any) {
+			imageErrors = { ...imageErrors, [`${kind}:${id}`]: e.message };
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function handleDecorImageFile(decorId: string, files: FileList | null) {
+		if (!project || busy || !files?.length) return;
+		busy = true;
+		errorBanner = '';
+		try {
+			const decor = project.decors.find((item) => item.id === decorId)!;
+			const asset = await api.uploadLibraryAsset(files[0], 'decor', decor.name, decor.description);
+			project = await api.assignAssetToDecor(project.id, decorId, asset.id);
+			imageErrors = { ...imageErrors, [`decor:${decorId}`]: '' };
+			assets = await api.listAssets();
+		} catch (e: any) {
+			errorBanner = e.message;
+		} finally {
+			busy = false;
+		}
+	}
+
 	async function handleShotImageFile(shotId: string, files: FileList | null) {
-		if (!project || !files || files.length === 0) return;
+		if (!project || busy || !files || files.length === 0) return;
 		busy = true;
 		errorBanner = '';
 		try {
 			project = await api.uploadShotImage(project.id, shotId, files[0]);
+			imageErrors = { ...imageErrors, [shotId]: '' };
 			assets = await api.listAssets();
 			await runPrepare(false);
 			infoBanner = `Image importée sur ${shotId}. Vérifiez-la visuellement puis cliquez « Valider pour GPU ».`;
@@ -301,11 +482,12 @@
 	}
 
 	async function handleCharImageFile(charId: string, files: FileList | null) {
-		if (!project || !files || files.length === 0) return;
+		if (!project || busy || !files || files.length === 0) return;
 		busy = true;
 		errorBanner = '';
 		try {
 			project = await api.uploadCharacterImage(project.id, charId, files[0]);
+			imageErrors = { ...imageErrors, [`character:${charId}`]: '' };
 			assets = await api.listAssets();
 		} catch (e: any) {
 			errorBanner = e.message;
@@ -331,7 +513,7 @@
 	}
 
 	async function handleRenderSingleShot(shotId: string) {
-		if (!project) return;
+		if (!project || busy) return;
 		busy = true;
 		errorBanner = '';
 		infoBanner = '';
@@ -340,10 +522,10 @@
 			const res = await api.renderShot(
 				project.id,
 				shotId,
-				Boolean(authorizedByShot[shotId]),
-				ceilingByShot[shotId] ?? settings?.max_budget_eur_per_take ?? 1.0
+				Boolean(authorizedByShot[shotId])
 			);
 			project = res.project;
+			videoErrors = { ...videoErrors, [shotId]: '' };
 			authorizedByShot[shotId] = false; // Réinitialise l'autorisation unitaire après usage
 			takes = await api.listTakes(project.id);
 			ledger = await api.costLedger();
@@ -351,6 +533,7 @@
 			infoBanner = `Prise ${shotId} terminée. Visionnez la vidéo et contrôlez le rapport OCR/Whisper.`;
 		} catch (e: any) {
 			errorBanner = e.message;
+			videoErrors = { ...videoErrors, [shotId]: e.message };
 			takes = await api.listTakes(project.id);
 			ledger = await api.costLedger();
 		} finally {
@@ -358,13 +541,64 @@
 		}
 	}
 
+	async function handleRenderAllShots() {
+		if (!project || busy || !batchAuthorized || !pendingVideoShots.length) return;
+		batchAuthorized = false;
+		authorizedByShot = {};
+		busy = true;
+		videoBatchRunning = true;
+		stopVideoBatch = false;
+		currentVideoShot = '';
+		errorBanner = '';
+		infoBanner = '';
+		let failed = false;
+		try {
+			project = await api.saveProject(project);
+			project = await api.renderMissingShots(project, {
+				authorizedByHuman: true,
+				onStart: (id) => {
+					currentVideoShot = id;
+					if (prepReports[id]) prepReports[id] = { ...prepReports[id], ready_for_gpu: true, blocking_reason: null };
+				},
+				shouldStop: () => stopVideoBatch,
+				onUpdate: (updated, id, error) => {
+					project = updated;
+					videoErrors = { ...videoErrors, [id]: error };
+					if (error) {
+						failed = true;
+						errorBanner = `Rendu arrêté au plan ${id} : ${error}`;
+					}
+				}
+			});
+			const [saved, latestTakes, latestLedger] = await Promise.all([
+				api.getProject(project.id), api.listTakes(project.id), api.costLedger()
+			]);
+			project = saved;
+			takes = latestTakes;
+			ledger = latestLedger;
+			await runPrepare(false);
+			if (!failed) {
+				infoBanner = stopVideoBatch
+					? 'Lot arrêté. Les vidéos terminées sont conservées ; vous pouvez reprendre les plans manquants.'
+					: 'Toutes les vidéos sont générées. Visionnez les prises avant le montage final.';
+			}
+		} catch (e: any) {
+			errorBanner = e.message;
+		} finally {
+			videoBatchRunning = false;
+			currentVideoShot = '';
+			busy = false;
+		}
+	}
+
 	async function handleUploadManualTake(shotId: string, files: FileList | null) {
-		if (!project || !files || files.length === 0) return;
+		if (!project || busy || !files || files.length === 0) return;
 		busy = true;
 		errorBanner = '';
 		try {
 			const res = await api.uploadManualTake(project.id, shotId, files[0]);
 			project = res.project;
+			videoErrors = { ...videoErrors, [shotId]: '' };
 			takes = await api.listTakes(project.id);
 			await runPrepare(false);
 			infoBanner = `MP4 local attaché à ${shotId} (0,00 € GPU) et analysé par le QC.`;
@@ -413,7 +647,6 @@
 					settings.usd_to_eur === '' || settings.usd_to_eur === null
 						? null
 						: Number(settings.usd_to_eur),
-				max_budget_eur_per_take: Number(settings.max_budget_eur_per_take),
 				whisper_model_or_path: settings.whisper_model_or_path,
 				ocr_enabled: Boolean(settings.ocr_enabled)
 			};
@@ -466,6 +699,7 @@
 			{#if projectList.length > 0 && project}
 				<select
 					style="width: auto; min-width: 230px;"
+					disabled={busy}
 					value={project.id}
 					onchange={(e) => selectProject((e.target as HTMLSelectElement).value)}
 				>
@@ -573,11 +807,6 @@
 					</label>
 				</div>
 				<div>
-					<label>Plafond par prise (€)
-						<input type="number" step="0.05" bind:value={settings.max_budget_eur_per_take} />
-					</label>
-				</div>
-				<div>
 					<label>Whisper CPU (modèle ou chemin `.pt`)
 						<input bind:value={settings.whisper_model_or_path} />
 					</label>
@@ -637,6 +866,7 @@
 		{#each STEPS as step}
 			<button
 				class={activeStep === step.id ? 'primary' : ''}
+				disabled={busy}
 				onclick={() => (activeStep = step.id)}
 				style="padding: 0.65rem 0.5rem; text-align: center;"
 			>
@@ -708,6 +938,22 @@
 		<!-- ═══════════════════════ ÉTAPE 2 : SCENARIO ═══════════════════════ -->
 		{#if activeStep === 'SCENARIO'}
 			<section class="card" style="margin-bottom: 1rem;">
+				<div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+					<button disabled={busy} onclick={copyScenario}>Copier tout le scénario</button>
+					<button disabled={busy} onclick={() => { scenarioText = ''; showScenarioTransfer = !showScenarioTransfer; }}>
+						Remplacer tout le scénario
+					</button>
+				</div>
+				{#if showScenarioTransfer}
+					<label style="margin-top: 0.75rem;">Scénario complet (JSON)
+						<textarea rows="12" bind:value={scenarioText} disabled={busy} placeholder="Collez ici le scénario copié et corrigé, avec characters, decors et shots."></textarea>
+					</label>
+					<p>Le contenu est vérifié avant remplacement. Les fichiers de la bibliothèque et l'historique des prises sont conservés.</p>
+					<button class="primary" disabled={busy || !scenarioText.trim()} onclick={replaceScenario}>Vérifier et remplacer</button>
+					<button disabled={busy} onclick={() => { showScenarioTransfer = false; scenarioText = ''; }}>Annuler</button>
+				{/if}
+			</section>
+			<section class="card" style="margin-bottom: 1rem;">
 				<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
 					<h2 style="margin: 0;">2. Personnages (`Character`)</h2>
 					<button onclick={addCharacter}>+ Ajouter un personnage</button>
@@ -731,6 +977,26 @@
 				</div>
 			</section>
 
+			<section class="card" style="margin-bottom: 1rem;">
+				<div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;">
+					<h2>Décors récurrents</h2>
+					<button disabled={busy} onclick={addDecor}>
+						Ajouter un décor
+					</button>
+				</div>
+				<p>Les lieux sont préparés avec le scénario. Après validation, leurs images sont générées une fois avant les images des plans.</p>
+				<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0.75rem;">
+					{#each project.decors as decor}
+						<div>
+							<label>Nom du décor<input bind:value={decor.name} /></label>
+							<label>Description visuelle<textarea rows="3" bind:value={decor.description}></textarea></label>
+							<button disabled={busy} onclick={() => removeDecor(decor.id)}>Supprimer ce décor</button>
+						</div>
+					{/each}
+					{#if !project.decors.length}<p>Ce projet n'a pas encore de décors déclarés. Ajoutez ses lieux ici ou remplacez le scénario complet.</p>{/if}
+				</div>
+			</section>
+
 			<section class="card">
 				<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.9rem;">
 					<h2 style="margin: 0;">
@@ -741,7 +1007,9 @@
 						<button class="primary" onclick={handleSaveProject} disabled={busy}>
 							Enregistrer le scénario
 						</button>
-						<button onclick={() => (activeStep = 'ASSETS')}>Étape 3 : Assets →</button>
+						<button onclick={() => generateShotImages()} disabled={busy || !project.shots.length}>
+							Valider le scénario et générer les images
+						</button>
 					</div>
 				</div>
 
@@ -770,6 +1038,22 @@
 								<button class="danger" onclick={() => removeShot(sIdx)}>Supprimer</button>
 							</div>
 
+							<label style="margin-bottom: 0.6rem;">Décor du plan
+								<select value={shot.decor_id ? `decor:${shot.decor_id}` : shot.decor_asset_id ? `asset:${shot.decor_asset_id}` : ''}
+									onchange={(e) => {
+										const value = (e.target as HTMLSelectElement).value;
+										shot.decor_id = value.startsWith('decor:') ? value.slice(6) : null;
+										shot.decor_asset_id = value.startsWith('asset:') ? value.slice(6) : null;
+									}}>
+									<option value="">D'après les informations du scénario</option>
+									{#each project.decors as decor}
+										<option value={`decor:${decor.id}`}>{decor.name}</option>
+									{/each}
+									{#each assets.filter((asset) => asset.kind === 'decor') as decor}
+										<option value={`asset:${decor.id}`}>Bibliothèque : {decor.name}</option>
+									{/each}
+								</select>
+							</label>
 							<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; margin-bottom: 0.6rem;">
 								<label>État initial (`initial_state` à t=0)
 									<input bind:value={shot.initial_state} />
@@ -810,6 +1094,13 @@
 											{/each}
 										</select>
 										<input placeholder="Réplique parlée en français..." bind:value={line.text} />
+										<select aria-label="Type de voix" style="width: 145px;"
+											value={line.delivery ?? 'on_screen'}
+											onchange={(e) => line.delivery = e.currentTarget.value as 'on_screen' | 'voice_over' | 'off_screen'}>
+											<option value="on_screen">Dialogue visible</option>
+											<option value="voice_over">Voix off</option>
+											<option value="off_screen">Hors champ</option>
+										</select>
 										<input
 											type="number"
 											step="0.1"
@@ -893,14 +1184,19 @@
 							<option value="decor">Décor récurrent</option>
 							<option value="frame">Image initiale de plan</option>
 						</select>
-						<input placeholder="Nom du visuel (ex. Inspecteur Zeste face)" bind:value={libName} />
-						<textarea
-							placeholder="Prompt d'image — description, cadrage, style…"
-							bind:value={metaImagePrompt}
-							rows="3"
-						></textarea>
+						<input placeholder={libKind === 'decor' ? 'Nom du décor (cantine, cellule, promenade)' : 'Nom du visuel (ex. Inspecteur Zeste face)'} bind:value={libName} />
+						{#if libKind === 'decor'}
+							<textarea placeholder="Description du lieu : mobilier, murs, lumière, ambiance..." bind:value={libDesc} rows="3"></textarea>
+							<small>Le prompt du décor est préparé automatiquement, sans personnages. Sa description sera réutilisée dans les plans associés.</small>
+						{:else}
+							<textarea
+								placeholder="Prompt d'image — description, cadrage, style…"
+								bind:value={metaImagePrompt}
+								rows="3"
+							></textarea>
+						{/if}
 						<button class="primary" disabled={busy || !settings?.metaai_api_url} onclick={generateLibraryImage}>
-							{busy ? 'Génération…' : 'Générer avec Meta AI'}
+							{busy ? 'Génération…' : libKind === 'decor' ? 'Générer le décor avec Meta AI' : 'Générer avec Meta AI'}
 						</button>
 						<p style="color: var(--muted); font-size: 0.78rem; margin: 0;">
 							Nécessite le service metaai-api configuré dans Paramètres. La génération peut prendre 30–40 s.
@@ -954,14 +1250,27 @@
 				<section class="card">
 					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
 						<h2 style="margin: 0;">3. Images du projet & Validation avant GPU</h2>
-						<button class="primary" onclick={() => (activeStep = 'RENDER')}>Étape 4 : Render →</button>
+						<button class="primary" disabled={busy} onclick={() => (activeStep = 'RENDER')}>Étape 4 : Render →</button>
 					</div>
 
 					<h4 style="margin-bottom: 0.5rem;">Références personnages</h4>
+					<p role="status" aria-live="polite">
+						Personnages : {project.characters.filter((char) => char.image_ref).length}/{project.characters.length}
+						- Décors : {project.decors.filter((decor) => decor.asset_id).length}/{project.decors.length}
+						{#if imageStage}<br />En cours : {imageStage}{/if}
+						{#if imageBatchRunning && stopImageBatch}<br />Arrêt demandé après le visuel en cours.{/if}
+					</p>
+					{#if imageBatchRunning}<button disabled={stopImageBatch} onclick={() => { stopImageBatch = true; }}>Arrêter après cette image</button>{/if}
 					<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.65rem; margin-bottom: 1.2rem;">
 						{#each project.characters as char}
 							<div style="border: 1px solid var(--border); border-radius: 8px; padding: 0.65rem; background: var(--panel-alt);">
 								<strong>{char.name}</strong>
+								{#if imageErrors[`character:${char.id}`]}<p role="alert">{char.name} : {imageErrors[`character:${char.id}`]}</p>{/if}
+								{#if !char.image_ref}
+									<button disabled={busy} onclick={() => generateReferenceImage('character', char.id)}>
+										{imageErrors[`character:${char.id}`] ? 'Relancer ce personnage' : 'Générer ce personnage'}
+									</button>
+								{/if}
 								{#if char.image_ref}
 									<img
 										src={mediaUrl(char.image_ref)}
@@ -972,13 +1281,53 @@
 								<input
 									type="file"
 									accept="image/*"
+									disabled={busy}
 									onchange={(e) => handleCharImageFile(char.id, (e.target as HTMLInputElement).files)}
 								/>
 							</div>
 						{/each}
 					</div>
 
+					<h4>Références décors</h4>
+					<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.65rem; margin-bottom: 1.2rem;">
+						{#each project.decors as decor}
+							{@const reference = assets.find((asset) => asset.id === decor.asset_id)}
+							<div style="border: 1px solid var(--border); border-radius: 8px; padding: 0.65rem;">
+								<strong>{decor.name}</strong>
+								{#if reference}<img src={mediaUrl(reference.file_path)} alt={decor.name} style="width: 100%; height: 150px; object-fit: cover; border-radius: 6px;" />{/if}
+								{#if imageErrors[`decor:${decor.id}`]}<p role="alert">{decor.name} : {imageErrors[`decor:${decor.id}`]}</p>{/if}
+								{#if !decor.asset_id}
+									<button disabled={busy} onclick={() => generateReferenceImage('decor', decor.id)}>
+										{imageErrors[`decor:${decor.id}`] ? 'Relancer ce décor' : 'Générer ce décor'}
+									</button>
+								{/if}
+								<label>Importer une autre image<input type="file" accept="image/*" disabled={busy}
+									onchange={(e) => handleDecorImageFile(decor.id, (e.target as HTMLInputElement).files)} /></label>
+								<select disabled={busy} value={decor.asset_id ?? ''} aria-label={`Image du décor ${decor.name}`}
+									onchange={async (e) => {
+										const id = (e.target as HTMLSelectElement).value;
+										if (!project || !id || busy) return;
+										busy = true;
+										try {
+											project = await api.assignAssetToDecor(project.id, decor.id, id);
+											imageErrors = { ...imageErrors, [`decor:${decor.id}`]: '' };
+										} catch (e: any) { errorBanner = e.message; } finally { busy = false; }
+									}}>
+									<option value="">Choisir dans la bibliothèque...</option>
+									{#each assets.filter((asset) => asset.kind === 'decor') as asset}<option value={asset.id}>{asset.name}</option>{/each}
+								</select>
+							</div>
+						{/each}
+					</div>
+
 					<h4 style="margin-bottom: 0.5rem;">Images initiales des plans (validation humaine requise)</h4>
+					<p role="status" aria-live="polite">
+						Images générées : {project.shots.filter((shot) => shot.image_ref).length}/{project.shots.length}
+					</p>
+					<button disabled={busy || (!project.shots.some((shot) => !shot.image_ref) && !project.characters.some((char) => !char.image_ref) && !project.decors.some((decor) => !decor.asset_id))} onclick={() => generateShotImages()}>
+						Générer les images manquantes
+					</button>
+					<p style="font-size: 0.85rem; color: var(--muted);">Un visuel est refusé ? Ouvrez « Adapter le visuel » sur le plan, décrivez une pose calme avant le geste, puis relancez ce plan. L'acceptation finale dépend de Meta AI.</p>
 					<div style="display: grid; gap: 0.8rem;">
 						{#each project.shots as shot}
 							<div
@@ -996,7 +1345,7 @@
 								style="border: 2px dashed {dragOverKey === shot.id ? 'var(--accent)' : 'var(--border)'}; border-radius: 9px; padding: 0.85rem; background: var(--panel-alt); display: grid; grid-template-columns: 160px 1fr; gap: 0.9rem; align-items: center;"
 							>
 								<div>
-									{#if shot.continue_from_previous}
+									{#if shot.continue_from_previous && !shot.image_ref}
 										<div style="padding: 1.2rem 0.6rem; text-align: center; background: #0e131b; border-radius: 7px; font-size: 0.82rem; color: var(--accent);">
 											Raccord automatique<br />(`last_frame` FFmpeg du plan précédent)
 										</div>
@@ -1027,12 +1376,29 @@
 									<p style="margin: 0.25rem 0 0.6rem; font-size: 0.86rem; color: var(--muted);">
 										<strong>État t=0 attendu :</strong> {shot.initial_state || shot.action}
 									</p>
-									{#if !shot.continue_from_previous}
+									{#if imageErrors[shot.id]}
+										<p role="alert">Échec du plan {shot.id} : {imageErrors[shot.id]}</p>
+									{/if}
+									{#if !shot.image_ref}
+										<button disabled={busy} onclick={() => editImagePrompt(shot.id)}>
+											{imagePromptDrafts[shot.id] === undefined ? 'Adapter le visuel' : 'Fermer le prompt'}
+										</button>
+										{#if imagePromptDrafts[shot.id] !== undefined}
+											<label for="image-prompt-{shot.id}">Prompt image Meta AI</label>
+											<textarea id="image-prompt-{shot.id}" rows="7" maxlength="4000" disabled={busy} bind:value={imagePromptDrafts[shot.id]}></textarea>
+											<p style="font-size: 0.82rem; color: var(--muted);">Ce texte sert uniquement à l'image. Gardez personnages, vêtements, lieu et cadrage ; décrivez une pose au repos, sans blessure visible ni contact violent. Champ vide : retour au prompt automatique.</p>
+											<button disabled={busy} onclick={() => saveImagePrompt(shot.id)}>Enregistrer le prompt</button>
+										{/if}
+										<button disabled={busy} onclick={() => generateShotImages(shot.id)}>
+											{imagePromptDrafts[shot.id] !== undefined ? 'Enregistrer et relancer ce plan' : imageErrors[shot.id] ? 'Relancer ce plan' : 'Générer cette image'}
+										</button>
+									{/if}
 										<div style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
 											<label style="width: auto; cursor: pointer; border: 1px solid var(--border); padding: 0.4rem 0.75rem; border-radius: 7px; background: #0f131b;">
 												Importer PNG/JPG
 												<input
 													type="file"
+													disabled={busy}
 													accept="image/*"
 													style="display: none;"
 													onchange={(e) =>
@@ -1041,11 +1407,13 @@
 											</label>
 											{#if assets.length > 0}
 												<select
+													disabled={busy}
 													style="width: auto; max-width: 220px;"
 													onchange={async (e) => {
 														const aid = (e.target as HTMLSelectElement).value;
 														if (aid && project) {
 															project = await api.assignAssetToShot(project.id, shot.id, aid);
+															imageErrors = { ...imageErrors, [shot.id]: '' };
 															await runPrepare(false);
 														}
 													}}
@@ -1059,6 +1427,7 @@
 											{#if shot.image_ref}
 												<button
 													class={shot.image_validated ? '' : 'primary'}
+													disabled={busy}
 													onclick={async () => {
 														if (!project) return;
 														project = await api.validateShotImage(
@@ -1073,7 +1442,6 @@
 												</button>
 											{/if}
 										</div>
-									{/if}
 								</div>
 							</div>
 						{/each}
@@ -1087,7 +1455,7 @@
 			<section class="card">
 				<div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.6rem; margin-bottom: 1rem;">
 					<div>
-						<h2 style="margin: 0;">4. Préparation LTX-2.5, Coûts Réels & Rendu Unitaire</h2>
+						<h2 style="margin: 0;">4. Préparation LTX-2.5 et génération des vidéos</h2>
 						<small style="color: var(--muted);">
 							Limite stricte : 150 mots par prompt · Une seule prise à la fois · Zéro retry GPU automatique · Autorisation explicite obligatoire.
 						</small>
@@ -1096,10 +1464,30 @@
 						<button onclick={() => runPrepare(true)} disabled={busy}>
 							Recompiler les prompts depuis le scénario (0 €)
 						</button>
-						<button class="primary" onclick={() => (activeStep = 'EXPORT')}>
+						<button class="primary" disabled={busy} onclick={() => (activeStep = 'EXPORT')}>
 							Étape 5 : Export MP4 →
 						</button>
 					</div>
+				</div>
+
+				<div style="padding: 0.9rem; margin-bottom: 1rem; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-alt);">
+					<p role="status" aria-live="polite" style="margin-top: 0;">
+						Vidéos générées : {project.shots.filter((shot) => shot.rendered_video_ref).length}/{project.shots.length}
+						{#if videoBatchRunning}<br />{currentVideoShot ? `En cours : ${currentVideoShot}` : 'Préparation du lot...'}{/if}
+						{#if videoBatchRunning && stopVideoBatch}<br />Arrêt demandé après le plan en cours.{/if}
+					</p>
+					<p>{pendingVideoShots.length} plan(s) restant(s). Gardez cet onglet ouvert pendant le lot.</p>
+					<label style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.7rem;">
+						<input type="checkbox" style="width: auto;" bind:checked={batchAuthorized} disabled={busy || !pendingVideoShots.length} />
+						J'autorise une prise GPU payante pour chaque plan manquant.
+					</label>
+					<button class="primary" onclick={handleRenderAllShots}
+						disabled={busy || !batchAuthorized || !pendingVideoShots.length}>
+						Générer toutes les vidéos manquantes
+					</button>
+					{#if videoBatchRunning}
+						<button disabled={stopVideoBatch} onclick={() => { stopVideoBatch = true; }}>Arrêter après ce plan</button>
+					{/if}
 				</div>
 
 				<div style="display: grid; gap: 1rem;">
@@ -1131,84 +1519,49 @@
 									<strong>Prérequis avant GPU :</strong> {rep.blocking_reason}
 								</div>
 							{/if}
+							{#if videoErrors[shot.id]}<p role="alert">Échec du plan {shot.id} : {videoErrors[shot.id]}</p>{/if}
+							{#each rep?.warnings ?? [] as warning}<p class="badge warn">{warning}</p>{/each}
 
 							<label style="display: block; margin-bottom: 0.7rem;">
 								Prompt LTX-2.5 envoyé au moteur (éditable) :
-								<textarea rows="3" bind:value={shot.ltx_prompt}></textarea>
+								<textarea rows="3" disabled={busy} bind:value={shot.ltx_prompt}></textarea>
 							</label>
 
-							<!-- Estimation de coût fournisseur + Autorisation explicite -->
-							{#if rep?.cost}
-								<div style="padding: 0.75rem; border-radius: 8px; background: #0f141d; border: 1px solid var(--border); margin-bottom: 0.75rem;">
-									<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem;">
-										<div>
-											<strong>Estimation fournisseur ({rep.cost.gpu_label}) :</strong>
-											{#if rep.cost.estimated_cost_eur !== null}
-												<span style="color: var(--accent); font-weight: 700; margin-left: 0.35rem;">
-													~{rep.cost.estimated_cost_eur.toFixed(4)} €
-												</span>
-												<span style="color: var(--muted); font-size: 0.85rem;">
-													(chaud min : {rep.cost.warm_min_eur?.toFixed(4)} € · pire cas : {rep.cost.worst_case_eur?.toFixed(4)} €)
-												</span>
-											{:else}
-												<span class="badge warn">None — configurez le tarif GPU réel dans Paramètres</span>
-											{/if}
-										</div>
-										<div style="font-size: 0.82rem; color: var(--muted);">
-											{rep.cost.calibration_source}
-										</div>
-									</div>
-									<ul style="margin: 0.45rem 0 0.65rem 1.1rem; padding: 0; font-size: 0.81rem; color: var(--muted);">
-										{#each rep.cost.uncertainties as u}
-											<li>{u}</li>
-										{/each}
-									</ul>
+							<div style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin-bottom: 0.75rem;">
+								<label style="display: flex; align-items: center; gap: 0.4rem; width: auto; cursor: pointer;">
+									<input
+										type="checkbox"
+										style="width: auto;"
+										bind:checked={authorizedByShot[shot.id]}
+										disabled={busy}
+									/>
+									<span>
+										J'autorise explicitement le paiement de <strong>1 prise GPU</strong> pour `{shot.id}`
+									</span>
+								</label>
 
-									<div style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; padding-top: 0.5rem; border-top: 1px solid #1e2736;">
-										<label style="display: flex; align-items: center; gap: 0.4rem; width: auto; cursor: pointer;">
-											<input
-												type="checkbox"
-												style="width: auto;"
-												bind:checked={authorizedByShot[shot.id]}
-											/>
-											<span>
-												J'autorise explicitement le paiement de <strong>1 prise GPU</strong> pour `{shot.id}`
-											</span>
-										</label>
+								<button
+									class="primary"
+									disabled={busy || !authorizedByShot[shot.id] || wc === 0 || wc > 150}
+									onclick={() => handleRenderSingleShot(shot.id)}
+								>
+									{shot.rendered_video_ref
+										? `Refaire uniquement ${shot.id} (GPU)`
+										: `Générer ${shot.id} sur Modal`}
+								</button>
 
-										<label style="display: flex; align-items: center; gap: 0.35rem; width: auto;">
-											Plafond (€)
-											<input
-												type="number"
-												step="0.05"
-												style="width: 90px;"
-												bind:value={ceilingByShot[shot.id]}
-											/>
-										</label>
-
-										<button
-											class="primary"
-											disabled={busy || !authorizedByShot[shot.id] || wc > 150}
-											onclick={() => handleRenderSingleShot(shot.id)}
-										>
-											{shot.rendered_video_ref
-												? `Refaire uniquement ${shot.id} (GPU)`
-												: `Générer ${shot.id} sur Modal`}
-										</button>
-
-										<label style="width: auto; cursor: pointer; border: 1px solid var(--border); padding: 0.45rem 0.8rem; border-radius: 8px;">
-											Importer un MP4 local (0 €)
-											<input
-												type="file"
-												accept="video/mp4,video/*"
-												style="display: none;"
-												onchange={(e) =>
-													handleUploadManualTake(shot.id, (e.target as HTMLInputElement).files)}
-											/>
-										</label>
-									</div>
-								</div>
-							{/if}
+								<label style="width: auto; cursor: pointer; border: 1px solid var(--border); padding: 0.45rem 0.8rem; border-radius: 8px;">
+									Importer un MP4 local (0 €)
+									<input
+										type="file"
+										accept="video/mp4,video/*"
+										disabled={busy}
+										style="display: none;"
+										onchange={(e) =>
+											handleUploadManualTake(shot.id, (e.target as HTMLInputElement).files)}
+									/>
+								</label>
+							</div>
 
 							<!-- Visionnage et validation humaine de la prise rendue -->
 							{#if shot.rendered_video_ref}
@@ -1254,10 +1607,12 @@
 										<div style="display: flex; gap: 0.5rem; align-items: center;">
 											<input
 												placeholder="Notes de visionnage humain..."
+												disabled={busy}
 												bind:value={reviewNotesByShot[shot.id]}
 											/>
 											<button
 												class="primary"
+												disabled={busy}
 												onclick={async () => {
 													if (!project) return;
 													const r = await api.reviewTake(
