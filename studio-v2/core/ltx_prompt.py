@@ -104,8 +104,7 @@ def compile_shot_prompt(project: Project, shot: Shot) -> str:
     for char in project.characters:
         if (
             char.id in speaking_ids
-            or char.id.casefold() in haystack
-            or char.name.casefold() in haystack
+            or re.search(r"\b(?:" + re.escape(char.id) + "|" + re.escape(char.name) + r")\b", haystack, re.I)
         ):
             mentioned_ids.append(char.id)
     cast_ids = list(dict.fromkeys(mentioned_ids or [

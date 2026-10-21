@@ -815,8 +815,6 @@ def create_app(
                 }
             )
 
-        if not issues:
-            app.state.repo.save_project(project)
         all_known = all(r["cost"]["estimated_cost_eur"] is not None for r in shot_reports)
         total_est = (
             round(sum(r["cost"]["estimated_cost_eur"] for r in shot_reports), 4)
@@ -844,27 +842,32 @@ def create_app(
             render_lock.release()
 
     def _render_single_shot(project_id: str, shot_id: str, req: RenderShotRequest) -> dict:
-        project = _project_or_404(project_id)
-        idx = _shot_index_or_404(project, shot_id)
-        shot = project.shots[idx]
-        issues = storyboard_issues(project).get(shot.id, [])
         pending = app.state.repo.pending_render()
         recovering = bool(pending and (pending["project_id"], pending["shot_id"]) == (project_id, shot_id))
-        if issues and not recovering:
-            raise HTTPException(422, "; ".join(issues))
+        if recovering and pending["request"].get("shot"):
+            shot = Shot.model_validate(pending["request"]["shot"])
+            aspect_ratio = pending["request"]["payload"]["aspect_ratio"]
+            prev_video = None
+        else:
+            project = _project_or_404(project_id)
+            idx = _shot_index_or_404(project, shot_id)
+            shot = project.shots[idx]
+            issues = storyboard_issues(project).get(shot.id, [])
+            if issues and not recovering:
+                raise HTTPException(422, "; ".join(issues))
+            aspect_ratio = project.aspect_ratio
+            prev_video = (
+                Path(project.shots[idx - 1].rendered_video_ref)
+                if idx > 0 and project.shots[idx - 1].rendered_video_ref
+                else None
+            )
         engine = _engine()
-
-        prev_video = (
-            Path(project.shots[idx - 1].rendered_video_ref)
-            if idx > 0 and project.shots[idx - 1].rendered_video_ref
-            else None
-        )
         engine.arm_single_take(
-            project_id=project.id,
+            project_id=project_id,
             shot_id=shot.id,
             authorized_by_human=req.authorized_by_human,
             max_budget_eur=req.max_budget_eur,
-            aspect_ratio=project.aspect_ratio,
+            aspect_ratio=aspect_ratio,
             previous_video_path=prev_video,
         )
 
@@ -883,16 +886,20 @@ def create_app(
         except RenderExecutionError as exc:
             raise HTTPException(502, str(exc)) from exc
 
-        current = _project_or_404(project_id)
-        updated = current.shots[_shot_index_or_404(current, shot_id)]
+        current = app.state.repo.get_project(project_id)
+        updated = next((item for item in current.shots if item.id == shot_id), None) if current else None
+        if updated is None:
+            app.state.repo.update_render(engine.last_take_id, status="completed")
+            raise HTTPException(409, "La cible a ete retiree pendant le rendu. La prise est conservee dans l'historique.")
         latest_take = app.state.repo.get_take(engine.last_take_id)
         try:
             current_prompt = compile_shot_prompt(current, updated)
         except PromptCapacityError:
             current_prompt = None
-        if (current_prompt != latest_take["ltx_prompt"]
-                or updated.model_dump(exclude={"ltx_prompt", "human_validated", "rendered_video_ref"})
-                != shot.model_dump(exclude={"ltx_prompt", "human_validated", "rendered_video_ref"})):
+        operational = {"ltx_prompt", "human_validated", "rendered_video_ref", "image_validated", "image_prompt"}
+        if (current_prompt != latest_take["ltx_prompt"] or updated.seed != latest_take["seed"]
+                or (recovering and updated.duration_s != pending["request"]["payload"]["requested_duration_sec"])
+                or updated.model_dump(exclude=operational) != shot.model_dump(exclude=operational)):
             app.state.repo.update_render(engine.last_take_id, status="completed")
             raise HTTPException(409, "Le plan a change pendant le rendu. La prise est conservee dans l'historique et n'est pas affectee au scenario modifie.")
         updated.ltx_prompt = latest_take["ltx_prompt"]

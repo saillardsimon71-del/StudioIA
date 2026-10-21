@@ -17,6 +17,7 @@ import base64
 import importlib
 import io
 import math
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -381,7 +382,13 @@ class LtxModalEngine(VideoEngine):
                     "Verifiez les appels Modal avant toute nouvelle prise."
                 ) from exc
             if self.repo:
-                self.repo.update_render(take_id, call_id=call.object_id)
+                try:
+                    self.repo.update_render(take_id, call_id=call.object_id)
+                except sqlite3.Error as exc:
+                    raise RenderPendingError(
+                        f"Appel Modal {call.object_id} envoye mais identifiant non enregistre ({exc}). "
+                        "La prise reste bloquee pour eviter une double generation."
+                    ) from exc
         try:
             result = call.get(timeout=5460)  # Worker configure pour 5400 s.
         except (FunctionTimeoutError, OutputExpiredError):
@@ -455,11 +462,10 @@ class LtxModalEngine(VideoEngine):
             )
 
         self.settings.ensure_dirs()
+        existing_take = None
         if pending:
             if (pending["project_id"], pending["shot_id"]) != (project_id, shot.id):
                 raise RenderBusyError(f"Recuperez d'abord la prise {pending['project_id']} / {pending['shot_id']}.")
-            if not pending["modal_call_id"]:
-                raise RenderPendingError("Envoi Modal incertain sans identifiant recupere. Verifiez les appels Modal avant toute nouvelle prise.")
             take_id = pending["id"]
             request = pending["request"]
             payload = request["payload"]
@@ -467,8 +473,17 @@ class LtxModalEngine(VideoEngine):
             max_budget = request["max_budget"]
             existing_take = self.repo.get_take(take_id)
             if existing_take and existing_take["status"] == "completed":
-                self.last_take_id = take_id
-                return existing_take["video_path"]
+                try:
+                    cached = inspect_media(Path(existing_take["video_path"]))
+                except (ValueError, OSError, subprocess.SubprocessError):
+                    cached = None
+                if (cached and (cached["width"], cached["height"]) == (payload["width"], payload["height"])
+                        and abs(cached["frames"] - payload["frames"]) <= 1 and cached["has_audio"]
+                        and math.isclose(cached["fps"], payload["fps"], abs_tol=0.01)):
+                    self.last_take_id = take_id
+                    return existing_take["video_path"]
+            if not pending["modal_call_id"]:
+                raise RenderPendingError("Envoi Modal incertain sans identifiant recupere. Verifiez les appels Modal avant toute nouvelle prise.")
         else:
             payload = self.prepare_payload(
                 shot, aspect_ratio=auth["aspect_ratio"], previous_video_path=auth["previous_video_path"],
@@ -478,6 +493,7 @@ class LtxModalEngine(VideoEngine):
                 try:
                     self.repo.start_render(take_id, project_id, shot.id, {
                         "payload": payload, "estimated_eur": estimated_eur, "max_budget": max_budget,
+                        "shot": shot.model_dump(mode="json"),
                     })
                 except ValueError as exc:
                     raise RenderBusyError(str(exc)) from exc
@@ -490,11 +506,18 @@ class LtxModalEngine(VideoEngine):
             if not isinstance(result, dict) or not result.get("video_base64"):
                 raise RenderExecutionError("Réponse Modal invalide : `video_base64` manquant.")
             video_bytes = base64.b64decode(result["video_base64"], validate=True)
-            output_path.write_bytes(video_bytes)
-            media = inspect_media(output_path)
+            try:
+                output_path.write_bytes(video_bytes)
+                media = inspect_media(output_path)
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise RenderPendingError(
+                    "Resultat Modal recu mais sauvegarde ou controle local impossible. "
+                    "Reprenez le meme plan pour recuperer la prise sans nouvelle generation GPU."
+                ) from exc
             if ((media["width"], media["height"]) != (payload["width"], payload["height"])
-                    or abs(media["frames"] - payload["frames"]) > 1 or not media["has_audio"]):
-                raise RenderExecutionError("Le MP4 recu ne correspond pas aux dimensions, a la duree ou a l'audio demandes.")
+                    or abs(media["frames"] - payload["frames"]) > 1 or not media["has_audio"]
+                    or not math.isclose(media["fps"], payload["fps"], abs_tol=0.01)):
+                raise RenderExecutionError("Le MP4 recu ne correspond pas aux dimensions, a la duree, a la cadence ou a l'audio demandes.")
         except RenderPendingError as exc:
             if self.repo:
                 self.repo.update_render(take_id, error=str(exc))
@@ -503,21 +526,22 @@ class LtxModalEngine(VideoEngine):
             wall_elapsed = round(time.perf_counter() - wall_start, 2)
             failed_cost = None  # Le temps d'attente client n'est pas du temps GPU facture.
             if self.repo is not None:
-                self.repo.record_take(
-                    take_id=take_id,
-                    project_id=project_id,
-                    shot_id=shot.id,
-                    status="failed",
-                    seed=payload["seed"],
-                    frames=payload["frames"],
-                    ltx_prompt=payload["prompt"],
-                    estimated_cost_eur=estimated_eur,
-                    max_budget_eur=max_budget,
-                    authorized_by_human=True,
-                    observed_compute_s=None,
-                    actual_cost_eur=failed_cost,
-                    error_message=str(exc),
-                )
+                if existing_take is None:
+                    self.repo.record_take(
+                        take_id=take_id,
+                        project_id=project_id,
+                        shot_id=shot.id,
+                        status="failed",
+                        seed=payload["seed"],
+                        frames=payload["frames"],
+                        ltx_prompt=payload["prompt"],
+                        estimated_cost_eur=estimated_eur,
+                        max_budget_eur=max_budget,
+                        authorized_by_human=True,
+                        observed_compute_s=None,
+                        actual_cost_eur=failed_cost,
+                        error_message=str(exc),
+                    )
                 self.repo.update_render(take_id, status="failed", error=str(exc))
             self._append_costs_md(
                 project_id=project_id,
@@ -544,7 +568,7 @@ class LtxModalEngine(VideoEngine):
         eur_rate = self.settings.container_eur_per_sec()
         actual_eur = round(billable_s * eur_rate, 4) if eur_rate is not None and billable_s is not None else None
 
-        if self.repo is not None:
+        if self.repo is not None and existing_take is None:
             self.repo.record_take(
                 take_id=take_id,
                 project_id=project_id,
