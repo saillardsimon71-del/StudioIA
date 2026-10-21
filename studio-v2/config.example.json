@@ -3,7 +3,7 @@
   "port": 8270,
   "data_dir": "./data",
   "deepseek_base_url": "https://api.deepseek.com",
-  "deepseek_model": "deepseek-chat",
+  "deepseek_model": "deepseek-flash",
   "deepseek_api_key": "",
   "deepseek_timeout_s": 90.0,
   "metaai_api_url": "http://127.0.0.1:8000",

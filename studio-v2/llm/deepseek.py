@@ -46,7 +46,7 @@ DÉCOUPAGE ET CONTRAINTES TECHNIQUES LTX-2.5 :
 - Choisis des plans de 3.0 à 10.0 secondes selon l'action et les répliques, sans grille fixe (total proche de la durée cible).
 - Un décor stable et lisible, peu de personnages (1 à 3 maximum), actions physiques simples et filmables en continu.
 - Vise 2.5 mots parlés/seconde, maximum 3.2, dans le temps disponible APRÈS chaque `start_sec`, pauses et répliques comprises, sans chevauchement. Garde aussi un instant pour écouter ou réagir ; raccourcis les répliques ou adapte la durée si nécessaire.
-- En anglais visuel au présent : `action` vise 15-20 mots pour un beat principal (et une caméra motivée seulement si utile) ; `initial_state` et `final_state` 8-12 mots chacun. Avec trois personnages ou deux répliques, vise les bornes basses : les 150 mots du prompt compilé incluent aussi cadrage, apparences, voix et dialogues.
+- En anglais visuel au présent : reste concis sans sacrifier les gestes, réactions et intentions utiles. Le garde-fou local de 300 mots du prompt compilé inclut cadrage, apparences, voix et dialogues ; ce n'est pas une limite native de LTX.
 - `characters[].description` décrit l'apparence physique fixe en anglais visuel court (15–25 mots).
 - `voice_hint` tient en un ou deux mots anglais.
 - Le premier plan a `continue_from_previous: false`. Ensuite `true` UNIQUEMENT si la dernière image précédente permet réellement la suite : même lieu, angle, cadrage, positions et état. Réutilise alors le même `camera_setup` (courte description anglaise de la composition fixe, incluant les éléments nécessaires à la suite). Un gros plan après un plan large exige `false` et une nouvelle image, même au même instant. Une coupe ne remet jamais les états à zéro.
@@ -231,7 +231,10 @@ def generate_scenario_once(
             raise ScenarioGenerationError(
                 f"DeepSeek a renvoyé HTTP {resp.status_code} : {detail}"
             )
-        api_response = resp.json()
+        try:
+            api_response = resp.json()
+        except ValueError as exc:
+            raise ScenarioGenerationError("DeepSeek a renvoyé une réponse HTTP non JSON.") from exc
 
     try:
         choice = api_response["choices"][0]
@@ -241,6 +244,9 @@ def generate_scenario_once(
             "Réponse DeepSeek inattendue : champ `choices[0].message.content` introuvable.",
             raw_content=json.dumps(api_response, ensure_ascii=False)[:1000],
         ) from exc
+
+    if not isinstance(raw_content, str) or not raw_content.strip():
+        raise ScenarioGenerationError("DeepSeek a renvoyé un contenu vide ou non textuel.")
 
     if choice.get("finish_reason") == "length":
         raise ScenarioGenerationError(

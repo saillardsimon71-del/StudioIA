@@ -13,7 +13,7 @@ async function parseResponse<T>(res: Response): Promise<T> {
 				detail = JSON.stringify(payload);
 			}
 		} catch {
-			detail = await res.text();
+			detail = `HTTP ${res.status} : réponse du serveur illisible.`;
 		}
 		throw Object.assign(new Error(detail), { status: res.status });
 	}
@@ -100,12 +100,13 @@ export const api = {
 		project: Project,
 		onUpdate: (updated: Project, key: string, error: string) => void,
 		onStart: (label: string) => void,
-		shouldStop: () => boolean = () => false
+		shouldStop: () => boolean = () => false,
+		missingImages: string[] = []
 	): Promise<Project> => {
 		let current = project;
 		const references = [
-			...project.characters.filter((char) => !char.image_ref).map((char) => ({ kind: 'character' as const, id: char.id, name: char.name })),
-			...project.decors.filter((decor) => !decor.asset_id).map((decor) => ({ kind: 'decor' as const, id: decor.id, name: decor.name }))
+			...project.characters.filter((char) => !char.image_ref || missingImages.includes(`character:${char.id}`)).map((char) => ({ kind: 'character' as const, id: char.id, name: char.name })),
+			...project.decors.filter((decor) => !decor.asset_id || missingImages.includes(`decor:${decor.id}`)).map((decor) => ({ kind: 'decor' as const, id: decor.id, name: decor.name }))
 		];
 		for (const item of references) {
 			if (shouldStop()) return current;
@@ -123,18 +124,19 @@ export const api = {
 			onUpdate(current, `${item.kind}:${item.id}`, error);
 		}
 		onStart('Images des plans');
-		return api.generateShotImages(current, (updated, id, error) => onUpdate(updated, id, error), undefined, shouldStop);
+		return api.generateShotImages(current, (updated, id, error) => onUpdate(updated, id, error), undefined, shouldStop, missingImages);
 	},
 	generateShotImages: async (
 		project: Project,
 		onUpdate: (updated: Project, shotId: string, error: string) => void,
 		shotIds?: string[],
-		shouldStop: () => boolean = () => false
+		shouldStop: () => boolean = () => false,
+		missingImages: string[] = []
 	): Promise<Project> => {
 		let current = project;
 		for (const shot of project.shots) {
 			if (shouldStop()) break;
-			if (shot.image_ref || (shotIds && !shotIds.includes(shot.id))) continue;
+			if ((shot.image_ref && !missingImages.includes(shot.id)) || (shotIds && !shotIds.includes(shot.id))) continue;
 			let error = '';
 			try {
 				current = await api.generateShotImage(project.id, shot.id);
@@ -205,6 +207,7 @@ export const api = {
 			parseResponse<{
 				project: Project;
 				shots: ShotPrepReport[];
+				missing_images: string[];
 				total_estimated_cost_eur: number | null;
 				max_budget_per_take_eur: number;
 			}>(r)
@@ -222,9 +225,9 @@ export const api = {
 		shouldStop?: () => boolean;
 	}): Promise<Project> => {
 		if (!options.authorizedByHuman) throw new Error('Une autorisation du lot est nécessaire avant le rendu GPU.');
-		const pending = project.shots.filter((shot) => !shot.rendered_video_ref).map((shot) => shot.id);
+		const shotIds = project.shots.map((shot) => shot.id);
 		let current = project;
-		for (const id of pending) {
+		for (const id of shotIds) {
 			if (options.shouldStop?.()) break;
 			try {
 				const prepared = await api.prepareRender(project.id, false);
@@ -232,13 +235,12 @@ export const api = {
 				if (options.shouldStop?.()) break;
 				const shot = current.shots.find((item) => item.id === id);
 				if (!shot) throw new Error(`Plan ${id} introuvable dans le projet.`);
-				if (!shot.rendered_video_ref) {
-					const report = prepared.shots.find((item) => item.shot_id === id);
-					if (!report?.ready_for_gpu) throw new Error(report?.blocking_reason || 'Prérequis du plan non satisfaits.');
-					options.onStart?.(id);
-					const result = await api.renderShot(project.id, id, true);
-					current = result.project;
-				}
+				const report = prepared.shots.find((item) => item.shot_id === id);
+				if (report?.video_available ?? Boolean(shot.rendered_video_ref)) continue;
+				if (!report?.ready_for_gpu) throw new Error(report?.blocking_reason || 'Prérequis du plan non satisfaits.');
+				options.onStart?.(id);
+				const result = await api.renderShot(project.id, id, true);
+				current = result.project;
 				options.onUpdate(current, id, '');
 			} catch (e: any) {
 				options.onUpdate(current, id, e.message);

@@ -147,3 +147,23 @@ test('stop requested during preparation prevents starting the next paid render',
     });
     assert.deepEqual(calls, []);
 });
+
+test('a missing video file can be rendered again despite a saved path', async (t) => {
+    const { saved, calls } = fixture(t);
+    saved.shots[1].rendered_video_ref = 'missing.mp4';
+    const fakeFetch = globalThis.fetch;
+    globalThis.fetch = async (...args) => {
+        const response = await fakeFetch(...args);
+        if (args[0].includes('prepare-render')) {
+            const prepared = await response.json();
+            prepared.shots.forEach((report, index) => {
+                report.video_available = Boolean(saved.shots[index].rendered_video_ref)
+                    && saved.shots[index].rendered_video_ref !== 'missing.mp4';
+            });
+            return Response.json(prepared);
+        }
+        return response;
+    };
+    await api.renderMissingShots(structuredClone(saved), { authorizedByHuman: true, onUpdate: () => {} });
+    assert.deepEqual(calls, ['s1', 's2', 's3']);
+});

@@ -76,6 +76,18 @@ CREATE TABLE IF NOT EXISTS llm_runs (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS render_jobs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    shot_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    modal_call_id TEXT,
+    request_json TEXT NOT NULL,
+    error_message TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS one_pending_render ON render_jobs ((1)) WHERE status = 'pending';
+
 CREATE TABLE IF NOT EXISTS exports (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
@@ -135,6 +147,14 @@ class StudioRepository:
                 """,
                 (validated.id, validated.title or validated.idea[:80], created_at, now, payload),
             )
+            for shot in validated.shots:
+                if shot.rendered_video_ref:
+                    conn.execute(
+                        """UPDATE render_jobs SET status = 'completed'
+                           WHERE project_id = ? AND shot_id = ? AND status = 'pending'
+                             AND id IN (SELECT id FROM takes WHERE status = 'completed' AND video_path = ?)""",
+                        (validated.id, shot.id, shot.rendered_video_ref),
+                    )
         return validated
 
     def get_project(self, project_id: str) -> Project | None:
@@ -231,6 +251,33 @@ class StudioRepository:
         return dict(row) if row else None
 
     # ── Prises GPU / Imports & Coûts réels ───────────────────────────────────
+
+    def pending_render(self) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM render_jobs WHERE status = 'pending'").fetchone()
+        if not row:
+            return None
+        job = dict(row)
+        job["request"] = json.loads(job.pop("request_json"))
+        return job
+
+    def start_render(self, take_id: str, project_id: str, shot_id: str, request: dict) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    "INSERT INTO render_jobs (id, project_id, shot_id, request_json, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (take_id, project_id, shot_id, json.dumps(request, ensure_ascii=False), utc_now()),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("Un rendu GPU est deja en cours. Recuperez cette prise avant d'en lancer une autre.") from exc
+
+    def update_render(self, take_id: str, *, call_id: str | None = None, status: str = "pending",
+                      error: str | None = None) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE render_jobs SET modal_call_id = COALESCE(?, modal_call_id), status = ?, error_message = ? WHERE id = ?",
+                (call_id, status, error, take_id),
+            )
 
     def record_take(
         self,

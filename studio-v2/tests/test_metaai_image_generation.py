@@ -192,11 +192,13 @@ def test_shot_generation_keeps_existing_or_concurrently_replaced_image(tmp_path,
     app = create_app(settings=V2Settings(data_dir=tmp_path / "data"))
     project = _shot_project()
     app.state.repo.save_project(project)
+    manual = tmp_path / "manual-replacement.png"
+    manual.write_bytes(_png())
 
     class Service(_MetaAIService):
         def post(self, url, **kwargs):
             current = app.state.repo.get_project(project.id)
-            current.shots[0].image_ref = "manual-replacement.png"
+            current.shots[0].image_ref = str(manual)
             current.title = "Titre modifie pendant la generation"
             app.state.repo.save_project(current)
             return super().post(url, **kwargs)
@@ -205,10 +207,10 @@ def test_shot_generation_keeps_existing_or_concurrently_replaced_image(tmp_path,
     with TestClient(app) as client:
         url = "/api/projects/auto-images/shots/s1/generate-image"
         saved = client.post(url).json()
-        assert saved["shots"][0]["image_ref"] == "manual-replacement.png"
+        assert saved["shots"][0]["image_ref"] == str(manual)
         assert saved["title"] == "Titre modifie pendant la generation"
         saved = client.post(url).json()
-        assert saved["shots"][0]["image_ref"] == "manual-replacement.png"
+        assert saved["shots"][0]["image_ref"] == str(manual)
         assert len(client.get("/api/assets").json()) == 1
 
 
@@ -320,14 +322,16 @@ def test_reference_images_are_persisted_once_and_reused_for_each_plan(tmp_path, 
     monkeypatch.setattr("api.app.httpx.Client", Service)
     app = create_app(settings=V2Settings(data_dir=tmp_path / "data"), llm_transport=forbidden, modal_runner=forbidden)
     project = _project_with_decors()
-    project.characters[1].image_ref = "manual-character.png"
+    manual = tmp_path / "manual-character.png"
+    manual.write_bytes(_png())
+    project.characters[1].image_ref = str(manual)
     app.state.repo.save_project(project)
     with TestClient(app) as client:
         for endpoint in ["characters/zeste", "characters/absent", "decors/cantine"] * 2:
             response = client.post(f"/api/projects/{project.id}/{endpoint}/generate-image")
             assert response.status_code == 200, response.text
         references = response.json()
-        assert references["characters"][1]["image_ref"] == "manual-character.png"
+        assert references["characters"][1]["image_ref"] == str(manual)
         assert Path(references["characters"][0]["image_ref"]).is_file()
         assert references["decors"][0]["asset_id"]
         assert len(client.get("/api/assets").json()) == 2
@@ -401,7 +405,7 @@ def test_replace_full_scenario_validates_before_saving_and_preserves_other_proje
         saved = response.json()
         assert saved["id"] == original.id and saved["title"] == "Version corrigee"
         assert saved["shots"][0]["image_ref"] == "manual.png"
-        assert saved["shots"][0]["image_validated"] is False
+        assert saved["shots"][0]["image_validated"] is True  # L'etat initial n'a pas change.
         assert saved["shots"][0]["rendered_video_ref"] is None
         assert saved["shots"][0]["human_validated"] is False
         assert saved["shots"][0]["ltx_prompt"] == ""

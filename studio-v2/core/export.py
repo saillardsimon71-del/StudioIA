@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 
 from core.config import V2Settings
@@ -117,7 +118,7 @@ def export_project_mp4(
     destination = (
         Path(output_path).resolve()
         if output_path is not None
-        else (settings.exports_dir / f"{project.id}-export.mp4").resolve()
+        else (settings.exports_dir / f"{project.id}-export-{uuid.uuid4().hex[:8]}.mp4").resolve()
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
     ffmpeg = ffmpeg_exe()

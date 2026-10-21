@@ -111,3 +111,24 @@ test('image stop finishes the current reference and does not start the next one'
     assert.equal(calls.length, 1);
     assert.equal(saved.characters[0].image_ref, 'hero.png');
 });
+
+test('missing files are retried even when saved image references are non-empty', async (t) => {
+    const project = { id: 'p', characters: [{ id: 'hero', image_ref: 'missing-character.png' }],
+        decors: [{ id: 'kitchen', asset_id: 'missing-decor' }], shots: [{ id: 's1', image_ref: 'missing-frame.png' }] };
+    const original = globalThis.fetch;
+    t.after(() => { globalThis.fetch = original; });
+    const calls = [];
+    globalThis.fetch = async (url) => { calls.push(url); return Response.json(project); };
+    await api.generateProjectImages(project, () => {}, () => {}, undefined, ['character:hero', 'decor:kitchen', 's1']);
+    assert.equal(calls.length, 3);
+    assert.ok(calls[0].includes('/characters/hero/'));
+    assert.ok(calls[1].includes('/decors/kitchen/'));
+    assert.ok(calls[2].includes('/shots/s1/'));
+});
+
+test('a non-JSON server error keeps an actionable HTTP status', async (t) => {
+    const original = globalThis.fetch;
+    t.after(() => { globalThis.fetch = original; });
+    globalThis.fetch = async () => new Response('Service unavailable', { status: 503 });
+    await assert.rejects(api.generateShotImage('p', 's1'), (error) => error.status === 503 && /HTTP 503/.test(error.message));
+});

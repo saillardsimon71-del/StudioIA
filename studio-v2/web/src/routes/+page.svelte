@@ -42,6 +42,7 @@
 	let libDesc = $state('');
 	let metaImagePrompt = $state('');
 	let imageErrors = $state<Record<string, string>>({});
+	let missingImages = $state<string[]>([]);
 	let imagePromptDrafts = $state<Record<string, string>>({});
 	let imageStage = $state('');
 	let imageBatchRunning = $state(false);
@@ -58,23 +59,24 @@
 	let stopVideoBatch = $state(false);
 	let currentVideoShot = $state('');
 	let videoErrors = $state<Record<string, string>>({});
-	let pendingVideoShots = $derived(project?.shots.filter((shot) => !shot.rendered_video_ref) ?? []);
+	let pendingVideoShots = $derived(project?.shots.filter((shot) => !(prepReports[shot.id]?.video_available ?? Boolean(shot.rendered_video_ref))) ?? []);
 
 	// Paramètres éditables
 	let apiKeyInput = $state('');
 	let metaAiKeyInput = $state('');
 
 	async function refreshGlobal() {
-		const [h, m, s, plist, alist, cost] = await Promise.all([
+		const [h, s, plist, alist, cost] = await Promise.all([
 			api.health(),
-			api.modalStatus(),
 			api.getSettings(),
 			api.listProjects(),
 			api.listAssets(),
 			api.costLedger()
 		]);
 		health = h;
-		modalStatus = m;
+		api.modalStatus().then((status) => { modalStatus = status; }).catch((error) => {
+			modalStatus = { ok: false, message: error.message };
+		});
 		settings = s;
 		projectList = plist;
 		assets = alist;
@@ -84,6 +86,8 @@
 	async function selectProject(id: string) {
 		errorBanner = '';
 		imageErrors = {};
+		missingImages = [];
+		prepReports = {};
 		imagePromptDrafts = {};
 		videoErrors = {};
 		batchAuthorized = false;
@@ -400,13 +404,14 @@
 		errorBanner = '';
 		infoBanner = '';
 		try {
+			project = await api.saveProject(project);
 			if (!shotId) {
-				project = await api.saveProject(project);
 				activeStep = 'ASSETS';
 			}
+			await runPrepare(false);
 			for (const shot of project.shots) {
 				const draft = imagePromptDrafts[shot.id];
-				if (!shot.image_ref && (!shotId || shot.id === shotId) && draft !== undefined && draft.trim() !== shot.image_prompt) {
+				if ((!shot.image_ref || missingImages.includes(shot.id)) && (!shotId || shot.id === shotId) && draft !== undefined && draft.trim() !== shot.image_prompt) {
 					project = await api.saveShotImagePrompt(project.id, shot.id, draft);
 				}
 			}
@@ -416,8 +421,8 @@
 				if (error) errorBanner = error;
 			};
 			project = shotId
-				? await api.generateShotImages(project, onUpdate, [shotId])
-				: await api.generateProjectImages(project, onUpdate, (stage) => { imageStage = stage; }, () => stopImageBatch);
+				? await api.generateShotImages(project, onUpdate, [shotId], undefined, missingImages)
+				: await api.generateProjectImages(project, onUpdate, (stage) => { imageStage = stage; }, () => stopImageBatch, missingImages);
 			assets = await api.listAssets();
 			await runPrepare(false);
 			if (stopImageBatch) infoBanner = 'Lot arrete. Les images deja enregistrees sont conservees.';
@@ -502,6 +507,7 @@
 		try {
 			const res = await api.prepareRender(project.id, recompile);
 			project = res.project;
+			missingImages = res.missing_images;
 			const map: Record<string, ShotPrepReport> = {};
 			for (const r of res.shots) {
 				map[r.shot_id] = r;
@@ -686,6 +692,7 @@
 		<div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
 			<strong style="font-size: 1.15rem; letter-spacing: 0.02em;">STUDIO IA V2</strong>
 			<span class="badge ok">Isolé de V1 · Port {health?.port ?? 8270}</span>
+			{#if health?.restart_required}<span class="badge err">Serveur à redémarrer : fichiers modifiés</span>{/if}
 			{#if health?.tools}
 				<span class="badge {health.tools.ffmpeg ? 'ok' : 'err'}">FFmpeg</span>
 				<span class="badge {health.tools.tesseract_ocr ? 'ok' : 'warn'}">OCR</span>
@@ -822,7 +829,8 @@
 	<!-- Panneau Registre des Coûts -->
 	{#if showCosts && ledger}
 		<section class="card" style="margin-bottom: 1rem;">
-			<h3 style="margin-top: 0;">Journal des coûts réels (`v2.db` & `COSTS.md`)</h3>
+			<h3 style="margin-top: 0;">Journal des coûts calculés (`v2.db` & `COSTS.md`)</h3>
+			<p>Les montants calculés d'après le temps du worker restent des estimations. Le relevé Modal fait foi.</p>
 			<p style="color: var(--muted); margin-top: 0;">
 				Total GPU Modal mesuré : <strong>{ledger.total_actual_gpu_eur} €</strong> ({ledger.completed_takes} réussie(s),
 				{ledger.failed_takes} échouée(s)) · Total LLM DeepSeek estimé :
@@ -837,7 +845,7 @@
 								<th>Projet / Plan</th>
 								<th>Statut</th>
 								<th>Estimé</th>
-								<th>Coût réel</th>
+								<th>Coût calculé</th>
 								<th>Calcul</th>
 							</tr>
 						</thead>
@@ -1266,7 +1274,7 @@
 							<div style="border: 1px solid var(--border); border-radius: 8px; padding: 0.65rem; background: var(--panel-alt);">
 								<strong>{char.name}</strong>
 								{#if imageErrors[`character:${char.id}`]}<p role="alert">{char.name} : {imageErrors[`character:${char.id}`]}</p>{/if}
-								{#if !char.image_ref}
+								{#if !char.image_ref || missingImages.includes(`character:${char.id}`)}
 									<button disabled={busy} onclick={() => generateReferenceImage('character', char.id)}>
 										{imageErrors[`character:${char.id}`] ? 'Relancer ce personnage' : 'Générer ce personnage'}
 									</button>
@@ -1296,7 +1304,7 @@
 								<strong>{decor.name}</strong>
 								{#if reference}<img src={mediaUrl(reference.file_path)} alt={decor.name} style="width: 100%; height: 150px; object-fit: cover; border-radius: 6px;" />{/if}
 								{#if imageErrors[`decor:${decor.id}`]}<p role="alert">{decor.name} : {imageErrors[`decor:${decor.id}`]}</p>{/if}
-								{#if !decor.asset_id}
+								{#if !decor.asset_id || missingImages.includes(`decor:${decor.id}`)}
 									<button disabled={busy} onclick={() => generateReferenceImage('decor', decor.id)}>
 										{imageErrors[`decor:${decor.id}`] ? 'Relancer ce décor' : 'Générer ce décor'}
 									</button>
@@ -1324,7 +1332,7 @@
 					<p role="status" aria-live="polite">
 						Images générées : {project.shots.filter((shot) => shot.image_ref).length}/{project.shots.length}
 					</p>
-					<button disabled={busy || (!project.shots.some((shot) => !shot.image_ref) && !project.characters.some((char) => !char.image_ref) && !project.decors.some((decor) => !decor.asset_id))} onclick={() => generateShotImages()}>
+					<button disabled={busy || (!missingImages.length && !project.shots.some((shot) => !shot.image_ref) && !project.characters.some((char) => !char.image_ref) && !project.decors.some((decor) => !decor.asset_id))} onclick={() => generateShotImages()}>
 						Générer les images manquantes
 					</button>
 					<p style="font-size: 0.85rem; color: var(--muted);">Un visuel est refusé ? Ouvrez « Adapter le visuel » sur le plan, décrivez une pose calme avant le geste, puis relancez ce plan. L'acceptation finale dépend de Meta AI.</p>
@@ -1379,7 +1387,7 @@
 									{#if imageErrors[shot.id]}
 										<p role="alert">Échec du plan {shot.id} : {imageErrors[shot.id]}</p>
 									{/if}
-									{#if !shot.image_ref}
+									{#if !shot.image_ref || missingImages.includes(shot.id)}
 										<button disabled={busy} onclick={() => editImagePrompt(shot.id)}>
 											{imagePromptDrafts[shot.id] === undefined ? 'Adapter le visuel' : 'Fermer le prompt'}
 										</button>
@@ -1457,7 +1465,7 @@
 					<div>
 						<h2 style="margin: 0;">4. Préparation LTX-2.5 et génération des vidéos</h2>
 						<small style="color: var(--muted);">
-							Limite stricte : 150 mots par prompt · Une seule prise à la fois · Zéro retry GPU automatique · Autorisation explicite obligatoire.
+						Garde-fou local : {health?.max_ltx_words ?? 300} mots par prompt · Une seule prise à la fois · Zéro retry GPU automatique · Autorisation explicite obligatoire.
 						</small>
 					</div>
 					<div style="display: flex; gap: 0.5rem;">
@@ -1498,8 +1506,8 @@
 							<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.6rem;">
 								<div style="display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap;">
 									<strong style="font-size: 1.05rem;">{shot.id}</strong>
-									<span class="badge {wc > 150 || wc === 0 ? 'err' : 'ok'}">
-										Prompt : {wc} / 150 mots
+									<span class="badge {wc > (health?.max_ltx_words ?? 300) || wc === 0 ? 'err' : 'ok'}">
+										Prompt : {wc} / {health?.max_ltx_words ?? 300} mots
 									</span>
 									{#if rep?.ready_for_gpu}
 										<span class="badge ok">Prêt pour GPU ({rep.cost.frames} frames)</span>
@@ -1524,7 +1532,7 @@
 
 							<label style="display: block; margin-bottom: 0.7rem;">
 								Prompt LTX-2.5 envoyé au moteur (éditable) :
-								<textarea rows="3" disabled={busy} bind:value={shot.ltx_prompt}></textarea>
+								<textarea rows="3" readonly value={shot.ltx_prompt} aria-label="Prompt LTX compilé depuis le scénario"></textarea>
 							</label>
 
 							<div style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin-bottom: 0.75rem;">
@@ -1542,10 +1550,10 @@
 
 								<button
 									class="primary"
-									disabled={busy || !authorizedByShot[shot.id] || wc === 0 || wc > 150}
+									disabled={busy || (!rep?.render_pending && (!authorizedByShot[shot.id] || wc === 0 || wc > (health?.max_ltx_words ?? 300)))}
 									onclick={() => handleRenderSingleShot(shot.id)}
 								>
-									{shot.rendered_video_ref
+									{rep?.render_pending ? `Récupérer ${shot.id} (même prise)` : shot.rendered_video_ref
 										? `Refaire uniquement ${shot.id} (GPU)`
 										: `Générer ${shot.id} sur Modal`}
 								</button>

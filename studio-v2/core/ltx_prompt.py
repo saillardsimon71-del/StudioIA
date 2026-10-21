@@ -3,8 +3,8 @@
 Règles V2 :
 - Source unique : `Project` + `Shot` (`core/scenario.py`).
 - Prose visuelle au présent, répliques françaises entre guillemets avec locuteur.
-- Limite prudente stricte : **150 mots maximum**.
-- Si le prompt dépasse 150 mots ou viole les contraintes moteur : arrêt immédiat et
+- Garde-fou local : **300 mots maximum**, sans tronquer les décisions du réalisateur.
+- Si le prompt dépasse ce garde-fou ou viole les contraintes moteur : arrêt immédiat et
   message explicite AVANT tout appel GPU. Aucune chaîne de réparation automatique.
 - Si `shot.display_overlay` est défini, l'écran/zone réservée reste vierge dans LTX
   (les chiffres exacts sont ajoutés au montage FFmpeg).
@@ -17,7 +17,7 @@ import re
 from core.scenario import Character, Project, Shot
 from core.storyboard import visual_style
 
-MAX_LTX_PROMPT_WORDS = 150
+MAX_LTX_PROMPT_WORDS = 300
 
 _FORBIDDEN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"<\s*/?\s*d\s*>", re.IGNORECASE), "balise H3 <d> interdite"),
@@ -93,7 +93,7 @@ def validate_ltx_prompt(prompt: str, shot_id: str = "") -> dict:
 
 
 def compile_shot_prompt(project: Project, shot: Shot) -> str:
-    """Construit le prompt LTX-2.5 d'un plan depuis `Project` et `Shot` et vérifie <= 150 mots."""
+    """Construit le prompt LTX-2.5 d'un plan depuis `Project` et `Shot`."""
     char_map: dict[str, Character] = {c.id: c for c in project.characters}
     has_visual_ref = bool(shot.image_ref or shot.continue_from_previous)
 
@@ -114,21 +114,19 @@ def compile_shot_prompt(project: Project, shot: Shot) -> str:
 
     parts: list[str] = []
     if has_visual_ref:
-        parts.append(f"Vertical {visual_style(project)} shot continuing directly from the reference frame.")
+        parts.append(f"{project.aspect_ratio} {visual_style(project)} shot continuing directly from the reference frame.")
         for cid in cast_ids:
             char = char_map.get(cid)
             if char:
-                brief = " ".join(char.description.split()[:12]).rstrip(".,;:")
-                parts.append(f"{char.name} ({brief}).")
+                parts.append(f"{char.name} ({char.description.strip()}).")
         if cast_ids:
             parts.append("Keep exact characters and setting without duplicating anyone.")
     else:
-        parts.append(f"Vertical {project.aspect_ratio} {visual_style(project)} shot.")
+        parts.append(f"{project.aspect_ratio} {visual_style(project)} shot.")
         for cid in cast_ids:
             char = char_map.get(cid)
             if char:
-                brief = " ".join(char.description.split()[:20]).rstrip(".,;:")
-                parts.append(f"{char.name} is {brief}.")
+                parts.append(_clean_sentence(f"{char.name} is {char.description.strip()}"))
 
     if shot.camera_setup:
         parts.append(_clean_sentence(f"Starting composition: {shot.camera_setup}"))

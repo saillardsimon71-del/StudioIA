@@ -57,7 +57,7 @@ LTX_VOLUME_NAME = "studio-ltx25-models"
 LTX_MODEL_REVISION = "49b093a39c19169a8a81721dcc541e07e945232f"
 LTX_COMFYUI_REVISION = "d49e888586dd8ae012c0667b33466b815fee07f7"
 LTX_VIDEO_CFG = 1.0
-LTX_NEGATIVE_PROMPT = "background music, subtitles, text overlays, voiceover narration"
+LTX_NEGATIVE_PROMPT = "background music, subtitles, text overlays"
 
 LTX_MODEL_FILES = {
     "unet": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",

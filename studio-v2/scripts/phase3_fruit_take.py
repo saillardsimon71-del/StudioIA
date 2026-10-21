@@ -29,7 +29,7 @@ from PIL import Image  # noqa: E402
 from api.app import build_phase3_template_project  # noqa: E402
 from core.config import load_settings  # noqa: E402
 from core.export import export_project_mp4  # noqa: E402
-from core.ltx_prompt import validate_ltx_prompt  # noqa: E402
+from core.ltx_prompt import compile_shot_prompt, validate_ltx_prompt  # noqa: E402
 from core.storage import StudioRepository  # noqa: E402
 from engines.video import LtxModalEngine  # noqa: E402
 from qc.runner import run_take_qc  # noqa: E402
@@ -105,6 +105,7 @@ def main() -> int:
         repo.save_project(project)
         print(f"[OK] Image importée et validée : {dest} ({w}x{h})")
 
+    shot.ltx_prompt = compile_shot_prompt(project, shot)
     prompt_check = validate_ltx_prompt(shot.ltx_prompt, shot_id=shot.id)
     cost = engine.estimate_cost_breakdown(shot)
     modal_state = engine.check_modal_status()

@@ -233,14 +233,14 @@ def test_3_deepseek_single_call_and_no_auto_retry_on_error(isolated_settings: V2
     assert all(0 < len(s["ltx_prompt"].split()) <= 150 for s in saved["shots"])
 
 
-def test_4_prompt_over_150_words_stops_cleanly_before_gpu(isolated_settings: V2Settings, tmp_path: Path):
-    """Un prompt > 150 mots est bloqué net AVANT tout appel au runner Modal."""
+def test_4_prompt_over_local_limit_stops_cleanly_before_gpu(isolated_settings: V2Settings, tmp_path: Path):
+    """Le garde-fou local bloque avant tout appel au runner Modal."""
     modal_invocations = 0
 
     def forbidden_modal(_payload: dict) -> dict:
         nonlocal modal_invocations
         modal_invocations += 1
-        raise AssertionError("Modal ne doit JAMAIS être appelé si le prompt dépasse 150 mots !")
+        raise AssertionError("Modal ne doit pas etre appele si le prompt depasse le garde-fou local.")
 
     img_file = tmp_path / "ref.png"
     img_file.write_bytes(_make_png_bytes())
@@ -251,7 +251,7 @@ def test_4_prompt_over_150_words_stops_cleanly_before_gpu(isolated_settings: V2S
         action="Walk forward.",
         image_ref=str(img_file),
         image_validated=True,
-        ltx_prompt=" ".join(["word"] * 151),
+        ltx_prompt=" ".join(["word"] * (MAX_LTX_PROMPT_WORDS + 1)),
     )
     engine = LtxModalEngine(isolated_settings, modal_runner=forbidden_modal)
     engine.arm_single_take(
@@ -260,7 +260,7 @@ def test_4_prompt_over_150_words_stops_cleanly_before_gpu(isolated_settings: V2S
         authorized_by_human=True,
         max_budget_eur=5.0,
     )
-    with pytest.raises(PromptCapacityError, match="151 mots"):
+    with pytest.raises(PromptCapacityError, match=f"{MAX_LTX_PROMPT_WORDS + 1} mots"):
         engine.render(overlong_shot)
     assert modal_invocations == 0
 
@@ -312,10 +312,11 @@ def test_authorized_render_without_budget_ignores_legacy_default(isolated_settin
     image = tmp_path / "reference.png"
     image.write_bytes(_make_png_bytes())
     calls = []
+    video_bytes = _make_real_test_mp4(tmp_path / "worker.mp4", duration_s=3).read_bytes()
 
     def fake_modal(payload):
         calls.append(payload)
-        return {"video_base64": base64.b64encode(b"fake-video").decode("ascii")}
+        return {"video_base64": base64.b64encode(video_bytes).decode("ascii")}
 
     engine = LtxModalEngine(settings, modal_runner=fake_modal)
     shot = Shot(
@@ -323,7 +324,7 @@ def test_authorized_render_without_budget_ignores_legacy_default(isolated_settin
         image_validated=True, ltx_prompt="Vertical shot. Zeste blinks once.",
     )
     engine.arm_single_take(project_id="p", shot_id="s1", authorized_by_human=True)
-    assert Path(engine.render(shot)).read_bytes() == b"fake-video"
+    assert Path(engine.render(shot)).read_bytes() == video_bytes
     assert len(calls) == 1
     with pytest.raises(AuthorizationRequiredError):
         engine.render(shot)

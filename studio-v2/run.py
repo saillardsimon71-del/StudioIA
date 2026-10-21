@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+import socket
 import sys
 from pathlib import Path
 
@@ -27,6 +29,16 @@ def main() -> None:
             "Utilisez un port distinct tel que 8270."
         )
 
+    with socket.socket() as probe:
+        try:
+            probe.bind((args.host, args.port))
+        except OSError as exc:
+            raise SystemExit(
+                f"Demarrage refuse : {args.host}:{args.port} indisponible ({exc}). "
+                "Une ancienne instance peut etre active. Arretez-la avant de relancer Studio IA V2."
+            ) from exc
+    os.environ["STUDIO_V2_HOST"] = args.host
+    os.environ["STUDIO_V2_PORT"] = str(args.port)
     uvicorn.run("api.app:app", host=args.host, port=args.port, reload=False)
 
 

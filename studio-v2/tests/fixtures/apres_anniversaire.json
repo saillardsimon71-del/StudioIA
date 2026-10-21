@@ -1,0 +1,69 @@
+{
+  "id": "apres-anniversaire",
+  "title": "Après ton anniversaire",
+  "idea": "Scène de fiction réaliste, dramatique, en français, de 8 secondes, en un seul plan continu.\n\nUne cuisine le soir. Lucas et Emma se font face. Lucas, blessé mais calme, demande : « Tu comptais me le dire quand ? »\n\nEmma évite son regard et répond : « Après ton anniversaire. »\n\nElle tente de lui prendre la main pour se rapprocher de lui, mais Lucas retire doucement la sienne. Emma perd son sourire. Un silence pesant s'installe.\n\nJe veux une mise en scène naturelle, avec un véritable jeu d'acteur : regards, expressions subtiles, gestes motivés et réactions cohérentes avec les paroles.\n\nDeepSeek choisit librement la réalisation et le cadrage. Aucun narrateur, aucune voix off, aucun sous-titre. Une seule scène, sans changement de décor.",
+  "aspect_ratio": "9:16",
+  "target_duration_s": 8.0,
+  "narration_mode": "dialogue",
+  "visual_style": "Realistic cinematic naturalism, warm muted kitchen night lighting, shallow depth of field, 9:16 vertical framing.",
+  "characters": [
+    {
+      "id": "lucas",
+      "name": "Lucas",
+      "description": "French man early thirties, short dark hair, light stubble, grey knit sweater, tired eyes, restrained posture.",
+      "image_ref": null,
+      "voice_hint": "low controlled"
+    },
+    {
+      "id": "emma",
+      "name": "Emma",
+      "description": "French woman early thirties, shoulder-length brown hair, cream blouse, delicate necklace, soft guarded features.",
+      "image_ref": null,
+      "voice_hint": "soft hesitant"
+    }
+  ],
+  "decors": [
+    {
+      "id": "cuisine_soir",
+      "name": "Cuisine le soir",
+      "description": "Realistic small French kitchen at night, warm pendant light over wooden counter, white tiles, dark window reflecting the room, muted colors, cinematic naturalism.",
+      "asset_id": null
+    }
+  ],
+  "shots": [
+    {
+      "id": "shot_1",
+      "duration_s": 8.0,
+      "action": "Lucas holds a calm, hurt stare and asks quietly. Emma looks down and answers. She reaches for his hand; he gently withdraws it. Her faint smile fades. They stand in heavy silence.",
+      "dialogue": [
+        {
+          "speaker_id": "lucas",
+          "text": "Tu comptais me le dire quand ?",
+          "start_sec": 0.6,
+          "delivery": "on_screen"
+        },
+        {
+          "speaker_id": "emma",
+          "text": "Après ton anniversaire.",
+          "start_sec": 4.2,
+          "delivery": "on_screen"
+        }
+      ],
+      "initial_state": "Lucas faces Emma, calm and wounded; Emma looks away, faint smile.",
+      "final_state": "Lucas's hand withdrawn; Emma's smile gone, eyes lowered in tense silence.",
+      "image_prompt": "Vertical 9:16 realistic cinematic still in a small French kitchen at night. Lucas, a man in his early thirties with short dark hair and stubble in a grey knit sweater, stands facing Emma across a wooden counter. Emma, early thirties, shoulder-length brown hair, cream blouse, looks slightly away with a faint apologetic smile. Warm pendant light, white tiles, dark window. Medium two-shot.",
+      "image_ref": null,
+      "continue_from_previous": false,
+      "camera_setup": "Medium two-shot across wooden kitchen counter",
+      "time_transition": "continuous",
+      "decor_id": "cuisine_soir",
+      "decor_asset_id": null,
+      "ltx_prompt": "",
+      "seed": 42,
+      "image_validated": false,
+      "display_overlay": null,
+      "rendered_video_ref": null,
+      "human_validated": false
+    }
+  ]
+}

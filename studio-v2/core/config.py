@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -43,7 +44,7 @@ class V2Settings(BaseModel):
 
     # DeepSeek LLM (un seul appel par clic utilisateur)
     deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-chat"
+    deepseek_model: str = "deepseek-flash"
     deepseek_api_key: str = ""
     deepseek_timeout_s: float = 90.0
 
@@ -199,6 +200,11 @@ def load_settings() -> V2Settings:
     env_host = os.environ.get("STUDIO_V2_HOST", "").strip()
     if env_host:
         payload["host"] = env_host
+    if "data_dir" in payload and not Path(payload["data_dir"]).is_absolute():
+        payload["data_dir"] = STUDIO_V2_ROOT / payload["data_dir"]
+    if (payload.get("deepseek_model") == "deepseek-chat"
+            and urlparse(payload.get("deepseek_base_url", "https://api.deepseek.com")).hostname == "api.deepseek.com"):
+        payload["deepseek_model"] = "deepseek-flash"
     settings = V2Settings.model_validate(payload)
     settings.ensure_dirs()
     return settings

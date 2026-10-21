@@ -16,5 +16,4 @@ echo   Base isolee  : studio-v2\data\v2.db (aucun acces a V1)
 echo   Ctrl+C pour arreter proprement le serveur.
 echo ============================================================
 
-start "" "http://127.0.0.1:%STUDIO_V2_PORT%"
 .venv\Scripts\python.exe run.py --host 127.0.0.1 --port %STUDIO_V2_PORT%

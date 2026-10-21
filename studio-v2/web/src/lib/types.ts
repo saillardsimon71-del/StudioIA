@@ -102,6 +102,8 @@ export interface CostBreakdown {
 
 export interface ShotPrepReport {
 	shot_id: string;
+	video_available?: boolean;
+	render_pending?: boolean;
 	ltx_prompt: string;
 	word_count: number;
 	max_words: number;

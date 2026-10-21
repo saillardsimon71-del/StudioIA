@@ -11,12 +11,10 @@ Reconstruction isolée de Studio IA à la racine `studio-v2/` **sans aucune modi
 
 ## Note sur la branche Git
 
-Dans l'environnement Arena AI, le nom de la branche de session distante est verrouillé sur `arena/0170e708-studioia` (issue directement de `c395532` sur `arena/fb4de4c0-studioia`, jamais fusionnée dans la branche principale).  
-Sur votre PC Windows, pour créer la branche locale nommée `arena/studio-ia-v2-rebuild` :
+Branche de travail : `test-director-v2`. Le refspec d'origin peut etre restrictif. Pour recuperer explicitement cette branche sans reinitialiser les modifications locales :
 
 ```powershell
-git fetch origin
-git checkout -B arena/studio-ia-v2-rebuild origin/arena/0170e708-studioia
+git fetch origin refs/heads/test-director-v2:refs/remotes/origin/test-director-v2
 ```
 
 ---
@@ -29,7 +27,7 @@ setup.bat
 start.bat
 ```
 
-Ouvre automatiquement **`http://127.0.0.1:8270`**.
+Interface : **`http://127.0.0.1:8270`**. Si le port est deja occupe, le lancement est refuse avant toute ouverture de navigateur. Arretez l'ancienne instance puis relancez. `/api/health` expose l'empreinte des sources chargees et `restart_required`.
 
 ### Prérequis optionnels sur Windows
 - **Clé DeepSeek** : renseignez `deepseek_api_key` dans `studio-v2\config.json` (ou via le bouton **Paramètres** de l'interface, ou la variable d'environnement `DEEPSEEK_API_KEY`).
@@ -76,7 +74,9 @@ Le script demande confirmation (`OUI`), exécute **une seule prise** sans retry 
 
 StudioIA v2 peut appeler un serveur séparé `metaai-api` depuis la bibliothèque visuelle. Installez et lancez ce projet selon sa documentation, configurez-y `META_AI_DATR` et `META_AI_ECTO_1_SESS` (et `META_AI_API_KEY` si souhaité), puis renseignez son URL dans **Paramètres → URL du service metaai-api**. Si une clé serveur est activée, saisissez-la également dans les paramètres StudioIA. Les cookies Meta restent côté serveur `metaai-api`.
 
-Dans l'étape **ASSETS**, choisissez le type d'image, entrez un prompt puis cliquez **Générer avec Meta AI**. StudioIA télécharge la première image produite et l'enregistre localement dans la bibliothèque ; il faut ensuite la vérifier et l'affecter au personnage ou au plan comme d'habitude. Le serveur attendu expose `POST /image` et renvoie `image_urls`.
+Depuis le scenario, la generation du lot prepare les personnages, les decors puis les images initiales. Les associations sont enregistrees apres chaque image. Les visuels presents sont conserves ; les fichiers manquants peuvent etre repris. Un refus individuel reste relancable, et une indisponibilite du service arrete le lot.
+
+Le serveur attendu expose `POST /image` avec `prompt` et renvoie `image_urls`. Cette integration transmet du texte uniquement : les portraits et decors sauvegardes ne sont pas des references pixel utilisees pour generer les plans. La continuite visuelle repose sur les descriptions du Director et reste approximative.
 
 Cette intégration est expérimentale : `metaai-api` est non officiel, repose sur l'automatisation du navigateur et des cookies susceptibles d'expirer ; disponibilité, conditions d'utilisation Meta et stabilité ne sont pas garanties. La génération prend typiquement 30–40 secondes. Cela ne génère pas les vidéos.
 
@@ -94,3 +94,9 @@ Vérification rapide sans coût API ni GPU :
 cd studio-v2
 .\.venv\Scripts\python.exe -m pytest tests/test_creative_guides.py -q
 ```
+
+## Audit de production du 21 octobre 2026
+
+Voir [le bilan technique et le test reel controle](../docs/studio/AUDIT_V2_2026-10-21.md). Les prompts LTX sont toujours recompiles depuis le scenario avant envoi ; le garde-fou local est de 300 mots, sans troncature des apparences. Les prises Modal en attente sont conservees dans SQLite et recuperees par leur identifiant, sans nouvelle generation. Les lots restent pilotes par l'onglet ouvert.
+
+Le modele par defaut est `deepseek-flash`. L'ancien nom `deepseek-chat` est resolu vers ce modele au chargement sur `api.deepseek.com`, sans reecrire la configuration existante ni affecter les services compatibles configures sur un autre domaine.

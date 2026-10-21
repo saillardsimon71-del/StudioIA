@@ -4,7 +4,7 @@ Couvre les 5 étapes sans couche intermédiaire superflue :
 1. IDEA      — Création / sélection de projet + saisie de l'idée
 2. SCENARIO  — Appel unique DeepSeek OU édition directe des plans/dialogues/états/compteurs
 3. ASSETS    — Bibliothèque persistante (personnages/décors), import glisser-déposer, validation humaine
-4. RENDER    — Compilation/validation prompt LTX (<= 150 mots), estimation coût Modal + incertitudes,
+4. RENDER    — Compilation/validation prompt LTX (garde-fou local 300 mots), estimation coût Modal + incertitudes,
                autorisation humaine explicite prise par prise, relance d'un seul plan sans perte
 5. EXPORT    — Assemblage MP4 vertical 1080x1920 24fps AAC 48kHz stéréo + chiffres fixes + QC OCR/Whisper
 """
@@ -12,7 +12,10 @@ Couvre les 5 étapes sans couche intermédiaire superflue :
 from __future__ import annotations
 
 import mimetypes
+import hashlib
+import os
 import shutil
+import threading
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
@@ -38,11 +41,14 @@ from core.ltx_prompt import (
 from core.scenario import Character, DialogueLine, Project, Shot
 from core.storyboard import build_shot_image_prompt, storyboard_issues
 from core.storage import StudioRepository
+from core.storage import utc_now
 from engines.video import (
     AuthorizationRequiredError,
     BudgetExceededError,
     LtxModalEngine,
     RenderExecutionError,
+    RenderBusyError,
+    RenderPendingError,
     RenderPreparationError,
 )
 from llm.deepseek import ScenarioGenerationError, generate_scenario_once
@@ -165,6 +171,21 @@ def create_app(
     app.state.repo = repo
     app.state.llm_transport = llm_transport
     app.state.modal_runner = modal_runner
+    render_lock = threading.Lock()
+
+    def _source_hash() -> str:
+        digest = hashlib.sha256()
+        paths = [STUDIO_V2_ROOT / "run.py", STUDIO_V2_ROOT / "web/ui_bundle/index.html"]
+        for folder in ("api", "core", "engines", "llm", "qc", "creative-guides"):
+            paths.extend(p for p in (STUDIO_V2_ROOT / folder).glob("*") if p.suffix in {".py", ".md"})
+        for path in sorted(paths):
+            if path.is_file():
+                digest.update(str(path.relative_to(STUDIO_V2_ROOT)).encode())
+                digest.update(path.read_bytes())
+        return digest.hexdigest()[:16]
+
+    source_hash = _source_hash()
+    started_at = utc_now()
 
     app.add_middleware(
         CORSMiddleware,
@@ -200,6 +221,66 @@ def create_app(
             if shot.id == shot_id:
                 return idx
         raise HTTPException(404, f"Plan « {shot_id} » introuvable dans le projet.")
+
+    def _save_project_edit(project: Project, *, preserve_outputs: bool = False) -> Project:
+        existing = app.state.repo.get_project(project.id)
+        if existing is None:
+            return app.state.repo.save_project(project)
+        previous = {shot.id: shot for shot in existing.shots}
+        if preserve_outputs:
+            for char in project.characters:
+                old_char = next((c for c in existing.characters if c.id == char.id), None)
+                if old_char:
+                    char.image_ref = old_char.image_ref
+            for decor in project.decors:
+                old_decor = next((d for d in existing.decors if d.id == decor.id), None)
+                if old_decor:
+                    decor.asset_id = old_decor.asset_id
+            for shot in project.shots:
+                old = previous.get(shot.id)
+                if old:
+                    for key in ("image_ref", "image_validated", "rendered_video_ref", "human_validated"):
+                        setattr(shot, key, getattr(old, key))
+        cast_changed = ([c.model_dump(exclude={"image_ref"}) for c in project.characters]
+                        != [c.model_dump(exclude={"image_ref"}) for c in existing.characters])
+        cast_visual_changed = ([c.model_dump(exclude={"image_ref", "voice_hint"}) for c in project.characters]
+                               != [c.model_dump(exclude={"image_ref", "voice_hint"}) for c in existing.characters])
+        visual_changed = (project.visual_style != existing.visual_style
+                          or project.aspect_ratio != existing.aspect_ratio
+                          or [d.model_dump(exclude={"asset_id"}) for d in project.decors]
+                          != [d.model_dump(exclude={"asset_id"}) for d in existing.decors])
+        for char in project.characters:
+            old_char = next((c for c in existing.characters if c.id == char.id), None)
+            if (old_char and char.image_ref == old_char.image_ref
+                    and (char.name, char.description) != (old_char.name, old_char.description)):
+                char.image_ref = None
+        for decor in project.decors:
+            old_decor = next((d for d in existing.decors if d.id == decor.id), None)
+            if (old_decor and decor.asset_id == old_decor.asset_id
+                    and (decor.name, decor.description) != (old_decor.name, old_decor.description)):
+                decor.asset_id = None
+        operational = {"ltx_prompt", "image_prompt", "image_validated", "rendered_video_ref", "human_validated"}
+        upstream_changed = False
+        for shot in project.shots:
+            old = previous.get(shot.id)
+            changed = (cast_changed or visual_changed or old is None
+                       or shot.model_dump(exclude=operational) != old.model_dump(exclude=operational))
+            changed = changed or (shot.continue_from_previous and upstream_changed)
+            if changed:
+                shot.ltx_prompt = ""
+                shot.rendered_video_ref = None
+                shot.human_validated = False
+            if old and (visual_changed or cast_visual_changed or any(
+                getattr(shot, key) != getattr(old, key)
+                for key in ("initial_state", "camera_setup", "decor_id", "decor_asset_id")
+            )):
+                shot.image_validated = False
+                if shot.image_ref == old.image_ref:
+                    shot.image_ref = None
+                if shot.image_prompt == old.image_prompt:
+                    shot.image_prompt = ""
+            upstream_changed = changed or bool(old and shot.rendered_video_ref != old.rendered_video_ref)
+        return app.state.repo.save_project(project)
 
     def _save_image_upload(upload: UploadFile, subdir: str) -> tuple[Path, int, int]:
         dest_dir = Path(app.state.settings.media_dir) / subdir
@@ -239,6 +320,10 @@ def create_app(
         return {
             "status": "ok",
             "version": "2.0.0",
+            "source_hash": source_hash,
+            "started_at": started_at,
+            "process_id": os.getpid(),
+            "restart_required": _source_hash() != source_hash,
             "port": app.state.settings.port,
             "db_path": str(app.state.settings.db_path),
             "v1_isolated": True,
@@ -315,7 +400,7 @@ def create_app(
         if project.id != project_id:
             raise HTTPException(400, "L'identifiant du projet ne correspond pas à l'URL.")
         try:
-            return app.state.repo.save_project(project)
+            return _save_project_edit(project, preserve_outputs=True)
         except Exception as exc:
             raise HTTPException(400, f"Validation Pydantic refusée : {exc}") from exc
 
@@ -336,19 +421,7 @@ def create_app(
             detail = "; ".join(f"{'.'.join(map(str, err['loc']))}: {err['msg']}"
                                for err in exc.errors(include_input=False))
             raise HTTPException(422, f"Scenario invalide : {detail}") from exc
-        previous = {shot.id: shot for shot in existing.shots}
-        reference_changes = (replacement.characters != existing.characters
-                             or replacement.decors != existing.decors
-                             or replacement.aspect_ratio != existing.aspect_ratio)
-        operational = {"ltx_prompt", "image_prompt", "image_validated", "rendered_video_ref", "human_validated"}
-        for shot in replacement.shots:
-            old = previous.get(shot.id)
-            if reference_changes or old is None or shot.model_dump(exclude=operational) != old.model_dump(exclude=operational):
-                shot.ltx_prompt = ""
-                shot.image_validated = False
-                shot.rendered_video_ref = None
-                shot.human_validated = False
-        return app.state.repo.save_project(replacement)
+        return _save_project_edit(replacement)
 
     # ── Étape 2 : SCENARIO (1 clic = 1 appel DeepSeek, zéro agent critique) ──
 
@@ -540,7 +613,7 @@ def create_app(
         )
         project.shots[idx].image_ref = str(target.resolve())
         project.shots[idx].image_validated = False  # Exige une validation visuelle explicite
-        return app.state.repo.save_project(project)
+        return _save_project_edit(project)
 
     @app.post("/api/projects/{project_id}/shots/{shot_id}/assign-asset")
     def assign_asset_to_shot(
@@ -553,7 +626,7 @@ def create_app(
             raise HTTPException(404, "Asset introuvable dans la bibliothèque.")
         project.shots[idx].image_ref = asset["file_path"]
         project.shots[idx].image_validated = False
-        return app.state.repo.save_project(project)
+        return _save_project_edit(project)
 
     def _image_prompt_or_422(project: Project, shot: Shot) -> str:
         decor = None
@@ -584,7 +657,7 @@ def create_app(
     def generate_shot_image(project_id: str, shot_id: str) -> Project:
         project = _project_or_404(project_id)
         shot = project.shots[_shot_index_or_404(project, shot_id)]
-        if shot.image_ref:
+        if shot.image_ref and Path(shot.image_ref).is_file():
             return project
         prompt = _image_prompt_or_422(project, shot)
         asset = generate_library_asset(GenerateImageRequest(
@@ -592,7 +665,7 @@ def create_app(
         ))
         current = _project_or_404(project_id)
         updated = current.shots[_shot_index_or_404(current, shot_id)]
-        if updated.image_ref or _image_prompt_or_422(current, updated) != prompt:
+        if (updated.image_ref != shot.image_ref or _image_prompt_or_422(current, updated) != prompt):
             return current
         return assign_asset_to_shot(project_id, shot_id, AssignAssetRequest(asset_id=asset["id"]))
 
@@ -602,7 +675,7 @@ def create_app(
         char = next((item for item in project.characters if item.id == char_id), None)
         if char is None:
             raise HTTPException(404, f"Personnage {char_id} introuvable.")
-        if char.image_ref:
+        if char.image_ref and Path(char.image_ref).is_file():
             return project
         asset = generate_library_asset(GenerateImageRequest(
             kind="character", name=char.name, description=char.description,
@@ -611,7 +684,7 @@ def create_app(
         ))
         current = _project_or_404(project_id)
         updated = next((item for item in current.characters if item.id == char_id), None)
-        if updated is None or updated.image_ref or updated.description != char.description or updated.name != char.name:
+        if updated is None or updated.image_ref != char.image_ref or updated.description != char.description or updated.name != char.name:
             return current
         return assign_asset_to_character(project_id, char_id, AssignAssetRequest(asset_id=asset["id"]))
 
@@ -633,12 +706,13 @@ def create_app(
         decor = next((item for item in project.decors if item.id == decor_id), None)
         if decor is None:
             raise HTTPException(404, f"Decor {decor_id} introuvable.")
-        if decor.asset_id:
+        existing_asset = app.state.repo.get_asset(decor.asset_id) if decor.asset_id else None
+        if existing_asset and Path(existing_asset["file_path"]).is_file():
             return project
         asset = generate_decor(GenerateDecorRequest(name=decor.name, description=decor.description))
         current = _project_or_404(project_id)
         updated = next((item for item in current.decors if item.id == decor_id), None)
-        if updated is None or updated.asset_id or updated.description != decor.description or updated.name != decor.name:
+        if updated is None or updated.asset_id != decor.asset_id or updated.description != decor.description or updated.name != decor.name:
             return current
         return assign_asset_to_decor(project_id, decor_id, AssignAssetRequest(asset_id=asset["id"]))
 
@@ -671,7 +745,7 @@ def create_app(
         shot.image_validated = req.validated
         return app.state.repo.save_project(project)
 
-    # ── Étape 4 : RENDER (Préparation LTX <=150 mots, Estimation coût, Autorisation) ─
+    # ── Étape 4 : RENDER (Préparation LTX, Estimation coût, Autorisation) ─
 
     @app.post("/api/projects/{project_id}/prepare-render")
     def prepare_project_render(
@@ -681,6 +755,14 @@ def create_app(
         engine = _engine()
         shot_reports: list[dict] = []
         issues = storyboard_issues(project)
+        pending = app.state.repo.pending_render()
+        missing_images = [f"character:{c.id}" for c in project.characters
+                          if c.image_ref and not Path(c.image_ref).is_file()]
+        for decor in project.decors:
+            asset = app.state.repo.get_asset(decor.asset_id) if decor.asset_id else None
+            if decor.asset_id and (not asset or not Path(asset["file_path"]).is_file()):
+                missing_images.append(f"decor:{decor.id}")
+        missing_images.extend(s.id for s in project.shots if s.image_ref and not Path(s.image_ref).is_file())
 
         for idx, shot in enumerate(project.shots):
             compile_error: str | None = "; ".join(issues.get(shot.id, [])) or None
@@ -688,8 +770,7 @@ def create_app(
             try:
                 if compile_error:
                     raise PromptCapacityError(compile_error)
-                if recompile_prompts or not shot.ltx_prompt.strip():
-                    shot.ltx_prompt = compile_shot_prompt(project, shot)
+                shot.ltx_prompt = compile_shot_prompt(project, shot)
                 prompt_info = validate_ltx_prompt(shot.ltx_prompt, shot_id=shot.id)
             except PromptCapacityError as exc:
                 compile_error = str(exc)
@@ -716,6 +797,9 @@ def create_app(
             shot_reports.append(
                 {
                     "shot_id": shot.id,
+                    "video_available": bool(shot.rendered_video_ref and Path(shot.rendered_video_ref).is_file()
+                                            and not (pending and pending["project_id"] == project.id and pending["shot_id"] == shot.id)),
+                    "render_pending": bool(pending and pending["project_id"] == project.id and pending["shot_id"] == shot.id),
                     "ltx_prompt": shot.ltx_prompt,
                     "word_count": (
                         prompt_info["word_count"]
@@ -723,7 +807,7 @@ def create_app(
                         else len(shot.ltx_prompt.split())
                     ),
                     "max_words": MAX_LTX_PROMPT_WORDS,
-                    "ready_for_gpu": payload_ready,
+                    "ready_for_gpu": payload_ready or bool(pending and pending["modal_call_id"] and pending["project_id"] == project.id and pending["shot_id"] == shot.id),
                     "blocking_reason": payload_issue,
                     "warnings": ["Raccord ancien sans composition declaree : a confirmer visuellement."]
                     if shot.continue_from_previous and not shot.camera_setup else [],
@@ -742,6 +826,7 @@ def create_app(
         return {
             "project": project.model_dump(mode="json"),
             "shots": shot_reports,
+            "missing_images": missing_images,
             "total_estimated_cost_eur": total_est,
             "max_budget_per_take_eur": app.state.settings.max_budget_eur_per_take,
         }
@@ -751,11 +836,21 @@ def create_app(
         project_id: str, shot_id: str, req: RenderShotRequest
     ) -> dict:
         """Lance UNE SEULE prise GPU après autorisation explicite de l'utilisateur."""
+        if not render_lock.acquire(blocking=False):
+            raise HTTPException(409, "Une prise est deja en cours, y compris sa sauvegarde et ses controles locaux.")
+        try:
+            return _render_single_shot(project_id, shot_id, req)
+        finally:
+            render_lock.release()
+
+    def _render_single_shot(project_id: str, shot_id: str, req: RenderShotRequest) -> dict:
         project = _project_or_404(project_id)
         idx = _shot_index_or_404(project, shot_id)
         shot = project.shots[idx]
         issues = storyboard_issues(project).get(shot.id, [])
-        if issues:
+        pending = app.state.repo.pending_render()
+        recovering = bool(pending and (pending["project_id"], pending["shot_id"]) == (project_id, shot_id))
+        if issues and not recovering:
             raise HTTPException(422, "; ".join(issues))
         engine = _engine()
 
@@ -774,22 +869,38 @@ def create_app(
         )
 
         try:
+            if not recovering:
+                shot.ltx_prompt = compile_shot_prompt(project, shot)
             rendered_path = engine.render(shot)
         except AuthorizationRequiredError as exc:
             raise HTTPException(403, str(exc)) from exc
         except (BudgetExceededError, PromptCapacityError, RenderPreparationError) as exc:
             raise HTTPException(400, str(exc)) from exc
+        except RenderBusyError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except RenderPendingError as exc:
+            raise HTTPException(504, str(exc)) from exc
         except RenderExecutionError as exc:
             raise HTTPException(502, str(exc)) from exc
 
-        # Les autres plans du projet ne sont jamais touchés ; seul ce plan pointe vers la nouvelle prise
-        shot.rendered_video_ref = rendered_path
-        shot.human_validated = False
-        saved = app.state.repo.save_project(project)
+        current = _project_or_404(project_id)
+        updated = current.shots[_shot_index_or_404(current, shot_id)]
+        latest_take = app.state.repo.get_take(engine.last_take_id)
+        try:
+            current_prompt = compile_shot_prompt(current, updated)
+        except PromptCapacityError:
+            current_prompt = None
+        if (current_prompt != latest_take["ltx_prompt"]
+                or updated.model_dump(exclude={"ltx_prompt", "human_validated", "rendered_video_ref"})
+                != shot.model_dump(exclude={"ltx_prompt", "human_validated", "rendered_video_ref"})):
+            app.state.repo.update_render(engine.last_take_id, status="completed")
+            raise HTTPException(409, "Le plan a change pendant le rendu. La prise est conservee dans l'historique et n'est pas affectee au scenario modifie.")
+        updated.ltx_prompt = latest_take["ltx_prompt"]
+        updated.rendered_video_ref = rendered_path
+        updated.human_validated = False
+        saved = _save_project_edit(current)
 
         qc = run_take_qc(Path(rendered_path), shot, app.state.settings)
-        takes = app.state.repo.list_takes(project.id, shot.id)
-        latest_take = takes[0] if takes else None
         if latest_take:
             latest_take = app.state.repo.update_take_qc(latest_take["id"], qc=qc)
 
@@ -823,7 +934,7 @@ def create_app(
 
         shot.rendered_video_ref = str(target.resolve())
         shot.human_validated = False
-        saved = app.state.repo.save_project(project)
+        saved = _save_project_edit(project)
         qc = run_take_qc(target, shot, app.state.settings)
         take = app.state.repo.record_take(
             project_id=project.id,
