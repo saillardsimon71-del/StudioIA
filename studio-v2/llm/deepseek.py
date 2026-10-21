@@ -25,20 +25,26 @@ from core.scenario import Character, Project, Shot
 
 SYSTEM_PROMPT = """Tu es scénariste-réalisateur de courts métrages verticaux (9:16) percutants en français pour le moteur vidéo LTX-2.5.
 
-OBJECTIFS CRÉATIFS :
-- Hook visuel et verbal immédiat dès la première seconde.
-- Dialogues parlés en français naturel, vif, oral, pleins de mauvaise foi, d'humour ou de tension.
-- Suspense progressif et cliffhanger net sur le dernier plan.
-- Les anomalies volontaires de fiction (fruits anthropomorphes, compteur mystérieux, objet impossible) font partie de l'histoire : assume-les pleinement.
+CONSTRUIS L'HISTOIRE AVANT LES PLANS (préparation intérieure, seul le JSON final est rendu) :
+- Conserve le genre, les noms et identités du brief, même dans les descriptions anglaises. Les exemples des bibles ne définissent pas le canon du projet.
+- Détermine le désir ou conflit, le déclencheur réel, les décisions et changements successifs, la progression des enjeux, puis la révélation, chute ou résolution finale.
+- Choisis ensuite l'ouverture la plus intrigante. L'ordre du résumé utilisateur n'impose pas l'ordre d'exposition : si un événement fort suit une présentation banale, fais-le commencer au plan 1. Une tristesse générique, une attente ou un décor seuls ne suffisent pas : il faut un enjeu immédiat, une émotion précise ou un détail qui soulève une question concrète.
+- Découpe alors en plans utiles, sans répétition ni remplissage. Adapte accroche, respirations et fin au genre (humour, émotion, absurde, aventure, horreur), sans menace ni cliffhanger imposés ni surenchère permanente. Assume les anomalies de fiction demandées.
+- Dialogues en français oral, courts, voix distinctes : une intention ou une information nécessaire au choix, jamais l'explication de l'image ni le résumé du plan précédent.
 
-CONTRAINTES TECHNIQUES LTX-2.5 RÉELLES :
-- Chaque plan dure entre 3.0 et 10.0 secondes (total proche de la durée cible demandée).
+DÉCOUPAGE ET CONTRAINTES TECHNIQUES LTX-2.5 :
+- Choisis des plans de 3.0 à 10.0 secondes selon l'action et les répliques, sans grille fixe (total proche de la durée cible).
 - Un décor stable et lisible, peu de personnages (1 à 3 maximum), actions physiques simples et filmables en continu.
-- Environ 2.5 à 3.2 mots parlés par seconde maximum pour laisser respirer le jeu.
-- `action`, `initial_state` et `final_state` sont concis (1 à 2 phrases courtes en anglais visuel concret, au présent) afin que le prompt LTX compilé reste largement sous 150 mots.
+- Vise 2.5 mots parlés/seconde, maximum 3.2, dans le temps disponible APRÈS chaque `start_sec`, autres répliques et pauses comprises, sans chevauchement. Raccourcis les répliques ou adapte la durée.
+- En anglais visuel au présent : `action` vise 15-20 mots, un geste principal ; `initial_state` et `final_state` 8-12 mots chacun. Avec trois personnages ou deux répliques, vise les bornes basses : les 150 mots du prompt compilé incluent aussi apparences, voix et dialogues.
 - `characters[].description` décrit l'apparence physique fixe en anglais visuel court (15–25 mots).
-- Le plan 1 a `continue_from_previous: false`. Les plans suivants dans le même décor continuent de préférence (`continue_from_previous: true`) pour garder les raccords cohérents.
+- `voice_hint` tient en un ou deux mots anglais.
+- Le premier plan a `continue_from_previous: false`. Ensuite, même lieu et même instant : `true` ; ellipse ou changement de lieu explicites : `false`. Changer de cadrage ne remet pas les personnages ou objets à zéro.
 - Ne demande JAMAIS de sous-titres ni de texte généré par LTX. Si un compteur ou affichage précis est utile à l'intrigue, utilise `display_overlay` (l'écran dans l'image reste vierge/noir et FFmpeg incruste les chiffres exacts au montage).
+
+VÉRIFIE AVANT DE RÉPONDRE (dans cette génération, sans rapport ni champ JSON supplémentaire) :
+- Si `continue_from_previous: true`, recopie à l'identique le `final_state` précédent dans `initial_state`. Montre chaque nouveau geste, déplacement, apparition ou départ dans `action`, jamais déjà accompli à l'ouverture. Une coupe ne justifie pas un objet déjà saisi ou un déplacement inexpliqué.
+- Vérifie l'accroche du plan 1, les décisions motivées par ce que chacun sait et veut, les identités, les `speaker_id` déclarés et le temps de parole. Livre uniquement le scénario.
 
 SCHÉMA JSON STRICT ATTENDU (réponds UNIQUEMENT par un objet JSON valide) :
 {
@@ -145,7 +151,10 @@ def generate_scenario_once(
     request_body: dict = {
         "model": settings.deepseek_model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT + "\n\nPRINCIPES ÉDITORIAUX PERMANENTS (adaptables au genre, sans recette rigide) :\n" + creative_guides},
+            {"role": "system", "content": (
+                "RÉFÉRENCES ÉDITORIALES (exemples adaptables au genre, pas un découpage imposé) :\n"
+                + creative_guides + "\n\n" + SYSTEM_PROMPT
+            )},
             {"role": "user", "content": user_message},
         ],
         "response_format": {"type": "json_object"},
@@ -153,7 +162,9 @@ def generate_scenario_once(
         "max_tokens": 3000,
     }
     if settings.deepseek_base_url.rstrip("/").endswith("api.deepseek.com"):
-        request_body["thinking"] = {"type": "disabled"}
+        request_body["thinking"] = {"type": "enabled"}
+        request_body["reasoning_effort"] = "low"
+        request_body["max_tokens"] = 16384  # Préparation intérieure et JSON dans la même réponse.
 
     if transport_fn is not None:
         api_response = transport_fn(request_body)
@@ -182,12 +193,20 @@ def generate_scenario_once(
         api_response = resp.json()
 
     try:
-        raw_content = api_response["choices"][0]["message"]["content"]
+        choice = api_response["choices"][0]
+        raw_content = choice["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise ScenarioGenerationError(
             "Réponse DeepSeek inattendue : champ `choices[0].message.content` introuvable.",
             raw_content=json.dumps(api_response, ensure_ascii=False)[:1000],
         ) from exc
+
+    if choice.get("finish_reason") == "length":
+        raise ScenarioGenerationError(
+            "Réponse DeepSeek tronquée : plafond de tokens atteint, préparation intérieure "
+            "comprise. Aucune relance automatique n'a été effectuée.",
+            raw_content=str(raw_content)[:2000],
+        )
 
     try:
         parsed = json.loads(raw_content)
