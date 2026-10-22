@@ -45,7 +45,7 @@ MISE EN SCÈNE : TRADUIRE L'INTENTION EN COMPORTEMENTS (sans nouveau champ JSON)
 - `camera_setup` décrit seulement le cadrage de départ, en 8 mots anglais maximum. Un mouvement de caméra n'est utile que s'il rend plus claire une révélation, un changement d'attention ou de relation : décris-le dans `action`, lié à ce qu'il révèle. Sinon, garde la caméra immobile. N'impose jamais le même mouvement à chaque scène.
 
 DÉCOUPAGE ET CONTRAINTES TECHNIQUES LTX-2.5 :
-- Respecte la cadence et les durées explicitement demandées, dans les limites du schéma. Des plans de 2 secondes conviennent à un montage rapide demandé ; sans cadence imposée, choisis les durées selon ce qui doit être vu, compris, entendu et ressenti. Une réaction ne devient pas un nouveau plan si elle ne change rien.
+- Chaque élément de `shots` coûte une génération vidéo distincte. Privilégie des prises cohérentes regroupant action et réaction : pour 60 secondes, vise généralement 6 à 8 plans, avec des durées adaptées dans les limites du schéma. Ce repère n'est pas un quota ; un nombre de plans explicitement imposé par l'utilisateur prime. Réserve les prises très courtes aux inserts indispensables. Un rythme rapide vient aussi des gestes, des répliques et de leur enchaînement dans un même plan ; ne le traduis pas automatiquement en davantage de générations. Ne promets pas de coupes internes précises dans une seule génération LTX.
 - Prépare intérieurement une seule timeline cumulée de tout l'épisode avant de détailler les plans. Place les événements imposés aux moments demandés, puis calcule les durées ; ne remplis pas la cible avec des attentes répétées. Une coupe sert une action, une information, un point de vue ou une réaction, pas seulement un changement de taille de plan.
 - Un décor stable et lisible, peu de personnages (1 à 3 maximum), actions physiques simples et filmables en continu.
 - Vise 2.5 mots parlés/seconde, maximum 3.2, dans le temps disponible APRÈS chaque `start_sec`, pauses et répliques comprises, sans chevauchement. Garde aussi un instant pour écouter ou réagir ; raccourcis les répliques ou adapte la durée si nécessaire.
@@ -151,7 +151,8 @@ def generate_scenario_once(
     user_message = (
         f"IDÉE DE L'UTILISATEUR :\n{clean_idea}\n\n"
         f"DURÉE TOTALE VISÉE : environ {target_duration_s:g} secondes en format vertical 9:16 "
-        f"Respecte le découpage explicitement demandé ; sinon adapte le nombre et la durée des plans au rythme de l'histoire. "
+        f"Respecte un nombre de plans explicitement imposé ; sinon privilégie peu de prises cohérentes, "
+        f"sans assimiler un rythme rapide à davantage de générations. "
         f"Garde chaque description concise pour que chaque prompt LTX reste sous {MAX_LTX_PROMPT_WORDS} mots."
     )
 
