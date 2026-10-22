@@ -66,15 +66,16 @@ def build_shot_image_prompt(project: Project, shot: Shot, decor: dict | None = N
     if shot.camera_setup:
         parts.append(f"Fixed camera composition: {shot.camera_setup}.")
     cast_state = shot.initial_state
-    index = next((i for i, s in enumerate(project.shots) if s.id == shot.id), 0)
-    if index:
-        previous = project.shots[index - 1]
-        if previous.final_state == shot.initial_state and previous.decor_id == shot.decor_id:
-            cast_state += " " + previous.initial_state
+    if shot.continue_from_previous and not shot.camera_setup:
+        index = next((i for i, s in enumerate(project.shots) if s.id == shot.id), 0)
+        if index:
+            previous = project.shots[index - 1]
+            if previous.final_state == shot.initial_state and previous.decor_id == shot.decor_id:
+                cast_state += " " + previous.initial_state
     for char in project.characters:
         if re.search(r"\b(?:" + re.escape(char.name) + "|" + re.escape(char.id) + r")\b", cast_state, re.I):
             parts.append(f"{char.name}: {char.description}")
-    framing = re.search(
+    framing = None if shot.camera_setup else re.search(
         r"\b(?:extreme close-up|medium close-up|close-up|wide shot|medium shot|full shot|"
         r"over-the-shoulder|gros plan|plan large|plan moyen|plan rapproche|plan rapproché)\b",
         shot.action, re.I,

@@ -95,7 +95,7 @@ def test_generation_repairs_only_prompts_and_unsafe_reference_chains_in_one_call
     project, meta = generate_scenario_once(settings=V2Settings(), idea=horror.idea,
                                          target_duration_s=60, transport_fn=transport)
     assert len(calls) == 1
-    assert project.narration_mode == "voice_over"
+    assert project.narration_mode == "dialogue"
     assert project.shots[0].initial_state in project.shots[0].image_prompt
     assert not project.shots[3].continue_from_previous
     assert meta["warnings"]

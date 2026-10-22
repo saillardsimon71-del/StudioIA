@@ -9,6 +9,7 @@
 1. Ouvrir sur un conflit, un danger, une émotion forte, un décalage comique ou une curiosité visuelle immédiate. Le premier plan soulève une question.
 2. Montrer plutôt que raconter. Si l'image montre Fraise en pleurs, le dialogue n'annonce pas « je suis triste » : il apporte une information nouvelle, par exemple « Il l'a fait. »
 3. Choisir un seul focus principal dans l'ouverture : un personnage, une émotion, une menace ou un objet intrigant. Éviter le world-building prématuré.
+4. Si le brief impose une règle ou un message indispensable, rendre cette information compréhensible dès l'ouverture et prévoir son exécution : texte exact dans `display_overlay`, son utile dans `action`. Un objet inquiétant seul ne remplace pas une règle nécessaire à la compréhension.
 
 ## À éviter, sauf justification dramatique précise
 

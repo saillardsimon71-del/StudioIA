@@ -37,6 +37,8 @@ Interface : **`http://127.0.0.1:8270`**. Si le port est deja occupe, le lancemen
 
 L'API officielle DeepSeek utilise `/responses` avec une sortie `json_schema` issue des modèles Pydantic V2, sans champs de fichiers ni d'états de rendu. La validation locale reste active et aucun échec ne déclenche de seconde requête. Les URL personnalisées conservent leur contrat Chat Completions.
 
+Pour les nouveaux scénarios, DeepSeek fournit les états initial et final et le cadrage de chaque plan. Le moteur construit `image_prompt` depuis l'état initial, les apparences et le décor, puis compile les instructions vidéo. Les prompts image déjà fournis restent compatibles. Les inserts sans personnage n'héritent plus du casting global. Les guides demandent une timeline cumulée, le respect des textes et sons du brief et la continuité des accessoires ; ces consignes améliorent la préparation sans garantir la qualité artistique du modèle.
+
 Les futures réponses de scénario rejetées sont conservées intégralement dans `llm_runs.raw_content` pour un diagnostic local. La migration ajoute cette colonne sans modifier l'historique existant ; les anciens extraits tronqués ne permettent pas de reconstituer les réponses passées.
 
 ---
