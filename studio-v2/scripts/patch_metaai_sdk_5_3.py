@@ -1,6 +1,6 @@
 """Apply the Studio IA isolation fix to an installed metaai-sdk 5.3.0 package.
 
-This patcher is intentionally limited to four Python modules in the imported
+This patcher is intentionally limited to five Python modules in the imported
 metaai_api package. It never reads, writes, or prints Meta cookies, browser
 profiles, Studio projects, or generated assets.
 """
@@ -16,18 +16,32 @@ import shutil
 import sys
 import textwrap
 
-MARKER = "STUDIOIA_ISOLATED_GENERATION_V1"
+PREVIOUS_MARKER = "STUDIOIA_ISOLATED_GENERATION_V1"
+MARKER = "STUDIOIA_ISOLATED_GENERATION_V2"
+NEW_CHAT_LABELS = (
+    "New chat", "New conversation", "Nouvelle discussion",
+    "Nouvelle conversation", "Nouveau chat",
+)
 
 
-AGENT_NEW_CHAT = r'''def new_chat(self, timeout: int = 20) -> str:
-    """Open and confirm a blank Meta conversation; never swallow failure."""
+AGENT_NEW_CHAT = r'''def new_chat(self, timeout: int = 10) -> str:
+    """Open and confirm a blank Meta conversation using exact localized labels."""
     if not self._ready:
         self.setup()
     before_id = self._get_conversation_id()
-    try:
-        self._run("find", "role", "link", "click", "--name", "New chat", timeout=10)
-    except Exception as exc:
-        raise ConnectionError("Meta AI n'a pas confirmé l'ouverture d'une nouvelle conversation.") from exc
+    clicked = False
+    for role in ("button", "link"):
+        for label in ("New chat", "New conversation", "Nouvelle discussion", "Nouvelle conversation", "Nouveau chat"):
+            try:
+                self._run("find", "role", role, "click", "--name", label, timeout=3)
+                clicked = True
+                break
+            except Exception:
+                continue
+        if clicked:
+            break
+    if not clicked:
+        raise ConnectionError("Contrôle exact de nouvelle conversation Meta AI introuvable (anglais/français).")
 
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -39,7 +53,7 @@ AGENT_NEW_CHAT = r'''def new_chat(self, timeout: int = 20) -> str:
                 "const u=r.querySelectorAll('[class*=user-message]').length;"
                 "const i=r.querySelector('[role=textbox],textarea,[contenteditable=true]');"
                 "return {a,u,ready:!!i}; })()",
-                json_output=True, timeout=10,
+                json_output=True, timeout=5,
             )
             state = result.get("data", {}).get("result", {}) if isinstance(result, dict) else {}
             current_id = self._get_conversation_id()
@@ -50,41 +64,178 @@ AGENT_NEW_CHAT = r'''def new_chat(self, timeout: int = 20) -> str:
                 self._studioia_previous_conversation_id = before_id
                 self._studioia_fresh_chat_armed = True
                 return current_id
-        except Exception:
-            pass
-        time.sleep(0.5)
-    raise ConnectionError("Meta AI n'a pas confirmé une conversation vide dans le délai imparti.")'''
+        except Exception as exc:
+            raise ConnectionError("Impossible de vérifier la nouvelle conversation Meta AI.") from exc
+        time.sleep(0.4)
+    raise ConnectionError("Meta AI n'a pas confirmé une conversation vierge en 10 secondes.")'''
 
 
-PLAYWRIGHT_NEW_CHAT = r'''def new_chat(self, timeout: int = 20) -> str:
-    """Open and confirm a blank Meta conversation; never swallow failure."""
+PLAYWRIGHT_SETUP = r'''def setup(self) -> None:
+    """Start Meta AI browser without clicking page controls implicitly."""
+    stage = "playwright_start"
+    logger.info("[studioia-metaai] stage=%s outcome=start", stage)
+    try:
+        self._check_installed()
+        self._playwright = sync_playwright().start()
+        stage = "chromium_launch"
+        logger.info("[studioia-metaai] stage=%s outcome=start", stage)
+        self._browser = self._playwright.chromium.launch(
+            headless=not self.headed,
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        )
+        stage = "browser_context"
+        context = self._browser.new_context(
+            user_agent=self.user_agent, viewport={"width": 1280, "height": 720},
+        )
+        cookie_list = [{"name": name, "value": value, "domain": ".meta.ai", "path": "/"}
+                       for name, value in self.cookies.items()]
+        context.add_cookies(cookie_list)
+        self._page = context.new_page()
+        stage = "meta_navigation"
+        logger.info("[studioia-metaai] stage=%s outcome=start", stage)
+        self._page.goto("https://www.meta.ai/", wait_until="domcontentloaded", timeout=60000)
+        logger.info("[studioia-metaai] stage=%s outcome=complete path=%s", stage, self._studioia_current_path())
+        time.sleep(5)
+        self._dismiss_overlays(stage="after_initial_navigation")
+        stage = "cookie_reload"
+        self._page.reload(wait_until="domcontentloaded", timeout=60000)
+        time.sleep(5)
+        self._dismiss_overlays(stage="after_cookie_reload")
+        self._ready = True
+        logger.info("[studioia-metaai] stage=setup outcome=ready")
+    except Exception as exc:
+        self._ready = False
+        logger.error("[studioia-metaai] stage=%s outcome=error error_type=%s", stage, type(exc).__name__)
+        if isinstance(exc, ConnectionError):
+            raise
+        raise ConnectionError(f"Échec Meta AI à l'étape {stage} ({type(exc).__name__}).") from exc'''
+
+
+PLAYWRIGHT_CURRENT_PATH = r'''def _studioia_current_path(self) -> str:
+    try:
+        path = self._page.evaluate("location.pathname + location.hash")
+        return str(path or "")
+    except Exception:
+        return ""'''
+
+
+PLAYWRIGHT_DISMISS_OVERLAYS = r'''def _dismiss_overlays(self, stage: str = "runtime") -> dict:
+    """Inspect overlays and report risky controls; never click a page button."""
+    logger.info("[studioia-metaai] stage=overlay_inspection point=%s outcome=start", stage)
+    try:
+        state = self._page.evaluate("""(() => {
+          const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+          const controls = Array.from(document.querySelectorAll('button,[role=button]'))
+            .filter(visible).map(e => String(e.getAttribute('aria-label') || e.title || e.innerText || '').trim())
+            .filter(Boolean).slice(0, 80);
+          const dialogs = Array.from(document.querySelectorAll('[role=dialog],[aria-modal=true]')).filter(visible).length;
+          return {path: location.pathname + location.hash, controls, dialogs};
+        })()""") or {}
+    except Exception as exc:
+        logger.error("[studioia-metaai] stage=overlay_inspection point=%s outcome=error error_type=%s",
+                     stage, type(exc).__name__)
+        raise ConnectionError(f"Impossible d'inspecter l'interface Meta AI à l'étape {stage}.") from exc
+
+    path = str(state.get("path") or self._studioia_current_path())
+    if re.search(r"settings|applications|/apps(?:/|$|[?#])", path, re.IGNORECASE):
+        logger.error("[studioia-metaai] stage=overlay_inspection point=%s outcome=unexpected_route path=%s",
+                     stage, path[:160])
+        raise ConnectionError(f"Meta AI a ouvert une page de paramètres au lieu du chat (étape {stage}, {path[:120]}).")
+    dangerous = [label for label in state.get("controls", [])
+                 if str(label).casefold() in {"connect", "connecter", "se connecter", "sign in", "log in"}]
+    if dangerous:
+        logger.warning("[studioia-metaai] stage=overlay_inspection point=%s outcome=no_click labels=%s",
+                       stage, ",".join(str(label)[:40] for label in dangerous))
+    logger.info("[studioia-metaai] stage=overlay_inspection point=%s outcome=inspected dialogs=%s",
+                stage, state.get("dialogs", 0))
+    return state'''
+
+
+PLAYWRIGHT_SWITCH_MODE = r'''def _switch_mode(self, mode_name: str) -> None:
+    """Change mode only on an explicit request and by exact accessible name."""
+    logger.info("[studioia-metaai] stage=mode_switch outcome=start mode=%s", mode_name)
+    try:
+        button = self._page.get_by_role("button", name=mode_name, exact=True)
+        if button.count() != 1 or not button.is_visible():
+            raise ConnectionError(f"Le contrôle de mode exact « {mode_name} » est absent ou ambigu.")
+        button.click(timeout=4000)
+        menu = self._page.get_by_role("menuitemcheckbox", name=mode_name, exact=True)
+        if menu.count() != 1 or not menu.is_visible():
+            raise ConnectionError(f"L'option de mode « {mode_name} » n'a pas été confirmée.")
+        menu.click(timeout=4000)
+        logger.info("[studioia-metaai] stage=mode_switch outcome=complete mode=%s", mode_name)
+    except Exception as exc:
+        logger.error("[studioia-metaai] stage=mode_switch outcome=error error_type=%s", type(exc).__name__)
+        if isinstance(exc, ConnectionError):
+            raise
+        raise ConnectionError(f"Échec du changement explicite vers le mode {mode_name}.") from exc'''
+
+
+PLAYWRIGHT_NEW_CHAT = f'''def new_chat(self, timeout: int = 10) -> str:
+    """Open a new chat via exact localized accessible labels and verify it is blank."""
     if not self._ready:
         self.setup()
+    self._dismiss_overlays(stage="before_new_chat")
     before_id = self._get_conversation_id()
+    labels = {NEW_CHAT_LABELS!r}
+    selected = None
+    for role in ("button", "link"):
+        for label in labels:
+            try:
+                locator = self._page.get_by_role(role, name=label, exact=True)
+                count = locator.count()
+                if count == 1 and locator.is_visible():
+                    selected = (role, label, locator)
+                    break
+                if count > 1:
+                    logger.warning("[studioia-metaai] stage=new_chat outcome=ambiguous role=%s label=%s count=%s",
+                                   role, label, count)
+            except Exception:
+                continue
+        if selected:
+            break
+    if selected is None:
+        logger.error("[studioia-metaai] stage=new_chat outcome=control_not_found path=%s",
+                     self._studioia_current_path()[:160])
+        raise ConnectionError("Bouton de nouvelle conversation Meta AI introuvable (libellés anglais/français exacts).")
+
+    role, label, locator = selected
+    logger.info("[studioia-metaai] stage=new_chat outcome=click role=%s exact_label=%s", role, label)
     try:
-        link = self._page.query_selector('a:has-text("New chat")')
-        if not link or not link.is_visible():
-            raise RuntimeError("lien New chat absent")
-        link.click(timeout=5000)
+        locator.click(timeout=4000)
     except Exception as exc:
-        raise ConnectionError("Meta AI n'a pas confirmé l'ouverture d'une nouvelle conversation.") from exc
+        logger.error("[studioia-metaai] stage=new_chat outcome=click_error error_type=%s", type(exc).__name__)
+        raise ConnectionError(f"Échec du clic explicite sur « {{label}} ».") from exc
 
     deadline = time.time() + timeout
+    last_state = {{}}
     while time.time() < deadline:
+        path = self._studioia_current_path()
+        if re.search(r"settings|applications|/apps(?:/|$|[?#])", path, re.IGNORECASE):
+            logger.error("[studioia-metaai] stage=new_chat outcome=unexpected_route path=%s", path[:160])
+            raise ConnectionError(f"Le bouton « {{label}} » a ouvert une page de paramètres ({{path[:120]}}).")
         try:
-            state = self._response_dom_state()
+            last_state = self._response_dom_state()
             current_id = self._get_conversation_id()
             id_changed = current_id != before_id
             first_blank_page = not before_id and not current_id
-            if (state.get("input_ready") and state.get("assistant_count") == 0
-                    and state.get("user_count") == 0 and (id_changed or first_blank_page)):
+            if (last_state.get("input_ready") and last_state.get("assistant_count") == 0
+                    and last_state.get("user_count") == 0 and (id_changed or first_blank_page)):
                 self._studioia_previous_conversation_id = before_id
                 self._studioia_fresh_chat_armed = True
+                logger.info("[studioia-metaai] stage=new_chat outcome=verified_blank path=%s id_changed=%s",
+                            path[:160], id_changed)
                 return current_id
-        except Exception:
-            pass
-        time.sleep(0.5)
-    raise ConnectionError("Meta AI n'a pas confirmé une conversation vide dans le délai imparti.")'''
+        except ConnectionError:
+            raise
+        except Exception as exc:
+            logger.warning("[studioia-metaai] stage=new_chat outcome=verification_poll_error error_type=%s",
+                           type(exc).__name__)
+        time.sleep(0.4)
+    logger.error("[studioia-metaai] stage=new_chat outcome=timeout path=%s assistant_count=%s user_count=%s input_ready=%s",
+                 self._studioia_current_path()[:160], last_state.get("assistant_count"),
+                 last_state.get("user_count"), last_state.get("input_ready"))
+    raise ConnectionError("Meta AI n'a pas confirmé de conversation vierge en 10 secondes.")'''
 
 
 DOM_STATE_JS = r'''(() => {
@@ -181,12 +332,11 @@ AGENT_SEND_MESSAGE = r'''def send_message(self, prompt: str, timeout: int = 120,
 
     if thinking_mode:
         self._switch_mode("Thinking")
-    else:
-        self._switch_mode("Instant")
 
     baseline = self._response_dom_state()
     baseline_urls = set(baseline.get("urls", [])) | set(baseline.get("existing_urls", []))
     baseline_count = int(baseline.get("assistant_count", 0))
+    baseline_user_count = int(baseline.get("user_count", 0))
     snapshot = self._run("snapshot", "-i", json_output=True, timeout=15)
     input_ref = self._find_input(snapshot)
     if not input_ref:
@@ -202,6 +352,17 @@ AGENT_SEND_MESSAGE = r'''def send_message(self, prompt: str, timeout: int = 120,
     if typed_value != prompt:
         raise ConnectionError("Meta AI n'a pas confirmé la saisie exacte du prompt courant.")
     self._run("press", "Enter")
+    submit_deadline = time.time() + 8
+    previous_id = getattr(self, "_studioia_previous_conversation_id", None)
+    while time.time() < submit_deadline:
+        current_id = self._get_conversation_id()
+        current_state = self._response_dom_state()
+        if (current_state.get("user_count", 0) > baseline_user_count
+                or (current_id and current_id != previous_id)):
+            break
+        time.sleep(0.4)
+    else:
+        raise ConnectionError("Meta AI n'a pas confirmé la soumission du prompt en 8 secondes.")
     if require_new_conversation:
         self._studioia_fresh_chat_armed = False
 
@@ -215,50 +376,102 @@ AGENT_SEND_MESSAGE = r'''def send_message(self, prompt: str, timeout: int = 120,
 PLAYWRIGHT_SEND_MESSAGE = r'''def send_message(self, prompt: str, timeout: int = 120,
                      thinking_mode: bool = False,
                      require_new_conversation: bool = False) -> Dict[str, Any]:
-    """Send a prompt and accept only media from its fresh assistant turn."""
+    """Submit through the composer only; image requests leave the mode untouched."""
+    stage = "send_message_setup"
+    logger.info("[studioia-metaai] stage=%s outcome=start fresh_required=%s", stage, require_new_conversation)
     if not self._ready:
         self.setup()
     if require_new_conversation and not getattr(self, "_studioia_fresh_chat_armed", False):
+        logger.error("[studioia-metaai] stage=new_chat_guard outcome=not_armed")
         raise ConnectionError("La conversation Meta AI n'a pas été confirmée comme nouvelle.")
+
+    # Image generation does not need a mode toggle. Preserve an explicit Thinking
+    # request for chat callers, but never click Instant as a default.
     if thinking_mode:
         self._switch_mode("Thinking")
-    else:
-        self._switch_mode("Instant")
-    self._dismiss_overlays()
-
+    self._dismiss_overlays(stage="before_composer")
     baseline = self._response_dom_state()
     baseline_urls = set(baseline.get("urls", [])) | set(baseline.get("existing_urls", []))
     baseline_count = int(baseline.get("assistant_count", 0))
-    selectors = ['textarea[data-testid="composer-input"]',
-                 'div[data-testid="composer-input"] [contenteditable]',
-                 'textarea[placeholder*="Ask Meta"]', '[role="textbox"]', 'textarea']
-    composer = None
-    for selector in selectors:
-        try:
-            candidate = self._page.query_selector(selector)
-            if candidate and candidate.is_visible():
-                composer = candidate
-                break
-        except Exception:
-            continue
-    if composer is None:
-        raise ConnectionError("Le champ de saisie Meta AI est introuvable.")
-    composer.scroll_into_view_if_needed(timeout=5000)
-    composer.fill(prompt, timeout=5000)
-    try:
-        entered = composer.input_value()
-    except Exception:
-        entered = composer.inner_text()
-    if entered != prompt:
-        raise ConnectionError("Meta AI n'a pas confirmé la saisie exacte du prompt courant.")
-    composer.press("Enter")
-    if require_new_conversation:
-        self._studioia_fresh_chat_armed = False
+    baseline_user_count = int(baseline.get("user_count", 0))
 
-    urls, text = self._wait_for_response(timeout, baseline_urls, baseline_count)
+    selectors = (
+        '[data-testid="composer-input"]',
+        'textarea[placeholder="Ask Meta AI"]',
+        'main [role="textbox"]',
+        'main textarea',
+    )
+    composer = None
+    selected_selector = None
+    stage = "composer_lookup"
+    try:
+        for selector in selectors:
+            locator = self._page.locator(selector)
+            count = locator.count()
+            if count > 1:
+                raise ConnectionError(f"Champ de saisie Meta ambigu ({selector}, {count} éléments).")
+            if count == 1 and locator.is_visible():
+                composer = locator
+                selected_selector = selector
+                break
+        if composer is None:
+            raise ConnectionError("Champ de saisie de la conversation absent; aucun autre bouton n'a été cliqué.")
+        composer.scroll_into_view_if_needed(timeout=3000)
+        composer.click(timeout=3000)
+        stage = "prompt_fill"
+        logger.info("[studioia-metaai] stage=%s outcome=start selector=%s", stage, selected_selector)
+        composer.fill(prompt, timeout=3000)
+        try:
+            entered = composer.input_value()
+        except Exception:
+            entered = composer.inner_text()
+        if entered != prompt:
+            raise ConnectionError("Le champ Meta AI ne contient pas exactement le prompt demandé.")
+        logger.info("[studioia-metaai] stage=prompt_fill outcome=verified characters=%s", len(prompt))
+        stage = "prompt_submit"
+        composer.press("Enter", timeout=3000)
+        logger.info("[studioia-metaai] stage=%s outcome=submitted", stage)
+        stage = "submit_confirmation"
+        submit_deadline = time.time() + 8
+        previous_id = getattr(self, "_studioia_previous_conversation_id", None)
+        submitted = False
+        while time.time() < submit_deadline:
+            path = self._studioia_current_path()
+            if re.search(r"settings|applications|/apps(?:/|$|[?#])", path, re.IGNORECASE):
+                raise ConnectionError(f"Après la soumission, Meta AI a ouvert les paramètres ({path[:120]}).")
+            current_id = self._get_conversation_id()
+            current_state = self._response_dom_state()
+            if (current_state.get("user_count", 0) > baseline_user_count
+                    or (current_id and current_id != previous_id)):
+                submitted = True
+                break
+            time.sleep(0.4)
+        if not submitted:
+            raise ConnectionError("Meta AI n'a pas confirmé la soumission du prompt en 8 secondes.")
+        logger.info("[studioia-metaai] stage=%s outcome=confirmed", stage)
+        if require_new_conversation:
+            self._studioia_fresh_chat_armed = False
+    except Exception as exc:
+        logger.error("[studioia-metaai] stage=%s outcome=error error_type=%s", stage, type(exc).__name__)
+        if isinstance(exc, ConnectionError):
+            raise
+        raise ConnectionError(f"Échec Meta AI à l'étape {stage} ({type(exc).__name__}).") from exc
+
+    stage = "image_wait"
+    logger.info("[studioia-metaai] stage=%s outcome=start timeout_s=%s", stage, timeout)
+    try:
+        urls, text = self._wait_for_response(timeout, baseline_urls, baseline_count)
+    except Exception as exc:
+        logger.error("[studioia-metaai] stage=%s outcome=error error_type=%s", stage, type(exc).__name__)
+        if isinstance(exc, ConnectionError):
+            raise
+        raise ConnectionError(f"Échec Meta AI pendant l'attente de l'image ({type(exc).__name__}).") from exc
     conv_id = self._get_conversation_id()
     if not conv_id or conv_id == getattr(self, "_studioia_previous_conversation_id", None):
+        logger.error("[studioia-metaai] stage=conversation_id outcome=unconfirmed")
         raise ConnectionError("Meta AI n'a pas confirmé l'identifiant de la conversation courante.")
+    logger.info("[studioia-metaai] stage=%s outcome=complete image_count=%s conversation_confirmed=true",
+                stage, len(urls))
     return {"urls": urls, "text": text, "conversation_id": conv_id}'''
 
 
@@ -271,6 +484,7 @@ WAIT_METHOD = r'''def _wait_for_response(self, timeout: int, baseline_urls: Opti
     last_text = ""
     text_ticks = 0
     start = time.time()
+    logger.info("[studioia-metaai] stage=image_wait outcome=polling timeout_s=%s", timeout)
     while time.time() - start < timeout:
         time.sleep(2)
         state = self._response_dom_state()
@@ -297,13 +511,18 @@ WAIT_METHOD = r'''def _wait_for_response(self, timeout: int, baseline_urls: Opti
                 previous = getattr(self, "_studioia_previous_conversation_id", None)
                 if not conversation_id or conversation_id == previous:
                     raise ConnectionError("Le média Meta AI n'est associé à aucune conversation fraîche confirmée.")
+                logger.info("[studioia-metaai] stage=image_wait outcome=image_stable elapsed_s=%.1f candidates=%s",
+                            time.time() - start, len(candidates))
                 return list(candidates), text
         else:
             stable_urls = None
             stable_ticks = 0
 
         if text and not state.get("busy") and text_ticks >= 3:
+            logger.info("[studioia-metaai] stage=image_wait outcome=text_only elapsed_s=%.1f",
+                        time.time() - start)
             return [], text
+    logger.error("[studioia-metaai] stage=image_wait outcome=timeout elapsed_s=%.1f", time.time() - start)
     raise ConnectionError("Meta AI n'a pas terminé une réponse image attribuable au prompt courant.")'''
 
 
@@ -438,6 +657,18 @@ def _insert_method(path: Path, class_name: str, before_method: str, method_sourc
     path.write_text(updated, encoding="utf-8", newline="")
 
 
+def _upsert_method(path: Path, class_name: str, method_name: str, before_method: str,
+                   method_source: str) -> None:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    cls = _find_node(tree, (class_name,))
+    exists = any(isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == method_name
+                 for item in cls.body)
+    if exists:
+        _replace_callable(path, (class_name, method_name), method_source)
+    else:
+        _insert_method(path, class_name, before_method, method_source)
+
+
 def _replace_class(path: Path, class_name: str, replacement: str) -> None:
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(path))
@@ -453,32 +684,42 @@ def _replace_class(path: Path, class_name: str, replacement: str) -> None:
     path.write_text(updated, encoding="utf-8", newline="")
 
 
+def _set_class_marker(path: Path, class_name: str) -> None:
+    source = path.read_text(encoding="utf-8")
+    current = f'"""{MARKER}"""'
+    previous = f'"""{PREVIOUS_MARKER}"""'
+    if current in source:
+        return
+    if previous in source:
+        source = source.replace(previous, current, 1)
+    else:
+        declaration = f"class {class_name}:\n"
+        if declaration not in source:
+            raise RuntimeError(f"Class declaration not found while marking {class_name}")
+        source = source.replace(declaration, declaration + f"    {current}\n", 1)
+    path.write_text(source, encoding="utf-8", newline="")
+
+
 def _replace_agent_browser(package: Path) -> None:
     path = package / "browser.py"
-    source = path.read_text(encoding="utf-8")
-    if MARKER in source:
-        return
-    _replace_callable(path, ("BrowserBackend", "new_chat"), AGENT_NEW_CHAT)
-    _insert_method(path, "BrowserBackend", "_wait_for_response", AGENT_STATE_METHOD)
-    _replace_callable(path, ("BrowserBackend", "send_message"), AGENT_SEND_MESSAGE)
-    _replace_callable(path, ("BrowserBackend", "_wait_for_response"), WAIT_METHOD)
-    source = path.read_text(encoding="utf-8")
-    source = source.replace('class BrowserBackend:\n', f'class BrowserBackend:\n    """{MARKER}"""\n', 1)
-    path.write_text(source, encoding="utf-8", newline="")
+    _upsert_method(path, "BrowserBackend", "new_chat", "send_message", AGENT_NEW_CHAT)
+    _upsert_method(path, "BrowserBackend", "_response_dom_state", "send_message", AGENT_STATE_METHOD)
+    _upsert_method(path, "BrowserBackend", "send_message", "_wait_for_response", AGENT_SEND_MESSAGE)
+    _upsert_method(path, "BrowserBackend", "_wait_for_response", "send_message", WAIT_METHOD)
+    _set_class_marker(path, "BrowserBackend")
 
 
 def _replace_playwright(package: Path) -> None:
     path = package / "playwright_backend.py"
-    source = path.read_text(encoding="utf-8")
-    if MARKER in source:
-        return
-    _replace_callable(path, ("PlaywrightBackend", "new_chat"), PLAYWRIGHT_NEW_CHAT)
-    _insert_method(path, "PlaywrightBackend", "_wait_for_response", PLAYWRIGHT_STATE_METHOD)
-    _replace_callable(path, ("PlaywrightBackend", "send_message"), PLAYWRIGHT_SEND_MESSAGE)
-    _replace_callable(path, ("PlaywrightBackend", "_wait_for_response"), WAIT_METHOD)
-    source = path.read_text(encoding="utf-8")
-    source = source.replace('class PlaywrightBackend:\n', f'class PlaywrightBackend:\n    """{MARKER}"""\n', 1)
-    path.write_text(source, encoding="utf-8", newline="")
+    _upsert_method(path, "PlaywrightBackend", "setup", "new_chat", PLAYWRIGHT_SETUP)
+    _upsert_method(path, "PlaywrightBackend", "_studioia_current_path", "new_chat", PLAYWRIGHT_CURRENT_PATH)
+    _upsert_method(path, "PlaywrightBackend", "_dismiss_overlays", "new_chat", PLAYWRIGHT_DISMISS_OVERLAYS)
+    _upsert_method(path, "PlaywrightBackend", "_switch_mode", "new_chat", PLAYWRIGHT_SWITCH_MODE)
+    _upsert_method(path, "PlaywrightBackend", "new_chat", "send_message", PLAYWRIGHT_NEW_CHAT)
+    _upsert_method(path, "PlaywrightBackend", "_response_dom_state", "_wait_for_response", PLAYWRIGHT_STATE_METHOD)
+    _upsert_method(path, "PlaywrightBackend", "send_message", "_wait_for_response", PLAYWRIGHT_SEND_MESSAGE)
+    _upsert_method(path, "PlaywrightBackend", "_wait_for_response", "send_message", WAIT_METHOD)
+    _set_class_marker(path, "PlaywrightBackend")
 
 
 def _ensure_asyncio_import(path: Path) -> None:
@@ -492,8 +733,11 @@ def _ensure_asyncio_import(path: Path) -> None:
 
 def _append_marker(path: Path) -> None:
     source = path.read_text(encoding="utf-8")
+    source = source.replace(f"# {PREVIOUS_MARKER}\n", "")
     if MARKER not in source:
         path.write_text(source.rstrip() + f"\n\n# {MARKER}\n", encoding="utf-8", newline="")
+    else:
+        path.write_text(source, encoding="utf-8", newline="")
 
 
 def patch(package: Path, backup_root: Path) -> None:
@@ -501,12 +745,21 @@ def patch(package: Path, backup_root: Path) -> None:
     for name in required:
         if not (package / name).is_file():
             raise RuntimeError(f"Package module missing; refusing partial patch: {name}")
-    if MARKER in (package / "browser.py").read_text(encoding="utf-8"):
-        if all(MARKER in (package / name).read_text(encoding="utf-8")
-               for name in ("browser.py", "playwright_backend.py", "generation.py", "main.py", "api_server.py")):
-            print("Studio IA MetaAI patch already installed; no files changed.")
+    marker_states = {
+        name: (MARKER in (package / name).read_text(encoding="utf-8"),
+               PREVIOUS_MARKER in (package / name).read_text(encoding="utf-8"))
+        for name in required
+    }
+    v2_count = sum(v2 for v2, _ in marker_states.values())
+    v1_count = sum(v1 for _, v1 in marker_states.values())
+    if v2_count:
+        if v2_count == len(required):
+            print("Studio IA MetaAI patch v2 already installed; no files changed.")
             return
-        raise RuntimeError("Partial Studio IA patch detected; restore backup before retrying.")
+        raise RuntimeError("Partial Studio IA patch v2 detected; restore backup before retrying.")
+    if v1_count and v1_count != len(required):
+        raise RuntimeError("Partial v1 patch detected; restore its backup before upgrading.")
+    upgrading_v1 = v1_count == len(required)
 
     backup = backup_root / dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     backup.mkdir(parents=True, exist_ok=False)
@@ -530,7 +783,8 @@ def patch(package: Path, backup_root: Path) -> None:
         for name in touched:
             shutil.copy2(backup / name, package / name)
         raise
-    print(f"Patched metaai-sdk 5.3.0 modules only. Backup: {backup}")
+    action = "Upgraded v1 to v2" if upgrading_v1 else "Patched"
+    print(f"{action} metaai-sdk 5.3.0 modules only. Backup: {backup}")
 
 
 def main() -> int:

@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import logging
 from pathlib import Path
+import re
 import sys
+import textwrap
 import time
 from typing import Any, List, Optional, Set, Tuple
 
@@ -97,6 +100,7 @@ def test_waiter_ignores_baseline_and_accepts_stable_current_response(monkeypatch
     namespace = {
         "Any": Any, "List": List, "Optional": Optional, "Set": Set, "Tuple": Tuple, "time": time,
         "is_media_url": lambda url: "scontent" in url,
+        "logger": logging.getLogger("patcher-test"),
     }
     exec("class Waiter:\n" + "\n".join("    " + line for line in patcher.WAIT_METHOD.splitlines()), namespace)
     clock = [0.0]
@@ -123,3 +127,103 @@ def test_waiter_ignores_baseline_and_accepts_stable_current_response(monkeypatch
     urls, text = Fake([fresh] * 3)._wait_for_response(8, {stale}, 0)
     assert urls == [current]
     assert text == "generated"
+
+
+def test_v1_patch_upgrades_in_place_and_remains_idempotent(tmp_path, capsys):
+    package = _upstream_fixture(tmp_path)
+    backup_root = tmp_path / "backups"
+    patcher.patch(package, backup_root)
+    for name in ("browser.py", "playwright_backend.py", "generation.py", "main.py", "api_server.py"):
+        path = package / name
+        path.write_text(path.read_text(encoding="utf-8").replace(patcher.MARKER, patcher.PREVIOUS_MARKER),
+                        encoding="utf-8")
+
+    patcher.patch(package, backup_root)
+    output = capsys.readouterr().out
+    assert "Upgraded v1 to v2" in output
+    assert len(list(backup_root.iterdir())) == 2
+    for name in ("browser.py", "playwright_backend.py", "generation.py", "main.py", "api_server.py"):
+        source = (package / name).read_text(encoding="utf-8")
+        ast.parse(source)
+        assert patcher.MARKER in source
+        assert patcher.PREVIOUS_MARKER not in source
+    patcher.patch(package, backup_root)
+    assert len(list(backup_root.iterdir())) == 2
+    assert "already installed" in capsys.readouterr().out
+
+
+def test_french_new_chat_is_exact_and_connecter_is_never_clicked():
+    class Locator:
+        def __init__(self, page, role, label):
+            self.page, self.role, self.label = page, role, label
+
+        def count(self):
+            return int(self.role == "button" and self.label == "Nouvelle discussion")
+
+        def is_visible(self):
+            return True
+
+        def click(self, timeout=None):
+            self.page.clicked.append((self.role, self.label))
+            self.page.conversation_id = "fresh-thread"
+
+    class Page:
+        def __init__(self):
+            self.clicked = []
+            self.conversation_id = "old-thread"
+
+        def get_by_role(self, role, name, exact=False):
+            assert exact is True
+            return Locator(self, role, name)
+
+        def evaluate(self, script):
+            # A French sign-in control is present, but inspection is read-only.
+            return {"path": "/", "controls": ["Connecter"], "dialogs": 1}
+
+    namespace = {"re": re, "time": time, "logger": logging.getLogger("patcher-test"),
+                 "ConnectionError": RuntimeError}
+    source = "class Patched:\n" + textwrap.indent(patcher.PLAYWRIGHT_CURRENT_PATH, "    ") + "\n" + \
+        textwrap.indent(patcher.PLAYWRIGHT_DISMISS_OVERLAYS, "    ") + "\n" + \
+        textwrap.indent(patcher.PLAYWRIGHT_NEW_CHAT, "    ")
+    exec(source, namespace)
+    backend = namespace["Patched"]()
+    backend._ready = True
+    backend._page = Page()
+    backend._studioia_current_path = lambda: "/"
+    backend._get_conversation_id = lambda: backend._page.conversation_id
+    backend._response_dom_state = lambda: {
+        "assistant_count": 0, "user_count": 0, "input_ready": True,
+    }
+
+    conversation_id = backend.new_chat()
+    assert conversation_id == "fresh-thread"
+    assert backend._studioia_fresh_chat_armed is True
+    assert backend._page.clicked == [("button", "Nouvelle discussion")]
+    assert "Connecter" not in [label for _, label in backend._page.clicked]
+
+
+def test_patch_has_no_generic_connect_click_and_image_send_does_not_force_mode():
+    assert ".click(" not in patcher.PLAYWRIGHT_DISMISS_OVERLAYS
+    assert ".get_by_text" not in patcher.PLAYWRIGHT_DISMISS_OVERLAYS
+    assert "self._switch_mode(\"Instant\")" not in patcher.PLAYWRIGHT_SEND_MESSAGE
+    assert "get_by_role(role, name=label, exact=True)" in patcher.PLAYWRIGHT_NEW_CHAT
+
+
+def test_settings_applications_route_fails_explicitly_without_clicking_controls():
+    namespace = {"re": re, "logger": logging.getLogger("patcher-test"),
+                 "ConnectionError": RuntimeError}
+    source = "class Patched:\n" + textwrap.indent(patcher.PLAYWRIGHT_DISMISS_OVERLAYS, "    ")
+    exec(source, namespace)
+
+    class Page:
+        clicked = False
+
+        def evaluate(self, script):
+            return {"path": "/settings/apps", "controls": ["Connecter"], "dialogs": 1}
+
+    backend = namespace["Patched"]()
+    backend._page = Page()
+    backend._studioia_current_path = lambda: "/settings/apps"
+    with pytest.raises(RuntimeError, match="paramètres"):
+        backend._dismiss_overlays(stage="test_french_overlay")
+    assert backend._page.clicked is False
