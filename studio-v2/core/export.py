@@ -76,6 +76,7 @@ def write_fixed_overlay_ass(
         if not val:
             continue
         safe_val = str(val).replace("{", "").replace("}", "")
+        safe_val = safe_val.replace("\r\n", "\n").replace("\r", "\n").replace("\n", r"\N")
         lines.append(
             f"Dialogue: 0,{_ass_timestamp(start_t)},{_ass_timestamp(end_t)},FixedZone,,0,0,0,,"
             f"{{\\an5\\pos({px},{py})}}{safe_val}"

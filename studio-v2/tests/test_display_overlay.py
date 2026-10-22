@@ -88,6 +88,37 @@ def test_export_keeps_blank_intervals_before_and_after_timed_text(tmp_path):
     assert maxima[2] < 5
 
 
+@pytest.mark.parametrize("line_break", ["\n", "\r\n"])
+def test_export_renders_initial_and_changed_multiline_text(tmp_path, line_break):
+    overlay = DisplayOverlay(
+        initial_text=f"HAUT{line_break}BAS", x=0.5, y=0.5, font_size=0.12,
+        color="FFFFFF", box_bg=None, changes=[{"at_sec": 1, "text": f"FIN{line_break}DEUX"}],
+    )
+    write_fixed_overlay_ass(overlay, 2, 640, 360, tmp_path / "overlay.ass")
+    events = [line for line in (tmp_path / "overlay.ass").read_text(encoding="utf-8").splitlines()
+              if line.startswith("Dialogue:")]
+    assert len(events) == 2 and all(r"\N" in line for line in events)
+    result = subprocess.run(
+        [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+         "-f", "lavfi", "-i", "color=black:s=640x360:r=24:d=2",
+         "-vf", "ass=filename=overlay.ass", "-an", "-c:v", "libx264",
+         "-preset", "ultrafast", "-pix_fmt", "yuv420p", "multiline.mp4"],
+        cwd=tmp_path, capture_output=True, timeout=30, **PROCESS_FLAGS,
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+    cap = cv2.VideoCapture(str(tmp_path / "multiline.mp4"))
+    try:
+        for frame_number in (12, 36):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+            ok, frame = cap.read()
+            assert ok
+            rows = (frame.min(axis=2) > 180).any(axis=1)
+            starts = sum(bool(row) and (i == 0 or not rows[i - 1]) for i, row in enumerate(rows))
+            assert starts == 2
+    finally:
+        cap.release()
+
+
 @pytest.mark.parametrize("overlay", [
     {"initial_text": None},
     {"initial_text": "x" * 81},
