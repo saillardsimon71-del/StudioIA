@@ -188,20 +188,29 @@ def test_meta_receives_repaired_start_and_does_not_attach_to_a_changed_state(hor
     app = create_app(settings=V2Settings(data_dir=tmp_path / "data"))
     app.state.repo.save_project(horror)
     png = io.BytesIO()
-    Image.new("RGB", (17, 29)).save(png, format="PNG")
+    Image.new("RGB", (320, 480)).save(png, format="PNG")
     requests = []
 
     def respond(request):
         requests.append(request)
         if request.method == "POST":
-            prompt = json.loads(request.content)["prompt"]
+            body = json.loads(request.content)
+            prompt = body["prompt"]
             assert horror.shots[0].initial_state in prompt
             assert "sits up" not in prompt
             if concurrent_edit:
                 current = app.state.repo.get_project(horror.id)
                 current.shots[0].initial_state = "Julien stands at the bedroom door."
                 app.state.repo.save_project(current)
-            return httpx.Response(200, json={"success": True, "image_urls": ["https://meta.test/frame.png"]})
+            return httpx.Response(200, json={
+                "success": True,
+                "image_urls": ["https://scontent.xx.fbcdn.net/frame.png"],
+                "prompt": prompt,
+                "request_id": body["request_id"],
+                "conversation_id": f"conversation-{body['request_id']}",
+                "attribution": "fresh_assistant_response",
+                "prompt_echo_verified": True,
+            })
         return httpx.Response(200, content=png.getvalue())
 
     client_class = httpx.Client

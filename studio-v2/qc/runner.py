@@ -12,7 +12,7 @@ from pathlib import Path
 
 from core.config import V2Settings
 from core.scenario import Shot
-from qc.media import inspect_media, verify_export_delivery
+from qc.media import inspect_media, sample_frame_luma, verify_export_delivery
 from qc.ocr import scan_parasite_text
 from qc.speech import assess_speech, transcribe_audio_cpu
 
@@ -113,10 +113,38 @@ def run_export_qc(
         }
 
     expected_total = sum(s.duration_s for s in shots)
-    if expected_total > 0 and abs(media["duration_s"] - expected_total) > max(1.5, len(shots) * 0.4):
-        warnings.append(
-            f"Durée assemblée ({media['duration_s']:.2f}s) distante de la somme théorique ({expected_total:.2f}s)."
-        )
+    if expected_total > 0:
+        gap = abs(media["duration_s"] - expected_total)
+        if media["duration_s"] < expected_total * 0.5:
+            errors.append(
+                f"Export tronqué : {media['duration_s']:.2f}s pour {expected_total:.2f}s attendus. "
+                "Le fichier n'est pas livrable en l'état."
+            )
+        elif gap > max(1.5, len(shots) * 0.4):
+            warnings.append(
+                f"Durée assemblée ({media['duration_s']:.2f}s) distante de la somme théorique ({expected_total:.2f}s)."
+            )
+
+    # Un plan dupliqué à l'export est une erreur de production, pas un choix artistique.
+    seen_sources: dict[str, str] = {}
+    for shot in shots:
+        source = str(Path(shot.rendered_video_ref).resolve()) if shot.rendered_video_ref else ""
+        if not source:
+            continue
+        if source in seen_sources:
+            errors.append(
+                f"Plan dupliqué : « {seen_sources[source]} » et « {shot.id} » partagent la même prise."
+            )
+        seen_sources[source] = shot.id
+
+    try:
+        luma = sample_frame_luma(export_path)
+    except (ValueError, OSError):
+        luma = []
+    if luma and all(value < 6.0 for value in luma):
+        errors.append("Export entièrement noir : aucun contenu vidéo exploitable n'a été monté.")
+    elif any(value < 6.0 for value in luma):
+        warnings.append("Une image noire a été détectée dans l'export : vérifier les plans concernés.")
 
     allowed: list[str] = []
     for s in shots:

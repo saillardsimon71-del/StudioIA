@@ -21,7 +21,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
-from typing import Callable
+from typing import Callable, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,6 +31,7 @@ from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field, ValidationError
 
 from core.config import STUDIO_V2_ROOT, V2Settings, load_settings, save_settings
+from core.metaai import MetaAIError, MetaAIImageClient
 from core.export import export_project_mp4
 from core.ltx_prompt import (
     MAX_LTX_PROMPT_WORDS,
@@ -40,7 +41,7 @@ from core.ltx_prompt import (
 )
 from core.scenario import Character, DialogueLine, Project, Shot
 from core.storyboard import build_shot_image_prompt, storyboard_issues
-from core.storage import StudioRepository
+from core.storage import ConversationReuseError, StudioRepository
 from core.storage import utc_now
 from engines.video import (
     AuthorizationRequiredError,
@@ -80,6 +81,13 @@ class GenerateImageRequest(BaseModel):
     kind: str = "character"
     name: str = "Image Meta AI"
     description: str = ""
+
+
+class GenerateImagesRequest(BaseModel):
+    """Lot de visuels manquants : aucun visuel existant n'est remplacé."""
+
+    kinds: list[Literal["character", "decor", "frame"]] | None = None
+    stop_on_service_error: bool = True
 
 
 class ImagePromptRequest(BaseModel):
@@ -216,6 +224,13 @@ def create_app(
             raise HTTPException(404, f"Projet « {project_id} » introuvable.")
         return project
 
+    def _detail_text(detail) -> str:
+        if isinstance(detail, str):
+            return detail
+        if isinstance(detail, dict):
+            return str(detail.get("message") or detail)
+        return str(detail)
+
     def _shot_index_or_404(project: Project, shot_id: str) -> int:
         for idx, shot in enumerate(project.shots):
             if shot.id == shot_id:
@@ -328,6 +343,11 @@ def create_app(
             "db_path": str(app.state.settings.db_path),
             "v1_isolated": True,
             "max_ltx_words": MAX_LTX_PROMPT_WORDS,
+            "metaai": {
+                "url": app.state.settings.metaai_api_url,
+                "allowed_image_hosts": app.state.settings.metaai_image_hosts,
+                "min_image_side": app.state.settings.metaai_min_image_side,
+            },
             "tools": {
                 "ffmpeg": bool(ff),
                 "ffmpeg_path": ff,
@@ -487,78 +507,54 @@ def create_app(
 
     @app.post("/api/assets/generate")
     def generate_library_asset(req: GenerateImageRequest) -> dict:
-        """Generate an image through a separately hosted metaai-api instance."""
+        """Génère une image via le service Meta AI local et vérifie sa provenance."""
         if req.kind not in {"character", "decor", "frame"}:
             raise HTTPException(400, "Type d'asset invalide (`character`, `decor`, `frame`).")
-        cfg: V2Settings = app.state.settings
-        base_url = cfg.metaai_api_url.rstrip("/")
-        if not base_url.startswith(("http://", "https://")):
-            raise HTTPException(400, "L'URL Meta AI doit commencer par http:// ou https://.")
-        headers = {"Content-Type": "application/json"}
-        if cfg.metaai_api_key:
-            headers["Authorization"] = f"Bearer {cfg.metaai_api_key}"
-        try:
-            with httpx.Client(timeout=cfg.metaai_timeout_s, follow_redirects=True) as client:
-                response = client.post(f"{base_url}/image", json={"prompt": req.prompt}, headers=headers)
-                response.raise_for_status()
-                payload = response.json()
-                urls = payload.get("image_urls") or payload.get("images") or []
-                if isinstance(urls, str):
-                    urls = [urls]
-                if not payload.get("success", True) or not urls:
-                    raise ValueError("Le service n'a renvoyé aucune image.")
-                image_url = str(urls[0])
-                parsed = urlparse(image_url)
-                if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                    raise ValueError("URL d'image renvoyée invalide.")
-                image_response = client.get(image_url)
-                image_response.raise_for_status()
-                raw = image_response.content
-                if not raw or len(raw) > 25 * 1024 * 1024:
-                    raise ValueError("Image vide ou supérieure à la limite de 25 Mo.")
-        except httpx.HTTPStatusError as exc:
-            messages = {
-                401: "Meta AI demande une reconnexion. Verifiez la session et la cle du service local.",
-                422: "Meta AI refuse ce visuel. Pour un plan : Assets > Adapter le visuel, puis decrivez un instant calme avant le geste et relancez ce plan.",
-                429: "Meta AI demande d'attendre. Le lot est arrete ; reprenez les visuels manquants plus tard.",
-                503: "Le service Meta AI est occupe ou temporairement indisponible. Reessayez plus tard.",
-                504: "Meta AI n'a pas renvoye d'image a temps. Le lot est arrete ; les images deja enregistrees sont conservees.",
-            }
-            status = exc.response.status_code
-            raise HTTPException(status if status in messages else 502,
-                                messages.get(status, "Echec du service Meta AI. Reessayez plus tard.")) from None
-        except httpx.RequestError:
-            raise HTTPException(503, "Le service Meta AI local ne repond pas. Verifiez son demarrage avant de reprendre le lot.") from None
-        except (ValueError, KeyError):
-            raise HTTPException(502, "Meta AI n'a pas renvoye d'image utilisable. Reessayez le visuel concerne.") from None
-
-        dest_dir = Path(cfg.media_dir) / "library" / req.kind
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        target = dest_dir / f"{uuid.uuid4().hex[:12]}.img"
-        target.write_bytes(raw)
-        try:
-            with Image.open(target) as img:
-                image_format = (img.format or "WEBP").lower()
-                img.verify()
-            with Image.open(target) as img:
-                width, height = img.size
-            suffix = {"jpeg": ".jpg", "png": ".png", "webp": ".webp", "gif": ".gif", "bmp": ".bmp"}.get(image_format)
-            if not suffix:
-                raise ValueError(f"Format d'image non pris en charge : {image_format}")
-            final_target = target.with_suffix(suffix)
-            target.replace(final_target)
-            target = final_target
-        except (OSError, ValueError, UnidentifiedImageError) as exc:
-            target.unlink(missing_ok=True)
-            raise HTTPException(502, "Meta AI a renvoyé un fichier image invalide ou non pris en charge.") from exc
-        return app.state.repo.add_asset(
+        return _generate_metaai_asset(
+            prompt=req.prompt,
             kind=req.kind,
             name=req.name.strip() or "Image Meta AI",
             description=req.description.strip() or req.prompt,
-            file_path=target,
-            width=width,
-            height=height,
         )
+
+    def _generate_metaai_asset(*, prompt: str, kind: str, name: str, description: str) -> dict:
+        """Chemin unique : service local → preuves → fichier neuf → bibliothèque.
+
+        Aucune image n'est enregistrée si la requête, la conversation neuve ou le
+        fichier ne peuvent pas être vérifiés. Un visuel identique déjà présent est
+        réutilisé au lieu de dupliquer la bibliothèque.
+        """
+        cfg: V2Settings = app.state.settings
+        client = MetaAIImageClient(cfg, http_client_factory=httpx.Client)
+        try:
+            image = client.generate(prompt)
+        except MetaAIError as exc:
+            raise HTTPException(exc.status_code, exc.message) from None
+
+        # Même octets ET même destination : on réutilise l'asset au lieu de dupliquer.
+        # Une image identique destinée à un autre personnage/décor/plan doit rester
+        # un asset distinct, sinon l'association au plan deviendrait fausse.
+        existing = app.state.repo.find_asset_by_sha256(image.sha256)
+        if existing is not None and existing.get("kind") == kind and existing.get("description") == description:
+            return {**existing, "reused": True}
+
+        target = client.write_image(image, Path(cfg.media_dir) / "library" / kind)
+        try:
+            return app.state.repo.add_verified_asset(
+                kind=kind,
+                name=name,
+                description=description,
+                file_path=target,
+                width=image.width,
+                height=image.height,
+                provenance=image.provenance,
+            )
+        except ConversationReuseError as exc:
+            target.unlink(missing_ok=True)
+            raise HTTPException(502, str(exc)) from None
+        except Exception:
+            target.unlink(missing_ok=True)
+            raise
 
     @app.post("/api/assets/generate-decor")
     def generate_decor(req: GenerateDecorRequest) -> dict:
@@ -589,6 +585,19 @@ def create_app(
             width=width,
             height=height,
         )
+
+    @app.get("/api/assets/audit")
+    def audit_library_assets() -> dict:
+        """Contrôle en lecture seule de la bibliothèque : fichiers et provenance."""
+        return app.state.repo.audit_assets()
+
+    @app.delete("/api/assets/{asset_id}")
+    def delete_library_asset(asset_id: str) -> dict:
+        """Retire un visuel non fiable de la bibliothèque sans supprimer son fichier."""
+        result = app.state.repo.delete_asset(asset_id)
+        if not result["deleted"]:
+            raise HTTPException(404, "Asset introuvable dans la bibliothèque.")
+        return result
 
     @app.post("/api/projects/{project_id}/characters/{char_id}/image")
     def upload_character_image(
@@ -760,6 +769,77 @@ def create_app(
         return app.state.repo.save_project(project)
 
     # ── Étape 4 : RENDER (Préparation LTX, Estimation coût, Autorisation) ─
+
+    @app.post("/api/projects/{project_id}/generate-images")
+    def generate_project_images(project_id: str, req: GenerateImagesRequest) -> dict:
+        """Génère les visuels manquants dans l'ordre personnages → décors → plans.
+
+        Chaque visuel est indépendant : un refus n'efface rien et reste relançable.
+        Une indisponibilité du service arrête le lot au lieu de boucler. Aucun
+        visuel existant n'est régénéré ni écrasé par ce lot.
+        """
+        project = _project_or_404(project_id)
+        kinds = set(req.kinds or ["character", "decor", "frame"])
+        results: list[dict] = []
+        stopped = False
+        stop_statuses = {401, 403, 429, 503, 504}
+
+        def run(key: str, label: str, action: Callable[[], Project]) -> bool:
+            nonlocal stopped
+            try:
+                action()
+            except HTTPException as exc:
+                results.append({"key": key, "label": label, "status": "failed",
+                                "error": _detail_text(exc.detail), "http_status": exc.status_code})
+                if req.stop_on_service_error and exc.status_code in stop_statuses:
+                    stopped = True
+                    return False
+                return True
+            except Exception as exc:  # erreur locale inattendue : jamais masquée
+                results.append({"key": key, "label": label, "status": "failed",
+                                "error": f"{type(exc).__name__}: {exc}", "http_status": 500})
+                return True
+            results.append({"key": key, "label": label, "status": "generated"})
+            return True
+
+        if "character" in kinds:
+            for char in project.characters:
+                if char.image_ref and Path(char.image_ref).is_file():
+                    results.append({"key": f"character:{char.id}", "label": char.name,
+                                    "status": "skipped", "reason": "image déjà présente"})
+                    continue
+                if not run(f"character:{char.id}", char.name,
+                           lambda c=char: generate_character_image(project_id, c.id)):
+                    break
+        if not stopped and "decor" in kinds:
+            for decor in project.decors:
+                asset = app.state.repo.get_asset(decor.asset_id) if decor.asset_id else None
+                if asset and Path(asset["file_path"]).is_file():
+                    results.append({"key": f"decor:{decor.id}", "label": decor.name,
+                                    "status": "skipped", "reason": "image déjà présente"})
+                    continue
+                if not run(f"decor:{decor.id}", decor.name,
+                           lambda d=decor: generate_decor_image(project_id, d.id)):
+                    break
+        if not stopped and "frame" in kinds:
+            for shot in project.shots:
+                if shot.image_ref and Path(shot.image_ref).is_file():
+                    results.append({"key": shot.id, "label": shot.id,
+                                    "status": "skipped", "reason": "image déjà présente"})
+                    continue
+                if not run(shot.id, shot.id, lambda s=shot: generate_shot_image(project_id, s.id)):
+                    break
+
+        final = _project_or_404(project_id)
+        failures = [item for item in results if item["status"] == "failed"]
+        return {
+            "project": final.model_dump(mode="json"),
+            "results": results,
+            "generated": sum(1 for item in results if item["status"] == "generated"),
+            "failed": len(failures),
+            "stopped": stopped,
+            "missing_images": [item["key"] for item in failures],
+        }
 
     @app.post("/api/projects/{project_id}/prepare-render")
     def prepare_project_render(

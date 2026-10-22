@@ -152,6 +152,58 @@ def storyboard_issues(project: Project) -> dict[str, list[str]]:
     return issues
 
 
+def _normalized(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip().casefold()
+
+
+_SILENT_BRIEF = re.compile(
+    r"(?:\bsans\s+(?:parole|paroles|dialogue|dialogues|voix)\b|\bmuet\b|\bmuette?\b"
+    r"|\bno\s+dialogue\b|\bwithout\s+dialogue\b|\bsilent\s+(?:film|scene)\b)",
+    re.IGNORECASE,
+)
+
+
+def continuity_warnings(project: Project) -> list[str]:
+    """Contrôles objectifs de continuité et de brief, sans jugement artistique.
+
+    Ces avertissements n'empêchent pas la génération : ils signalent une rupture
+    physique vérifiable (état initial ≠ état final précédent en temps continu) ou
+    une contradiction directe avec le brief, que l'auteur peut corriger.
+    """
+    warnings: list[str] = []
+    seen_actions: dict[str, str] = {}
+    for idx, shot in enumerate(project.shots):
+        action_key = _normalized(shot.action)
+        if action_key and action_key in seen_actions:
+            warnings.append(
+                f"{shot.id}: action identique au plan {seen_actions[action_key]} "
+                "(doublon probable, aucun plan ne doit rejouer la même action)."
+            )
+        elif action_key:
+            seen_actions[action_key] = shot.id
+
+        if idx == 0 or shot.continue_from_previous or shot.time_transition != "continuous":
+            continue
+        previous = project.shots[idx - 1]
+        if (previous.decor_id or previous.decor_asset_id) != (shot.decor_id or shot.decor_asset_id):
+            continue
+        before, after = _normalized(previous.final_state), _normalized(shot.initial_state)
+        if not before or not after or before == after:
+            continue
+        warnings.append(
+            f"{shot.id}: l'état initial ne reprend pas l'état final du plan {previous.id} "
+            "sans ellipse ni flashback. Vérifiez la position, les objets et l'apparence "
+            "des personnages avant de générer l'image."
+        )
+
+    if _SILENT_BRIEF.search(project.idea) and any(shot.dialogue for shot in project.shots):
+        warnings.append(
+            "Le brief demande un film sans paroles mais des répliques sont prévues : "
+            "supprimez-les ou retirez la contrainte du brief."
+        )
+    return warnings
+
+
 def prepare_storyboard(project: Project) -> list[str]:
     warnings = []
     for idx, shot in enumerate(project.shots):
@@ -172,4 +224,5 @@ def prepare_storyboard(project: Project) -> list[str]:
         line.delivery == "voice_over" for s in project.shots for line in s.dialogue
     ):
         warnings.append("Mode voix off demande mais aucune ligne voice_over : narration a revoir.")
-    return warnings
+    warnings.extend(continuity_warnings(project))
+    return list(dict.fromkeys(warnings))

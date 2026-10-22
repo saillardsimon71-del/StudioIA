@@ -115,6 +115,17 @@ def export_project_mp4(
             "Plans sans prise vidéo disponible sur le disque : " + ", ".join(missing)
         )
 
+    # Un même fichier associé à deux plans produit un doublon silencieux à l'export.
+    sources: dict[str, str] = {}
+    for shot in project.shots:
+        resolved = str(Path(shot.rendered_video_ref).resolve())  # type: ignore[arg-type]
+        if resolved in sources:
+            raise ValueError(
+                f"Les plans « {sources[resolved]} » et « {shot.id} » utilisent le même fichier "
+                f"vidéo ({Path(resolved).name}). Rendez ou associez une prise distincte avant l'export."
+            )
+        sources[resolved] = shot.id
+
     size = EXPORT_SIZES.get(project.aspect_ratio, (1080, 1920))
     width, height = size
     settings.ensure_dirs()
