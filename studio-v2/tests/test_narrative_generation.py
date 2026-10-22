@@ -92,7 +92,7 @@ def test_http_single_call_preserves_brief_and_json_roundtrip(monkeypatch, draft,
     body = json.loads(request.content)
     assert body["text"]["format"]["type"] == "json_schema"
     assert body["reasoning"] == {"effort": "low"}
-    assert body["max_output_tokens"] == 16384
+    assert body["max_output_tokens"] == 65536
     assert len(body["input"]) == 2
     assert idea in body["input"][1]["content"]
     if name != "El Diablo":
