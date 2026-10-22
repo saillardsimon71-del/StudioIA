@@ -84,7 +84,7 @@ Le script demande confirmation (`OUI`), exécute **une seule prise** sans retry 
 
 ## Génération d'images Meta AI (optionnelle / expérimentale)
 
-StudioIA v2 appelle un serveur `metaai-api` séparé. **L'ancien client GraphQL n'est plus compatible avec Meta** : les erreurs `Unknown type RewriteOptionsInput`, `Unknown type AttachmentInput` et `Cannot query field sendMessageStream` viennent de cette implémentation serveur, pas du contrat StudioIA. Le dépôt tiers a migré la génération d'images vers l'automatisation du navigateur/DGW ; l'API REST reste `POST /image` avec `prompt` et répond avec `success` et `image_urls`. StudioIA télécharge ensuite l'URL, vérifie le fichier avec Pillow, puis ne l'associe au storyboard qu'après validation.
+Studio IA v2 appelle un serveur `metaai-api` séparé. **L'ancien client GraphQL n'est plus compatible avec Meta** : les erreurs `Unknown type RewriteOptionsInput`, `Unknown type AttachmentInput` et `Cannot query field sendMessageStream` viennent de cette implémentation serveur, pas du contrat Studio IA. Le contrat navigateur/DGW expose toujours `POST /image`. Le correctif Studio IA exige une conversation fraîche confirmée, une réponse stable du tour courant, un identifiant de conversation distinct, un `request_id` correspondant et un CDN Meta autorisé avant de télécharger et d'ajouter un asset. Les images restent non validées visuellement et ne deviennent pas automatiquement une approbation GPU.
 
 StudioIA n'embarque pas `metaai-sdk` dans `studio-v2/requirements.txt` : ce service doit rester séparé. Au 22 octobre 2026, la distribution publiée `metaai-sdk 5.3.0` est compatible Python 3.11 et contient le contrat navigateur/DGW attendu. Attention : le tag Git `v3.0.0` actuellement présent pointe encore vers une révision `__version__ = 2.0.0` qui utilise l'ancien GraphQL ; ne pas installer ce tag pour corriger cette panne. Références auditées : [dépôt upstream](https://github.com/mir-ashiq/metaai-api), [migration et erreurs GraphQL supprimées](https://github.com/mir-ashiq/metaai-api/blob/main/CHANGELOG.md), [contrat REST `/image`](https://github.com/mir-ashiq/metaai-api/blob/main/src/metaai_api/api_server.py), [paquet PyPI](https://pypi.org/project/metaai-sdk/5.3.0/).
 
@@ -100,6 +100,14 @@ py -3.11 -m venv "$Service\.venv"
 & "$Service\.venv\Scripts\python.exe" -m playwright install chromium
 & "$Service\.venv\Scripts\python.exe" -c "import metaai_api; print(metaai_api.__version__); print(metaai_api.__file__)"
 ```
+
+Après l'installation, appliquez le patch ciblé et réversible au venv séparé :
+
+```powershell
+& ".\studio-v2\scripts\patch_metaai_sdk_5_3.ps1" -ServiceRoot $Service
+```
+
+Le patcher refuse toute version autre que `metaai-sdk==5.3.0`, sauvegarde les cinq modules concernés sous `site-packages\metaai_api\.studioia-backup\<horodatage>`, puis modifie uniquement les deux backends navigateur, la génération, `MetaAI.generate_image_new` et la route REST `/image`. Il sérialise les appels au navigateur partagé, confirme une conversation vide, la saisie exacte du prompt, les images du dernier conteneur assistant et une réponse stabilisée avant de réussir. Il ne lit ni ne touche les cookies, les fichiers `.env`, les profils navigateur, les projets ou les images. En cas d'échec, les cinq fichiers ciblés sont restaurés depuis la sauvegarde. Pour revenir manuellement à l'original, arrêtez le service et passez le chemin de sauvegarde affiché par le patcher à `restore_metaai_sdk_5_3.ps1`; ce script sauvegarde d'abord l'état patché avant restauration : `& ".\studio-v2\scripts\restore_metaai_sdk_5_3.ps1" -ServiceRoot $Service -BackupPath 'C:\Users\saill\MetaAIServiceV3\.venv\Lib\site-packages\metaai_api\.studioia-backup\HORODATAGE'`. Redémarrez ensuite MetaAIServiceV3.
 
 La dernière commande doit afficher `5.3.0` et un chemin sous `MetaAIServiceV3\.venv\Lib\site-packages`, pas l'ancien répertoire `Python311\Lib\site-packages`. Les cookies requis par la nouvelle version sont `datr` et `ecto_1_sess` (l'ancien `abra_sess` n'est pas le cookie de session attendu par ce backend). Pour les garder hors disque et hors dépôt, saisissez-les masqués dans la fenêtre PowerShell courante :
 
@@ -119,14 +127,31 @@ Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
 
 N'arrêtez que le processus MetaAI ancien que vous avez identifié.
 
+#### Validation Windows obligatoire (à effectuer, non exécutée depuis Arena)
+
+Le test d'acceptation doit être effectué sur le PC Windows avec le service patché. Créez un projet de test jetable comportant trois plans sans image déjà affectée, puis notez leurs identifiants. Les appels suivent sans pause humaine et créent trois entrées d'asset marquées `TEST —` ; aucune entrée existante n'est remplacée ou effacée :
+
+```powershell
+& ".\studio-v2\scripts\verify_metaai_three_generations.ps1" `
+  -ProjectId 'ID_DU_PROJET_TEST' `
+  -RedCubeShotId 'ID_PLAN_CUBE' `
+  -GreenSphereShotId 'ID_PLAN_SPHERE' `
+  -BluePyramidShotId 'ID_PLAN_PYRAMIDE'
+```
+
+Le script exige trois prompts exacts (cube rouge, sphère verte, pyramide bleue), trois `request_id`/`conversation_id` concordants et distincts, télécharge les images, puis vérifie que chaque asset est associé au bon plan du bon projet. Inspectez visuellement les trois fichiers indiqués par le script et l'interface Studio IA : le code ne prétend pas reconnaître le sujet de l'image par analyse visuelle. Échec, conversation répétée, preuve absente, image hors CDN autorisé ou association incohérente = validation refusée. Le test ne doit pas être remplacé par les tests simulés.
+
+Pour auditer les références actuelles sans modification : `GET /api/assets/audit` (les assets et références sont listés, sans classification automatique). Dans la bibliothèque, **Retirer cette référence…** demande une confirmation, détache uniquement l'asset choisi de ses références et conserve le fichier sur disque ; aucun asset n'est retiré automatiquement. Vérifiez les références visuellement avant toute action.
+
 #### Vérification réelle sans modifier les projets StudioIA
 
 Avec le service ci-dessus lancé, cette requête déclenche une vraie génération Meta, attend jusqu'à 180 secondes, récupère le premier fichier dans `%TEMP%` et vérifie une signature image courante. Elle ne crée ni asset ni modification de projet StudioIA :
 
 ```powershell
-$Body = @{ prompt = 'A simple red apple on a plain white background'; orientation = 'VERTICAL' } | ConvertTo-Json -Compress
+$RequestId = [guid]::NewGuid().ToString('N')
+$Body = @{ prompt = 'A simple red apple on a plain white background'; orientation = 'VERTICAL'; new_conversation = $true; num_images = 1; request_id = $RequestId } | ConvertTo-Json -Compress
 $Result = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/image' -Method Post -ContentType 'application/json' -Body $Body -TimeoutSec 180
-if (-not $Result.success -or -not $Result.image_urls -or $Result.image_urls.Count -lt 1) { throw "Le serveur n'a pas renvoyé d'image exploitable." }
+if (-not $Result.success -or $Result.request_id -ne $RequestId -or -not $Result.conversation_id -or -not $Result.image_urls -or $Result.image_urls.Count -lt 1) { throw "Le serveur n'a pas confirmé une génération liée à une conversation fraîche." }
 $ImagePath = Join-Path $env:TEMP 'metaai-studio-smoke-test.bin'
 Invoke-WebRequest -Uri $Result.image_urls[0] -OutFile $ImagePath -TimeoutSec 60
 $Bytes = [System.IO.File]::ReadAllBytes($ImagePath)

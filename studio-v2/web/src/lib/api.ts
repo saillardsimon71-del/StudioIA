@@ -71,6 +71,10 @@ export const api = {
 		}).then((r) => parseResponse<{ project: Project; llm_meta: Record<string, any> }>(r)),
 
 	listAssets: () => fetch('/api/assets').then((r) => parseResponse<LibraryAsset[]>(r)),
+	auditAssetReferences: () => fetch('/api/assets/audit').then((r) => parseResponse<Record<string, any>>(r)),
+	removeLibraryAsset: (assetId: string) =>
+		fetch(`/api/assets/${encodeURIComponent(assetId)}`, { method: 'DELETE' })
+			.then((r) => parseResponse<{ deleted: boolean; detached_references: number; file_preserved: boolean }>(r)),
 	generateDecor: (name: string, description: string) =>
 		fetch('/api/assets/generate-decor', {
 			method: 'POST',

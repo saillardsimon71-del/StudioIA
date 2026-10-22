@@ -23,6 +23,7 @@
 	let projectList = $state<Array<Record<string, any>>>([]);
 	let project = $state<Project | null>(null);
 	let assets = $state<LibraryAsset[]>([]);
+	let assetAudit = $state<Record<string, any> | null>(null);
 	let prepReports = $state<Record<string, ShotPrepReport>>({});
 	let takes = $state<Array<Record<string, any>>>([]);
 	let exportsList = $state<Array<Record<string, any>>>([]);
@@ -337,6 +338,38 @@
 		} finally {
 			busy = false;
 			dragOverKey = '';
+		}
+	}
+
+	async function refreshAssetAudit() {
+		try {
+			assetAudit = await api.auditAssetReferences();
+		} catch (e: any) {
+			errorBanner = e.message;
+		}
+	}
+
+	async function removeLibraryAsset(asset: LibraryAsset) {
+		if (busy) return;
+		const confirmed = window.confirm(
+			`Retirer « ${asset.name} » de la bibliothèque et détacher uniquement cette image de ses références ? Le fichier image restera sur le disque. Les autres assets ne seront pas modifiés.`
+		);
+		if (!confirmed) return;
+		busy = true;
+		errorBanner = '';
+		try {
+			const result = await api.removeLibraryAsset(asset.id);
+			assets = await api.listAssets();
+			assetAudit = await api.auditAssetReferences();
+			if (project) {
+				project = await api.getProject(project.id);
+				await runPrepare(false);
+			}
+			infoBanner = `Référence retirée. ${result.detached_references} lien(s) de projet détaché(s) ; fichier conservé sur le disque.`;
+		} catch (e: any) {
+			errorBanner = e.message;
+		} finally {
+			busy = false;
 		}
 	}
 
@@ -1249,9 +1282,34 @@
 								<div style="font-size: 0.74rem; color: var(--muted);">
 									{asset.kind} · {asset.width}×{asset.height}
 								</div>
+								<button
+									disabled={busy}
+									style="margin-top: 0.35rem; width: 100%; font-size: 0.72rem;"
+									onclick={() => removeLibraryAsset(asset)}
+								>Retirer cette référence…</button>
 							</div>
 						{/each}
 					</div>
+					<div style="display: flex; justify-content: flex-end; margin-top: 0.65rem;">
+						<button disabled={busy} onclick={refreshAssetAudit}>Audit des références (lecture seule)</button>
+					</div>
+					{#if assetAudit}
+						<div style="margin-top: 0.7rem; border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem;">
+							<strong>Inventaire des références — aucune classification ni suppression automatique</strong>
+							{#each assetAudit.assets ?? [] as audited}
+								<div style="padding: 0.45rem 0; border-bottom: 1px solid var(--border);">
+									<strong>{audited.name}</strong> · {audited.id} · {audited.references?.length ?? 0} référence(s)
+									{#each audited.references ?? [] as ref}
+										<div style="font-size: 0.75rem; color: var(--muted);">{ref.project_title} / {ref.entity_type} {ref.entity_name} ({ref.entity_id})</div>
+									{/each}
+								</div>
+							{/each}
+							{#each assetAudit.unregistered_references ?? [] as ref}
+								<div style="font-size: 0.75rem; color: var(--muted);">Référence hors bibliothèque : {ref.project_title} / {ref.entity_type} {ref.entity_name} ({ref.entity_id})</div>
+							{/each}
+							<p style="font-size: 0.75rem; color: var(--muted); margin-bottom: 0;">Examinez les vignettes et le projet concernés avant de retirer une référence. Les fichiers image restent conservés sur disque lors du retrait ciblé.</p>
+						</div>
+					{/if}
 				</section>
 
 				<!-- Références personnages & validation humaine des plans -->
