@@ -1,8 +1,8 @@
-"""Apply the Studio IA V3 conversation fix to an installed metaai-sdk 5.3.0 V2 package.
+"""Apply the Studio IA V4 composer-selection fix to a metaai-sdk 5.3.0 V3 package.
 
-V3 modifies only PlaywrightBackend.new_chat and its final conversation-ID guard.
-A five-module V2 snapshot is kept so the existing Windows rollback script remains
-usable. Cookies, browser profiles, projects, and generated assets are untouched.
+V4 modifies only PlaywrightBackend.send_message. A five-module snapshot is kept
+for the existing Windows rollback script. Cookies, profiles, projects, and assets
+are untouched.
 """
 from __future__ import annotations
 
@@ -16,8 +16,9 @@ import shutil
 import sys
 import textwrap
 
-PREVIOUS_MARKER = "STUDIOIA_ISOLATED_GENERATION_V2"
-MARKER = "STUDIOIA_ISOLATED_GENERATION_V3"
+V2_MARKER = "STUDIOIA_ISOLATED_GENERATION_V2"
+PREVIOUS_MARKER = "STUDIOIA_ISOLATED_GENERATION_V3"
+MARKER = "STUDIOIA_ISOLATED_GENERATION_V4"
 NEW_CHAT_LABELS = (
     "New chat", "New conversation", "Nouvelle discussion",
     "Nouvelle conversation", "Nouveau chat",
@@ -417,25 +418,53 @@ PLAYWRIGHT_SEND_MESSAGE = r'''def send_message(self, prompt: str, timeout: int =
         'main [role="textbox"]',
         'main textarea',
     )
+    selector_group = ", ".join(selectors)
     composer = None
-    selected_selector = None
     stage = "composer_lookup"
     try:
-        for selector in selectors:
-            locator = self._page.locator(selector)
-            count = locator.count()
-            if count > 1:
-                raise ConnectionError(f"Champ de saisie Meta ambigu ({selector}, {count} éléments).")
-            if count == 1 and locator.is_visible():
-                composer = locator
-                selected_selector = selector
-                break
-        if composer is None:
-            raise ConnectionError("Champ de saisie de la conversation absent; aucun autre bouton n'a été cliqué.")
+        matches = self._page.locator(selector_group)
+        matched_count = matches.count()
+        visible_count = 0
+        enabled_count = 0
+        editable_count = 0
+        inspection_errors = 0
+        usable = []
+        for index in range(matched_count):
+            candidate = matches.nth(index)
+            try:
+                if not candidate.is_visible():
+                    continue
+                visible_count += 1
+                if not candidate.is_enabled():
+                    continue
+                enabled_count += 1
+                if not candidate.is_editable():
+                    continue
+                editable_count += 1
+                usable.append(candidate)
+            except Exception:
+                inspection_errors += 1
+
+        if len(usable) > 1:
+            raise ConnectionError(
+                "Champ de saisie Meta ambigu après filtrage : "
+                f"correspondances={matched_count}, visibles={visible_count}, "
+                f"activés={enabled_count}, éditables={editable_count}, "
+                f"utilisables={len(usable)}, erreurs_inspection={inspection_errors}."
+            )
+        if not usable:
+            raise ConnectionError(
+                "Aucun champ de saisie Meta utilisable : "
+                f"correspondances={matched_count}, visibles={visible_count}, "
+                f"activés={enabled_count}, éditables={editable_count}, utilisables=0, "
+                f"erreurs_inspection={inspection_errors}."
+            )
+        composer = usable[0]
         composer.scroll_into_view_if_needed(timeout=3000)
         composer.click(timeout=3000)
         stage = "prompt_fill"
-        logger.info("[studioia-metaai] stage=%s outcome=start selector=%s", stage, selected_selector)
+        logger.info("[studioia-metaai] stage=%s outcome=start selector_group=%s candidates=%s",
+                    stage, selector_group, matched_count)
         composer.fill(prompt, timeout=3000)
         try:
             entered = composer.input_value()
@@ -734,7 +763,6 @@ def _replace_agent_browser(package: Path) -> None:
 
 def _replace_playwright(package: Path) -> None:
     path = package / "playwright_backend.py"
-    _replace_callable(path, ("PlaywrightBackend", "new_chat"), PLAYWRIGHT_NEW_CHAT)
     _replace_callable(path, ("PlaywrightBackend", "send_message"), PLAYWRIGHT_SEND_MESSAGE)
     _set_class_marker(path, "PlaywrightBackend")
     source = path.read_text(encoding="utf-8").replace(f"# {PREVIOUS_MARKER}\n", f"# {MARKER}\n")
@@ -765,19 +793,20 @@ def patch(package: Path, backup_root: Path) -> None:
         if not (package / name).is_file():
             raise RuntimeError(f"Package module missing; refusing partial patch: {name}")
     sources = {name: (package / name).read_text(encoding="utf-8") for name in required}
-    playwright_v3 = MARKER in sources["playwright_backend.py"]
-    unchanged_v2 = all(PREVIOUS_MARKER in sources[name]
-                       for name in ("browser.py", "generation.py", "main.py", "api_server.py"))
-    if playwright_v3 and unchanged_v2 and PREVIOUS_MARKER not in sources["playwright_backend.py"]:
-        print("Studio IA MetaAI patch v3 already installed; no files changed.")
+    playwright_v4 = MARKER in sources["playwright_backend.py"]
+    other_modules_v2 = all(V2_MARKER in sources[name]
+                           for name in ("browser.py", "generation.py", "main.py", "api_server.py"))
+    if playwright_v4 and other_modules_v2 and PREVIOUS_MARKER not in sources["playwright_backend.py"]:
+        print("Studio IA MetaAI patch v4 already installed; no files changed.")
         return
-    if not all(PREVIOUS_MARKER in sources[name] for name in required):
-        raise RuntimeError("This v3 patch requires a complete Studio IA MetaAI v2 installation.")
+    if (not other_modules_v2 or PREVIOUS_MARKER not in sources["playwright_backend.py"]
+            or MARKER in sources["playwright_backend.py"]):
+        raise RuntimeError("This v4 patch requires a complete Studio IA MetaAI v3 installation.")
 
     backup = backup_root / dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     backup.mkdir(parents=True, exist_ok=False)
-    # Keep a complete V2 snapshot so the existing five-module restore script
-    # can roll back this single-module V3 update without modification.
+    # Keep a complete V3 snapshot so the existing five-module restore script
+    # can roll back this single-module V4 update without modification.
     for name in required:
         shutil.copy2(package / name, backup / name)
 
@@ -791,7 +820,7 @@ def patch(package: Path, backup_root: Path) -> None:
     except Exception:
         shutil.copy2(backup / target.name, target)
         raise
-    print(f"Patched only PlaywrightBackend.new_chat (plus ID guard) for metaai-sdk 5.3.0. Backup: {backup}")
+    print(f"Patched only PlaywrightBackend.send_message composer selection for metaai-sdk 5.3.0. Backup: {backup}")
 
 
 def main() -> int:

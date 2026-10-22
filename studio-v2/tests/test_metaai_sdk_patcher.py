@@ -81,15 +81,24 @@ def _v2_fixture(root: Path) -> Path:
         path = package / name
         source = path.read_text(encoding="utf-8")
         if name == "browser.py":
-            source = source.replace("class BrowserBackend:\n", f'class BrowserBackend:\n    """{patcher.PREVIOUS_MARKER}"""\n', 1)
+            source = source.replace("class BrowserBackend:\n", f'class BrowserBackend:\n    """{patcher.V2_MARKER}"""\n', 1)
         elif name == "playwright_backend.py":
-            source = source.replace("class PlaywrightBackend:\n", f'class PlaywrightBackend:\n    """{patcher.PREVIOUS_MARKER}"""\n', 1)
-        path.write_text(source.rstrip() + f"\n\n# {patcher.PREVIOUS_MARKER}\n", encoding="utf-8")
+            source = source.replace("class PlaywrightBackend:\n", f'class PlaywrightBackend:\n    """{patcher.V2_MARKER}"""\n', 1)
+        path.write_text(source.rstrip() + f"\n\n# {patcher.V2_MARKER}\n", encoding="utf-8")
+    return package
+
+def _v3_fixture(root: Path) -> Path:
+    package = _v2_fixture(root)
+    path = package / "playwright_backend.py"
+    source = path.read_text(encoding="utf-8")
+    source = source.replace(patcher.V2_MARKER, patcher.PREVIOUS_MARKER)
+    source = source.replace("def new_chat(self): pass", "def new_chat(self): return 'V3_NEW_CHAT_PRESERVED'")
+    path.write_text(source, encoding="utf-8")
     return package
 
 
-def test_patch_v2_changes_only_playwright_and_is_reversible_idempotent(tmp_path, capsys):
-    package = _v2_fixture(tmp_path)
+def test_patch_v3_changes_only_composer_selection_and_is_reversible_idempotent(tmp_path, capsys):
+    package = _v3_fixture(tmp_path)
     before = {name: (package / name).read_bytes() for name in (
         "browser.py", "playwright_backend.py", "generation.py", "main.py", "api_server.py",
     )}
@@ -100,7 +109,8 @@ def test_patch_v2_changes_only_playwright_and_is_reversible_idempotent(tmp_path,
     assert patched["playwright_backend.py"] != before["playwright_backend.py"].decode("utf-8")
     assert patcher.MARKER in patched["playwright_backend.py"]
     assert patcher.PREVIOUS_MARKER not in patched["playwright_backend.py"]
-    assert "_studioia_used_conversation_ids" in patched["playwright_backend.py"]
+    assert "V3_NEW_CHAT_PRESERVED" in patched["playwright_backend.py"]
+    assert "is_editable()" in patched["playwright_backend.py"]
     for name in set(before) - {"playwright_backend.py"}:
         assert (package / name).read_bytes() == before[name]
     ast.parse(patched["playwright_backend.py"])
@@ -249,7 +259,17 @@ def test_post_generation_conversation_id_must_never_have_been_used():
         def count(self):
             return 1
 
+        def nth(self, index):
+            assert index == 0
+            return self
+
         def is_visible(self):
+            return True
+
+        def is_enabled(self):
+            return True
+
+        def is_editable(self):
             return True
 
         def scroll_into_view_if_needed(self, timeout=None):
@@ -308,6 +328,100 @@ def test_post_generation_conversation_id_must_never_have_been_used():
     result = fresh.send_message("un prompt", require_new_conversation=True)
     assert result["conversation_id"] == "brand-new-thread"
     assert fresh._studioia_used_conversation_ids == {"previously-generated-thread", "brand-new-thread"}
+
+
+@pytest.mark.parametrize(
+    ("fields", "selected_index", "error_match"),
+    [
+        ([(False, True, True), (True, True, True)], 1, None),
+        ([(True, True, True)], 0, None),
+        ([(True, True, True), (True, True, True)], None, "correspondances=2, visibles=2, activés=2, éditables=2, utilisables=2"),
+        ([(False, True, True), (True, False, True), (True, True, False)], None, "utilisables=0"),
+    ],
+    ids=["hidden-duplicate", "one-visible", "two-usable", "none-usable"],
+)
+def test_composer_selection_filters_visibility_enabled_and_editable(fields, selected_index, error_match):
+    class Field:
+        def __init__(self, page, index, flags):
+            self.page = page
+            self.index = index
+            self.visible, self.enabled, self.editable = flags
+
+        def is_visible(self):
+            return self.visible
+
+        def is_enabled(self):
+            return self.enabled
+
+        def is_editable(self):
+            return self.editable
+
+        def scroll_into_view_if_needed(self, timeout=None):
+            pass
+
+        def click(self, timeout=None):
+            self.page.clicked.append(self.index)
+
+        def fill(self, prompt, timeout=None):
+            self.page.prompt = prompt
+
+        def input_value(self):
+            return self.page.prompt
+
+        def press(self, key, timeout=None):
+            self.page.submitted = True
+
+    class Group:
+        def __init__(self, fields_for_page):
+            self.fields = fields_for_page
+
+        def count(self):
+            return len(self.fields)
+
+        def nth(self, index):
+            return self.fields[index]
+
+    class Page:
+        def __init__(self):
+            self.clicked = []
+            self.prompt = ""
+            self.submitted = False
+            self.fields = [Field(self, i, flags) for i, flags in enumerate(fields)]
+
+        def locator(self, selector):
+            assert '[data-testid="composer-input"]' in selector
+            assert 'main [role="textbox"]' in selector
+            return Group(self.fields)
+
+    namespace = {
+        "Any": Any, "Dict": Dict, "re": re, "time": time,
+        "logger": logging.getLogger("patcher-test"), "ConnectionError": RuntimeError,
+    }
+    source = "class Patched:\n" + textwrap.indent(patcher.PLAYWRIGHT_SEND_MESSAGE, "    ")
+    exec(source, namespace)
+    backend = namespace["Patched"]()
+    backend._ready = True
+    backend._page = Page()
+    backend._studioia_fresh_chat_armed = True
+    backend._studioia_previous_conversation_id = "previous-thread"
+    backend._studioia_used_conversation_ids = set()
+    backend._studioia_current_path = lambda: "/"
+    backend._get_conversation_id = lambda: "fresh-thread"
+    backend._dismiss_overlays = lambda stage: None
+    backend._response_dom_state = lambda: {
+        "assistant_count": 0, "user_count": int(backend._page.submitted),
+        "urls": [], "existing_urls": [],
+    }
+    backend._wait_for_response = lambda *args: (["https://scontent.xx.fbcdn.net/new.png"], "done")
+
+    if error_match:
+        with pytest.raises(RuntimeError, match=error_match):
+            backend.send_message("prompt", require_new_conversation=True)
+        assert backend._page.clicked == []
+    else:
+        result = backend.send_message("prompt", require_new_conversation=True)
+        assert result["conversation_id"] == "fresh-thread"
+        assert backend._page.clicked == [selected_index]
 
 
 def test_overlay_inspection_stays_read_only_and_settings_route_fails_explicitly():
