@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import unicodedata
 import uuid
 from pathlib import Path
 from typing import Callable, Literal
@@ -20,6 +22,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from core.config import V2Settings
+from core.countdown import countdown_overlays
 from core.ltx_prompt import MAX_LTX_PROMPT_WORDS, PromptCapacityError, compile_shot_prompt
 from core.scenario import Character, Decor, Project, Shot
 from core.storyboard import build_shot_image_prompt, prepare_storyboard
@@ -114,6 +117,25 @@ def load_creative_guides() -> tuple[str, str]:
     content = "\n\n".join(sections)
     revision = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
     return content, revision
+
+
+def _explicitly_forbids_all_speech(idea: str) -> bool:
+    """Recognise explicit bans on both dialogue and voice-over, without a new enum."""
+    normalized = "".join(
+        char for char in unicodedata.normalize("NFKD", str(idea or "").casefold())
+        if not unicodedata.combining(char)
+    )
+    dialogue_ban = re.search(
+        r"\b(?:sans|aucun(?:e)?|pas\s+de|ni(?:\s+de)?|no|nor|without)\s+"
+        r"(?:spoken\s+)?(?:dialogue|paroles?|speech)\b", normalized,
+    )
+    voice_ban = re.search(
+        r"\b(?:sans|aucun(?:e)?|pas\s+(?:de|d')|ni(?:\s+de)?|no|nor|without)\s+"
+        r"(?:voix[- ]off|voix\s+(?:artificielle|synthetique)|voice[- ]?over|"
+        r"(?:artificial|synthetic)\s+voice|narration|narrateur)\b", normalized,
+    )
+    # French often expresses the second prohibition as « sans dialogue ni voix off ».
+    return bool(dialogue_ban and voice_ban)
 
 
 class ScenarioDraft(BaseModel):
@@ -324,6 +346,18 @@ def generate_scenario_once(
             f"Scénario DeepSeek invalide selon le schéma V2 : {formatted}",
             raw_content=str(raw_content),
         ) from exc
+
+    # `narration_mode` only accepts the established values dialogue / voice_over.
+    # An explicit brief-level ban wins over the generated label and any stray lines.
+    if _explicitly_forbids_all_speech(clean_idea):
+        project.narration_mode = "dialogue"
+        for shot in project.shots:
+            shot.dialogue = []
+
+    overlays = countdown_overlays(project)
+    if overlays is not None:
+        for shot, overlay in zip(project.shots, overlays):
+            shot.display_overlay = overlay
 
     try:
         for shot in project.shots:
