@@ -9,6 +9,8 @@
   "metaai_api_url": "http://127.0.0.1:8000",
   "metaai_api_key": "",
   "metaai_timeout_s": 180.0,
+  "metaai_image_hosts": "fbcdn.net,metaaiusercontent.com",
+  "metaai_min_image_side": 256,
   "deepseek_input_usd_per_1m": 0.27,
   "deepseek_output_usd_per_1m": 1.10,
   "modal_app_name": "studio-ia-ltx",

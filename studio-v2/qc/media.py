@@ -185,6 +185,33 @@ def inspect_media(path: Path) -> dict:
     return info
 
 
+def sample_frame_luma(path: Path, positions: tuple[float, ...] = (0.1, 0.5, 0.9)) -> list[float]:
+    """Luminance moyenne (0–255) de quelques images réparties dans la vidéo.
+
+    Sert uniquement à détecter un export vide ou entièrement noir, jamais à juger
+    la qualité artistique d'un plan sombre.
+    """
+    cap = cv2.VideoCapture(str(path))
+    values: list[float] = []
+    try:
+        if not cap.isOpened():
+            raise ValueError(f"Vidéo illisible ({Path(path).name}).")
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        if total <= 0:
+            raise ValueError(f"Nombre d'images inconnu ({Path(path).name}).")
+        for position in positions:
+            index = min(total - 1, max(0, int(total * position)))
+            cap.set(cv2.CAP_PROP_POS_FRAMES, index)
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                continue
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            values.append(float(gray.mean()))
+    finally:
+        cap.release()
+    return values
+
+
 def verify_export_delivery(
     path: Path,
     *,

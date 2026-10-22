@@ -20,7 +20,8 @@ from core.scenario import Character, DialogueLine, Project, Shot  # noqa: E402
 
 
 def _png() -> bytes:
-    image = Image.new("RGB", (17, 29), (30, 140, 220))
+    # Une image de production dépasse META_AI_MIN_IMAGE_SIDE (avatars/vignettes refusés).
+    image = Image.new("RGB", (320, 480), (30, 140, 220))
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
@@ -39,6 +40,14 @@ class _Response:
 
 
 class _MetaAIService:
+    """Service Meta AI simulé : renvoie les preuves de provenance attendues.
+
+    Chaque appel reçoit une conversation distincte, comme le service réel qui
+    ouvre une page vierge avant chaque génération.
+    """
+
+    _counter = 0
+
     def __init__(self, **kwargs):
         self.calls = []
 
@@ -50,10 +59,23 @@ class _MetaAIService:
 
     def post(self, url, **kwargs):
         self.calls.append((url, kwargs))
-        return _Response(payload={"success": True, "image_urls": ["https://cdn.example/image.png"]})
+        body = kwargs.get("json") or {}
+        assert body.get("new_conversation") is True
+        _MetaAIService._counter += 1
+        request_id = body.get("request_id") or f"req-{_MetaAIService._counter}"
+        return _Response(payload={
+            "success": True,
+            "image_urls": ["https://scontent.xx.fbcdn.net/image.png"],
+            "prompt": body.get("prompt", ""),
+            "request_id": request_id,
+            "conversation_id": f"conv-{request_id}",
+            "attribution": "fresh_assistant_response",
+            "prompt_echo_verified": True,
+            "service_version": "test",
+        })
 
     def get(self, url):
-        assert url == "https://cdn.example/image.png"
+        assert url == "https://scontent.xx.fbcdn.net/image.png"
         return _Response(content=_png())
 
 
@@ -72,11 +94,11 @@ def test_generate_metaai_image_downloads_and_registers_asset(tmp_path, monkeypat
         asset = response.json()
         assert asset["kind"] == "character"
         assert asset["name"] == "Inspecteur Zeste"
-        assert (asset["width"], asset["height"]) == (17, 29)
+        assert (asset["width"], asset["height"]) == (320, 480)
         saved = Path(asset["file_path"])
         assert saved.is_file() and saved.suffix == ".png"
         with Image.open(saved) as image:
-            assert image.size == (17, 29)
+            assert image.size == (320, 480)
 
 
 def test_metaai_api_key_is_sent_only_as_bearer_header(tmp_path, monkeypatch):
@@ -165,7 +187,7 @@ def test_shot_image_failure_then_retry_preserves_other_images_and_continuity(tmp
     class Service(_MetaAIService):
         def post(self, url, **kwargs):
             if failing:
-                raise ValueError("service indisponible")
+                raise httpx.ConnectError("service indisponible")
             return super().post(url, **kwargs)
 
     monkeypatch.setattr("api.app.httpx.Client", Service)
@@ -177,7 +199,7 @@ def test_shot_image_failure_then_retry_preserves_other_images_and_continuity(tmp
     with TestClient(app) as client:
         url = "/api/projects/auto-images/shots/s2/generate-image"
         failed = client.post(url)
-        assert failed.status_code == 502, failed.text
+        assert failed.status_code == 503, failed.text
         assert app.state.repo.get_project(project.id).shots[1].image_ref is None
         assert client.get("/api/assets").json() == []
         failing = False
@@ -352,7 +374,7 @@ def test_decor_failure_can_be_retried_and_manually_replaced(tmp_path, monkeypatc
     class Service(_MetaAIService):
         def post(self, url, **kwargs):
             if failing:
-                raise ValueError("indisponible")
+                raise httpx.ConnectError("indisponible")
             return super().post(url, **kwargs)
 
     monkeypatch.setattr("api.app.httpx.Client", Service)
@@ -361,7 +383,7 @@ def test_decor_failure_can_be_retried_and_manually_replaced(tmp_path, monkeypatc
     app.state.repo.save_project(project)
     with TestClient(app) as client:
         base = f"/api/projects/{project.id}/decors/cantine"
-        assert client.post(base + "/generate-image").status_code == 502
+        assert client.post(base + "/generate-image").status_code == 503
         assert app.state.repo.get_project(project.id).decors[0].asset_id is None
         failing = False
         generated = client.post(base + "/generate-image")

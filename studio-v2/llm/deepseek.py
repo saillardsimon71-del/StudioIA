@@ -56,6 +56,16 @@ DÉCOUPAGE ET CONTRAINTES TECHNIQUES LTX-2.5 :
 - `time_transition` vaut `continuous`, `ellipse` ou `flashback`. Un compteur dépend de la timeline cumulée, même lorsqu'il est hors champ. Pour un décompte normal, retire le temps écoulé ; pour un temps fictionnel accéléré, rends le changement de règle explicite. Les changements de texte utilisent `display_overlay.changes[].at_sec`, relatif au début du plan, et restent dans sa durée. Prévois le temps de lecture des messages, pas seulement les chiffres.
 - Ne demande JAMAIS de sous-titres ni de texte généré par LTX. Si un compteur ou affichage précis est utile à l'intrigue, utilise `display_overlay` (l'écran dans l'image reste vierge/noir et FFmpeg incruste les chiffres exacts au montage).
 
+CONTRAT NARRATIF (contrôlable par l'auteur, sans second appel) :
+- Causalité : chaque plan est la conséquence filmable du précédent (désir → obstacle → décision → conséquence). Une scène qui pourrait être supprimée sans changer la suite est du remplissage.
+- Hook : la première action significative doit être visible dans le plan 1 ; aucune introduction explicative, aucun plan d'ambiance seul.
+- Rétention : la curiosité vient d'une information retenue puis révélée, pas d'une coupe accélérée ni d'une menace générique. Une révélation doit changer la décision du personnage suivant.
+- Continu et ellipse : en temps continu, l'état initial reprend exactement l'état final du plan précédent (positions, objets, salissures, vêtements). Toute remise à zéro, tout personnage qui réapparaît propre ou debout ailleurs, contredit l'histoire et sera signalé localement.
+- Fin : le payoff promis au spectateur doit être livré dans le film. Un cliffhanger n'est permis que s'il ouvre un épisode suivant utile, jamais comme substitut de conclusion.
+- Brief : n'invente aucun événement, texte ou son qui contredit les interdictions et les exigences explicites. Si un texte exact est demandé, il apparaît tel quel dans `display_overlay` et reste lisible.
+- Série : quand des références de projet sont fournies, conserve identifiants, apparences, voix, décors et style sans réinventer l'univers ; le nouveau brief prime sur les détails qu'il modifie.
+- Rythme : coupe seulement quand une information, un point de vue ou une réaction change. Ne force pas une coupe toutes les deux secondes.
+
 VÉRIFIE AVANT DE RÉPONDRE (dans cette génération, sans rapport ni champ JSON supplémentaire) :
 - À chaque coupe en temps continu, vérifie qui est où, ce qui est tenu, renversé, mouillé ou ouvert, et ce qui vient de changer. Montre chaque nouveau geste, déplacement, apparition ou départ dans `action`, jamais déjà accompli sans cause à l'ouverture. Si `continue_from_previous: true`, recopie à l'identique le `final_state` précédent dans `initial_state` et conserve la composition.
 - Relis le film dans l'ordre : enjeu compris dès l'ouverture, exigences du brief présentes dans les champs exécutés, actions et réactions qui progressent, raccords physiques, temps de parole, somme des durées et compteurs. Ajuste ces choix dans cette même réponse, sans autre appel ni rapport d'évaluation. Livre uniquement le scénario.

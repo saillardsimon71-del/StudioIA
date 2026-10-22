@@ -52,6 +52,10 @@ class V2Settings(BaseModel):
     metaai_api_url: str = "http://127.0.0.1:8000"
     metaai_api_key: str = ""
     metaai_timeout_s: float = 180.0
+    # CDN autorisés pour une image générée : tout autre hôte est refusé (avatar, tiers).
+    metaai_image_hosts: str = "fbcdn.net,metaaiusercontent.com"
+    # Refuse les vignettes et avatars : une image de production dépasse cette taille.
+    metaai_min_image_side: int = Field(default=256, ge=64, le=2048)
     deepseek_input_usd_per_1m: float = 0.27
     deepseek_output_usd_per_1m: float = 1.10
 
@@ -160,6 +164,8 @@ class V2Settings(BaseModel):
             "deepseek_api_key_configured": bool(self.effective_deepseek_key()),
             "metaai_api_url": self.metaai_api_url,
             "metaai_api_key_configured": bool(self.metaai_api_key),
+            "metaai_image_hosts": self.metaai_image_hosts,
+            "metaai_min_image_side": self.metaai_min_image_side,
             "modal_app_name": self.modal_app_name,
             "modal_function_name": self.modal_function_name,
             "gpu_label": self.gpu_label,

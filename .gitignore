@@ -28,6 +28,11 @@ calliope-web/.svelte-kit/
 calliope-backend/src/calliope/static/
 *.zip
 
+# --- Studio IA V2 : service Meta AI local ---
+studio-v2/metaai-service/data/
+studio-v2/metaai-service/.env
+studio-v2/metaai-service/.venv/
+
 # --- Tooling / QA ---
 .playwright-mcp/
 .cursor/
