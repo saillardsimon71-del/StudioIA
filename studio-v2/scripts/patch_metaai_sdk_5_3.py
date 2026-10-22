@@ -1,8 +1,8 @@
-"""Apply the Studio IA isolation fix to an installed metaai-sdk 5.3.0 package.
+"""Apply the Studio IA V3 conversation fix to an installed metaai-sdk 5.3.0 V2 package.
 
-This patcher is intentionally limited to five Python modules in the imported
-metaai_api package. It never reads, writes, or prints Meta cookies, browser
-profiles, Studio projects, or generated assets.
+V3 modifies only PlaywrightBackend.new_chat and its final conversation-ID guard.
+A five-module V2 snapshot is kept so the existing Windows rollback script remains
+usable. Cookies, browser profiles, projects, and generated assets are untouched.
 """
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ import shutil
 import sys
 import textwrap
 
-PREVIOUS_MARKER = "STUDIOIA_ISOLATED_GENERATION_V1"
-MARKER = "STUDIOIA_ISOLATED_GENERATION_V2"
+PREVIOUS_MARKER = "STUDIOIA_ISOLATED_GENERATION_V2"
+MARKER = "STUDIOIA_ISOLATED_GENERATION_V3"
 NEW_CHAT_LABELS = (
     "New chat", "New conversation", "Nouvelle discussion",
     "Nouvelle conversation", "Nouveau chat",
@@ -171,71 +171,87 @@ PLAYWRIGHT_SWITCH_MODE = r'''def _switch_mode(self, mode_name: str) -> None:
         raise ConnectionError(f"Échec du changement explicite vers le mode {mode_name}.") from exc'''
 
 
-PLAYWRIGHT_NEW_CHAT = f'''def new_chat(self, timeout: int = 10) -> str:
-    """Open a new chat via exact localized accessible labels and verify it is blank."""
+PLAYWRIGHT_NEW_CHAT = r'''def new_chat(self, timeout: int = 10) -> str:
+    """Reuse a verified blank home chat or open one by accessible name and sidebar structure."""
     if not self._ready:
         self.setup()
     self._dismiss_overlays(stage="before_new_chat")
+    self._studioia_fresh_chat_armed = False
     before_id = self._get_conversation_id()
-    labels = {NEW_CHAT_LABELS!r}
-    selected = None
-    for role in ("button", "link"):
-        for label in labels:
-            try:
-                locator = self._page.get_by_role(role, name=label, exact=True)
-                count = locator.count()
-                if count == 1 and locator.is_visible():
-                    selected = (role, label, locator)
-                    break
-                if count > 1:
-                    logger.warning("[studioia-metaai] stage=new_chat outcome=ambiguous role=%s label=%s count=%s",
-                                   role, label, count)
-            except Exception:
-                continue
-        if selected:
-            break
-    if selected is None:
-        logger.error("[studioia-metaai] stage=new_chat outcome=control_not_found path=%s",
-                     self._studioia_current_path()[:160])
-        raise ConnectionError("Bouton de nouvelle conversation Meta AI introuvable (libellés anglais/français exacts).")
+    used_ids = set(getattr(self, "_studioia_used_conversation_ids", set()))
+    self._studioia_used_conversation_ids = used_ids
 
-    role, label, locator = selected
-    logger.info("[studioia-metaai] stage=new_chat outcome=click role=%s exact_label=%s", role, label)
+    state = self._response_dom_state()
+    is_blank = (state.get("input_ready") and state.get("assistant_count") == 0
+                and state.get("user_count") == 0)
+    if is_blank and (not before_id or before_id not in used_ids):
+        # This is the blank conversation to use, not the previous conversation
+        # whose ID the post-generation guard must reject.
+        self._studioia_previous_conversation_id = None
+        self._studioia_fresh_chat_armed = True
+        logger.info("[studioia-metaai] stage=new_chat outcome=already_blank path=%s id_present=%s",
+                    self._studioia_current_path()[:160], bool(before_id))
+        return before_id
+
+    name_pattern = re.compile(
+        r"(?:new\s+(?:chat|conversation)|nouvelle\s+(?:discussion|conversation)|nouveau\s+chat)",
+        re.IGNORECASE,
+    )
+    candidates = []
+    for role in ("button", "link"):
+        try:
+            matches = self._page.get_by_role(role, name=name_pattern)
+            for index in range(matches.count()):
+                locator = matches.nth(index)
+                if not locator.is_visible():
+                    continue
+                in_sidebar = locator.evaluate("""el => !!el.closest(
+                    'nav, [role=\"navigation\"], aside, [data-testid*=\"sidebar\"], [aria-label*=\"sidebar\" i]'
+                )""")
+                if in_sidebar:
+                    candidates.append((role, locator))
+        except Exception as exc:
+            logger.warning("[studioia-metaai] stage=new_chat outcome=role_inspection_error role=%s type=%s",
+                           role, type(exc).__name__)
+    if len(candidates) != 1:
+        logger.error("[studioia-metaai] stage=new_chat outcome=control_%s count=%s path=%s",
+                     "ambiguous" if candidates else "not_found", len(candidates),
+                     self._studioia_current_path()[:160])
+        raise ConnectionError("Contrôle latéral « Nouvelle discussion » introuvable ou ambigu.")
+
+    role, locator = candidates[0]
+    logger.info("[studioia-metaai] stage=new_chat outcome=click role=%s accessible_name_match=localized_sidebar",
+                role)
     try:
         locator.click(timeout=4000)
     except Exception as exc:
         logger.error("[studioia-metaai] stage=new_chat outcome=click_error error_type=%s", type(exc).__name__)
-        raise ConnectionError(f"Échec du clic explicite sur « {{label}} ».") from exc
+        raise ConnectionError("Échec du clic sur le contrôle latéral Nouvelle discussion.") from exc
 
     deadline = time.time() + timeout
-    last_state = {{}}
+    last_state = {}
     while time.time() < deadline:
         path = self._studioia_current_path()
         if re.search(r"settings|applications|/apps(?:/|$|[?#])", path, re.IGNORECASE):
             logger.error("[studioia-metaai] stage=new_chat outcome=unexpected_route path=%s", path[:160])
-            raise ConnectionError(f"Le bouton « {{label}} » a ouvert une page de paramètres ({{path[:120]}}).")
-        try:
-            last_state = self._response_dom_state()
-            current_id = self._get_conversation_id()
-            id_changed = current_id != before_id
-            first_blank_page = not before_id and not current_id
-            if (last_state.get("input_ready") and last_state.get("assistant_count") == 0
-                    and last_state.get("user_count") == 0 and (id_changed or first_blank_page)):
-                self._studioia_previous_conversation_id = before_id
-                self._studioia_fresh_chat_armed = True
-                logger.info("[studioia-metaai] stage=new_chat outcome=verified_blank path=%s id_changed=%s",
-                            path[:160], id_changed)
-                return current_id
-        except ConnectionError:
-            raise
-        except Exception as exc:
-            logger.warning("[studioia-metaai] stage=new_chat outcome=verification_poll_error error_type=%s",
-                           type(exc).__name__)
+            raise ConnectionError(f"Nouvelle discussion a ouvert une page de paramètres ({path[:120]}).")
+        last_state = self._response_dom_state()
+        current_id = self._get_conversation_id()
+        if current_id and current_id in used_ids:
+            raise ConnectionError("Meta AI a rouvert un identifiant déjà utilisé pour une génération.")
+        id_changed = current_id != before_id
+        if (last_state.get("input_ready") and last_state.get("assistant_count") == 0
+                and last_state.get("user_count") == 0 and (id_changed or not current_id)):
+            self._studioia_previous_conversation_id = before_id
+            self._studioia_fresh_chat_armed = True
+            logger.info("[studioia-metaai] stage=new_chat outcome=verified_blank path=%s id_changed=%s",
+                        path[:160], id_changed)
+            return current_id
         time.sleep(0.4)
     logger.error("[studioia-metaai] stage=new_chat outcome=timeout path=%s assistant_count=%s user_count=%s input_ready=%s",
                  self._studioia_current_path()[:160], last_state.get("assistant_count"),
                  last_state.get("user_count"), last_state.get("input_ready"))
-    raise ConnectionError("Meta AI n'a pas confirmé de conversation vierge en 10 secondes.")'''
+    raise ConnectionError("Meta AI n'a pas confirmé une nouvelle conversation vierge en 10 secondes.")'''
 
 
 DOM_STATE_JS = r'''(() => {
@@ -470,6 +486,13 @@ PLAYWRIGHT_SEND_MESSAGE = r'''def send_message(self, prompt: str, timeout: int =
     if not conv_id or conv_id == getattr(self, "_studioia_previous_conversation_id", None):
         logger.error("[studioia-metaai] stage=conversation_id outcome=unconfirmed")
         raise ConnectionError("Meta AI n'a pas confirmé l'identifiant de la conversation courante.")
+    if require_new_conversation:
+        used_ids = set(getattr(self, "_studioia_used_conversation_ids", set()))
+        if conv_id in used_ids:
+            logger.error("[studioia-metaai] stage=conversation_id outcome=reused")
+            raise ConnectionError("Meta AI a réutilisé un identifiant déjà utilisé pour une génération.")
+        used_ids.add(conv_id)
+        self._studioia_used_conversation_ids = used_ids
     logger.info("[studioia-metaai] stage=%s outcome=complete image_count=%s conversation_confirmed=true",
                 stage, len(urls))
     return {"urls": urls, "text": text, "conversation_id": conv_id}'''
@@ -711,15 +734,11 @@ def _replace_agent_browser(package: Path) -> None:
 
 def _replace_playwright(package: Path) -> None:
     path = package / "playwright_backend.py"
-    _upsert_method(path, "PlaywrightBackend", "setup", "new_chat", PLAYWRIGHT_SETUP)
-    _upsert_method(path, "PlaywrightBackend", "_studioia_current_path", "new_chat", PLAYWRIGHT_CURRENT_PATH)
-    _upsert_method(path, "PlaywrightBackend", "_dismiss_overlays", "new_chat", PLAYWRIGHT_DISMISS_OVERLAYS)
-    _upsert_method(path, "PlaywrightBackend", "_switch_mode", "new_chat", PLAYWRIGHT_SWITCH_MODE)
-    _upsert_method(path, "PlaywrightBackend", "new_chat", "send_message", PLAYWRIGHT_NEW_CHAT)
-    _upsert_method(path, "PlaywrightBackend", "_response_dom_state", "_wait_for_response", PLAYWRIGHT_STATE_METHOD)
-    _upsert_method(path, "PlaywrightBackend", "send_message", "_wait_for_response", PLAYWRIGHT_SEND_MESSAGE)
-    _upsert_method(path, "PlaywrightBackend", "_wait_for_response", "send_message", WAIT_METHOD)
+    _replace_callable(path, ("PlaywrightBackend", "new_chat"), PLAYWRIGHT_NEW_CHAT)
+    _replace_callable(path, ("PlaywrightBackend", "send_message"), PLAYWRIGHT_SEND_MESSAGE)
     _set_class_marker(path, "PlaywrightBackend")
+    source = path.read_text(encoding="utf-8").replace(f"# {PREVIOUS_MARKER}\n", f"# {MARKER}\n")
+    path.write_text(source, encoding="utf-8", newline="")
 
 
 def _ensure_asyncio_import(path: Path) -> None:
@@ -745,46 +764,34 @@ def patch(package: Path, backup_root: Path) -> None:
     for name in required:
         if not (package / name).is_file():
             raise RuntimeError(f"Package module missing; refusing partial patch: {name}")
-    marker_states = {
-        name: (MARKER in (package / name).read_text(encoding="utf-8"),
-               PREVIOUS_MARKER in (package / name).read_text(encoding="utf-8"))
-        for name in required
-    }
-    v2_count = sum(v2 for v2, _ in marker_states.values())
-    v1_count = sum(v1 for _, v1 in marker_states.values())
-    if v2_count:
-        if v2_count == len(required):
-            print("Studio IA MetaAI patch v2 already installed; no files changed.")
-            return
-        raise RuntimeError("Partial Studio IA patch v2 detected; restore backup before retrying.")
-    if v1_count and v1_count != len(required):
-        raise RuntimeError("Partial v1 patch detected; restore its backup before upgrading.")
-    upgrading_v1 = v1_count == len(required)
+    sources = {name: (package / name).read_text(encoding="utf-8") for name in required}
+    playwright_v3 = MARKER in sources["playwright_backend.py"]
+    unchanged_v2 = all(PREVIOUS_MARKER in sources[name]
+                       for name in ("browser.py", "generation.py", "main.py", "api_server.py"))
+    if playwright_v3 and unchanged_v2 and PREVIOUS_MARKER not in sources["playwright_backend.py"]:
+        print("Studio IA MetaAI patch v3 already installed; no files changed.")
+        return
+    if not all(PREVIOUS_MARKER in sources[name] for name in required):
+        raise RuntimeError("This v3 patch requires a complete Studio IA MetaAI v2 installation.")
 
     backup = backup_root / dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     backup.mkdir(parents=True, exist_ok=False)
-    touched = list(required)
-    for name in touched:
+    # Keep a complete V2 snapshot so the existing five-module restore script
+    # can roll back this single-module V3 update without modification.
+    for name in required:
         shutil.copy2(package / name, backup / name)
 
+    target = package / "playwright_backend.py"
     try:
-        _replace_agent_browser(package)
         _replace_playwright(package)
-        _replace_callable(package / "generation.py", ("GenerationAPI", "generate_image"), GENERATION_METHOD)
-        _replace_callable(package / "main.py", ("MetaAI", "generate_image_new"), MAIN_GENERATE_METHOD)
-        _replace_class(package / "api_server.py", "ImageRequest", IMAGE_REQUEST_CLASS)
-        api = package / "api_server.py"
-        _ensure_asyncio_import(api)
-        _replace_callable(api, ("generate_image",), IMAGE_ROUTE)
-        for name in touched:
-            _append_marker(package / name)
-            ast.parse((package / name).read_text(encoding="utf-8"), filename=str(package / name))
+        ast.parse(target.read_text(encoding="utf-8"), filename=str(target))
+        updated = target.read_text(encoding="utf-8")
+        if MARKER not in updated or PREVIOUS_MARKER in updated:
+            raise RuntimeError("Playwright backend marker upgrade did not complete cleanly.")
     except Exception:
-        for name in touched:
-            shutil.copy2(backup / name, package / name)
+        shutil.copy2(backup / target.name, target)
         raise
-    action = "Upgraded v1 to v2" if upgrading_v1 else "Patched"
-    print(f"{action} metaai-sdk 5.3.0 modules only. Backup: {backup}")
+    print(f"Patched only PlaywrightBackend.new_chat (plus ID guard) for metaai-sdk 5.3.0. Backup: {backup}")
 
 
 def main() -> int:

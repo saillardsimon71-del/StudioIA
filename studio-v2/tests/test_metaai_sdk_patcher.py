@@ -9,7 +9,7 @@ import re
 import sys
 import textwrap
 import time
-from typing import Any, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pytest
 
@@ -75,23 +75,42 @@ async def generate_image(req: ImageRequest, _=None):
     return package
 
 
-def test_patch_is_limited_to_five_modules_and_idempotent(tmp_path, capsys):
-    package = _upstream_fixture(tmp_path)
-    before = {path.name: path.read_bytes() for path in package.glob("*.py")}
+def _v2_fixture(root: Path) -> Path:
+    package = _upstream_fixture(root)
+    for name in ("browser.py", "playwright_backend.py", "generation.py", "main.py", "api_server.py"):
+        path = package / name
+        source = path.read_text(encoding="utf-8")
+        if name == "browser.py":
+            source = source.replace("class BrowserBackend:\n", f'class BrowserBackend:\n    """{patcher.PREVIOUS_MARKER}"""\n', 1)
+        elif name == "playwright_backend.py":
+            source = source.replace("class PlaywrightBackend:\n", f'class PlaywrightBackend:\n    """{patcher.PREVIOUS_MARKER}"""\n', 1)
+        path.write_text(source.rstrip() + f"\n\n# {patcher.PREVIOUS_MARKER}\n", encoding="utf-8")
+    return package
+
+
+def test_patch_v2_changes_only_playwright_and_is_reversible_idempotent(tmp_path, capsys):
+    package = _v2_fixture(tmp_path)
+    before = {name: (package / name).read_bytes() for name in (
+        "browser.py", "playwright_backend.py", "generation.py", "main.py", "api_server.py",
+    )}
     backup_root = tmp_path / "backups"
 
     patcher.patch(package, backup_root)
-    patched = {path.name: path.read_text(encoding="utf-8") for path in package.glob("*.py")}
-    assert set(patched) == set(before)
-    for name in ("browser.py", "playwright_backend.py", "generation.py", "main.py", "api_server.py"):
-        ast.parse(patched[name])
-        assert patcher.MARKER in patched[name]
+    patched = {name: (package / name).read_text(encoding="utf-8") for name in before}
+    assert patched["playwright_backend.py"] != before["playwright_backend.py"].decode("utf-8")
+    assert patcher.MARKER in patched["playwright_backend.py"]
+    assert patcher.PREVIOUS_MARKER not in patched["playwright_backend.py"]
+    assert "_studioia_used_conversation_ids" in patched["playwright_backend.py"]
+    for name in set(before) - {"playwright_backend.py"}:
+        assert (package / name).read_bytes() == before[name]
+    ast.parse(patched["playwright_backend.py"])
+
     backups = list(backup_root.iterdir())
     assert len(backups) == 1
-    expected = {name: data for name, data in before.items() if name != "__init__.py"}
-    assert {path.name: path.read_bytes() for path in backups[0].glob("*.py")} == expected
-
+    assert {path.name: path.read_bytes() for path in backups[0].glob("*.py")} == before
+    after_once = (package / "playwright_backend.py").read_bytes()
     patcher.patch(package, backup_root)
+    assert (package / "playwright_backend.py").read_bytes() == after_once
     assert len(list(backup_root.iterdir())) == 1
     assert "already installed" in capsys.readouterr().out
 
@@ -129,56 +148,79 @@ def test_waiter_ignores_baseline_and_accepts_stable_current_response(monkeypatch
     assert text == "generated"
 
 
-def test_v1_patch_upgrades_in_place_and_remains_idempotent(tmp_path, capsys):
-    package = _upstream_fixture(tmp_path)
-    backup_root = tmp_path / "backups"
-    patcher.patch(package, backup_root)
-    for name in ("browser.py", "playwright_backend.py", "generation.py", "main.py", "api_server.py"):
-        path = package / name
-        path.write_text(path.read_text(encoding="utf-8").replace(patcher.MARKER, patcher.PREVIOUS_MARKER),
-                        encoding="utf-8")
+def test_french_home_already_blank_is_accepted_without_clicking():
+    class Page:
+        clicked = []
 
-    patcher.patch(package, backup_root)
-    output = capsys.readouterr().out
-    assert "Upgraded v1 to v2" in output
-    assert len(list(backup_root.iterdir())) == 2
-    for name in ("browser.py", "playwright_backend.py", "generation.py", "main.py", "api_server.py"):
-        source = (package / name).read_text(encoding="utf-8")
-        ast.parse(source)
-        assert patcher.MARKER in source
-        assert patcher.PREVIOUS_MARKER not in source
-    patcher.patch(package, backup_root)
-    assert len(list(backup_root.iterdir())) == 2
-    assert "already installed" in capsys.readouterr().out
+        def evaluate(self, script):
+            return {"path": "/", "controls": ["Connecter"], "dialogs": 1}
+
+        def get_by_role(self, *args, **kwargs):
+            raise AssertionError("A blank home page should not search or click New chat")
+
+    namespace = {"re": re, "time": time, "logger": logging.getLogger("patcher-test"),
+                 "ConnectionError": RuntimeError}
+    source = "class Patched:\n" + textwrap.indent(patcher.PLAYWRIGHT_CURRENT_PATH, "    ") + "\n" + \
+        textwrap.indent(patcher.PLAYWRIGHT_DISMISS_OVERLAYS, "    ") + "\n" + \
+        textwrap.indent(patcher.PLAYWRIGHT_NEW_CHAT, "    ")
+    exec(source, namespace)
+    backend = namespace["Patched"]()
+    backend._ready = True
+    backend._page = Page()
+    backend._studioia_current_path = lambda: "/"
+    backend._get_conversation_id = lambda: "blank-home-thread"
+    backend._response_dom_state = lambda: {
+        "assistant_count": 0, "user_count": 0, "input_ready": True,
+    }
+
+    assert backend.new_chat() == "blank-home-thread"
+    assert backend._studioia_previous_conversation_id is None
+    assert backend._studioia_fresh_chat_armed is True
+    assert backend._page.clicked == []
 
 
-def test_french_new_chat_is_exact_and_connecter_is_never_clicked():
+def test_new_chat_finds_sidebar_control_with_keyboard_shortcut_in_accessible_name():
     class Locator:
-        def __init__(self, page, role, label):
-            self.page, self.role, self.label = page, role, label
-
-        def count(self):
-            return int(self.role == "button" and self.label == "Nouvelle discussion")
+        def __init__(self, page):
+            self.page = page
 
         def is_visible(self):
             return True
 
+        def evaluate(self, script):
+            self.page.structure_checked = True
+            return True
+
         def click(self, timeout=None):
-            self.page.clicked.append((self.role, self.label))
+            self.page.clicked += 1
             self.page.conversation_id = "fresh-thread"
+            self.page.state = {"assistant_count": 0, "user_count": 0, "input_ready": True}
+
+    class Matches:
+        def __init__(self, locator):
+            self.locator = locator
+
+        def count(self):
+            return int(self.locator is not None)
+
+        def nth(self, index):
+            assert index == 0 and self.locator is not None
+            return self.locator
 
     class Page:
         def __init__(self):
-            self.clicked = []
+            self.clicked = 0
+            self.structure_checked = False
             self.conversation_id = "old-thread"
-
-        def get_by_role(self, role, name, exact=False):
-            assert exact is True
-            return Locator(self, role, name)
+            self.state = {"assistant_count": 1, "user_count": 1, "input_ready": True}
+            self.accessible_name = "Nouvelle discussion (Ctrl+Maj+N)"
 
         def evaluate(self, script):
-            # A French sign-in control is present, but inspection is read-only.
             return {"path": "/", "controls": ["Connecter"], "dialogs": 1}
+
+        def get_by_role(self, role, name):
+            matched = role == "button" and name.search(self.accessible_name)
+            return Matches(Locator(self) if matched else None)
 
     namespace = {"re": re, "time": time, "logger": logging.getLogger("patcher-test"),
                  "ConnectionError": RuntimeError}
@@ -191,33 +233,91 @@ def test_french_new_chat_is_exact_and_connecter_is_never_clicked():
     backend._page = Page()
     backend._studioia_current_path = lambda: "/"
     backend._get_conversation_id = lambda: backend._page.conversation_id
-    backend._response_dom_state = lambda: {
-        "assistant_count": 0, "user_count": 0, "input_ready": True,
-    }
+    backend._response_dom_state = lambda: backend._page.state
 
-    conversation_id = backend.new_chat()
-    assert conversation_id == "fresh-thread"
+    assert backend.new_chat() == "fresh-thread"
     assert backend._studioia_fresh_chat_armed is True
-    assert backend._page.clicked == [("button", "Nouvelle discussion")]
-    assert "Connecter" not in [label for _, label in backend._page.clicked]
+    assert backend._page.clicked == 1
+    assert backend._page.structure_checked is True
 
 
-def test_patch_has_no_generic_connect_click_and_image_send_does_not_force_mode():
+def test_post_generation_conversation_id_must_never_have_been_used():
+    class Composer:
+        def __init__(self, page):
+            self.page = page
+
+        def count(self):
+            return 1
+
+        def is_visible(self):
+            return True
+
+        def scroll_into_view_if_needed(self, timeout=None):
+            pass
+
+        def click(self, timeout=None):
+            pass
+
+        def fill(self, prompt, timeout=None):
+            self.page.prompt = prompt
+
+        def input_value(self):
+            return self.page.prompt
+
+        def press(self, key, timeout=None):
+            assert key == "Enter"
+            self.page.submitted = True
+
+    class Page:
+        def __init__(self):
+            self.prompt = ""
+            self.submitted = False
+
+        def locator(self, selector):
+            return Composer(self)
+
+    namespace = {
+        "Any": Any, "Dict": Dict, "re": re, "time": time,
+        "logger": logging.getLogger("patcher-test"), "ConnectionError": RuntimeError,
+    }
+    source = "class Patched:\n" + textwrap.indent(patcher.PLAYWRIGHT_SEND_MESSAGE, "    ")
+    exec(source, namespace)
+
+    def backend_for(conversation_id, used_ids):
+        backend = namespace["Patched"]()
+        backend._ready = True
+        backend._page = Page()
+        backend._studioia_fresh_chat_armed = True
+        backend._studioia_previous_conversation_id = "previous-thread"
+        backend._studioia_used_conversation_ids = set(used_ids)
+        backend._studioia_current_path = lambda: "/"
+        backend._get_conversation_id = lambda: conversation_id
+        backend._dismiss_overlays = lambda stage: None
+        backend._response_dom_state = lambda: {
+            "assistant_count": 0, "user_count": int(backend._page.submitted),
+            "urls": [], "existing_urls": [],
+        }
+        backend._wait_for_response = lambda *args: (["https://scontent.xx.fbcdn.net/new.png"], "done")
+        return backend
+
+    used = backend_for("previously-generated-thread", {"previously-generated-thread"})
+    with pytest.raises(RuntimeError, match="déjà utilisé"):
+        used.send_message("un prompt", require_new_conversation=True)
+
+    fresh = backend_for("brand-new-thread", {"previously-generated-thread"})
+    result = fresh.send_message("un prompt", require_new_conversation=True)
+    assert result["conversation_id"] == "brand-new-thread"
+    assert fresh._studioia_used_conversation_ids == {"previously-generated-thread", "brand-new-thread"}
+
+
+def test_overlay_inspection_stays_read_only_and_settings_route_fails_explicitly():
     assert ".click(" not in patcher.PLAYWRIGHT_DISMISS_OVERLAYS
-    assert ".get_by_text" not in patcher.PLAYWRIGHT_DISMISS_OVERLAYS
-    assert "self._switch_mode(\"Instant\")" not in patcher.PLAYWRIGHT_SEND_MESSAGE
-    assert "get_by_role(role, name=label, exact=True)" in patcher.PLAYWRIGHT_NEW_CHAT
-
-
-def test_settings_applications_route_fails_explicitly_without_clicking_controls():
     namespace = {"re": re, "logger": logging.getLogger("patcher-test"),
                  "ConnectionError": RuntimeError}
     source = "class Patched:\n" + textwrap.indent(patcher.PLAYWRIGHT_DISMISS_OVERLAYS, "    ")
     exec(source, namespace)
 
     class Page:
-        clicked = False
-
         def evaluate(self, script):
             return {"path": "/settings/apps", "controls": ["Connecter"], "dialogs": 1}
 
@@ -226,4 +326,3 @@ def test_settings_applications_route_fails_explicitly_without_clicking_controls(
     backend._studioia_current_path = lambda: "/settings/apps"
     with pytest.raises(RuntimeError, match="paramètres"):
         backend._dismiss_overlays(stage="test_french_overlay")
-    assert backend._page.clicked is False

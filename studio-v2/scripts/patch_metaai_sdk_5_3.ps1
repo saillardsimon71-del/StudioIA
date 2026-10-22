@@ -15,9 +15,9 @@ if (-not (Test-Path -LiteralPath $patcher -PathType Leaf)) {
     throw "Patcher introuvable : $patcher. Placez ce script avec patch_metaai_sdk_5_3.py."
 }
 
-# Le patcher vérifie metaai-sdk==5.3.0, crée une sauvegarde horodatée,
-# puis ne modifie que cinq modules Python de metaai_api. Aucun cookie/.env,
-# profil navigateur, projet Studio IA ou fichier image n'est ouvert.
+# V3 exige une installation V2 complète et crée une sauvegarde horodatée
+# des cinq modules, mais ne modifie que playwright_backend.py (new_chat et
+# la garde d'identifiant). Aucun cookie/.env, projet ou asset n'est ouvert.
 & $venvPython $patcher --python $venvPython
 if ($LASTEXITCODE -ne 0) {
     throw "Échec du patch Meta AI (code $LASTEXITCODE). Le patcher restaure les fichiers ciblés en cas d'échec."
