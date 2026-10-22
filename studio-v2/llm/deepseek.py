@@ -120,7 +120,7 @@ class ScenarioDraft(BaseModel):
 
     title: str = ""
     narration_mode: Literal["dialogue", "voice_over"] | None = None
-    visual_style: str = ""
+    visual_style: str = Field(default="", max_length=160)
     characters: list[Character] = Field(min_length=1)
     decors: list[Decor] = Field(default_factory=list)
     shots: list[Shot] = Field(min_length=1)
@@ -192,7 +192,7 @@ def generate_scenario_once(
     if official_api:
         request_body["thinking"] = {"type": "enabled"}
         request_body["reasoning_effort"] = "low"
-        request_body["max_tokens"] = 16384  # Préparation intérieure et JSON dans la même réponse.
+        request_body["max_tokens"] = 65536  # Budget partagé entre préparation et storyboard complet.
 
     if transport_fn is not None:
         api_response = transport_fn(request_body)
@@ -209,7 +209,9 @@ def generate_scenario_once(
                 "text": {"format": {"type": "json_schema", "name": "studio_director_v2", "schema": schema}},
             }
         try:
-            with httpx.Client(timeout=settings.deepseek_timeout_s) as client:
+            timeout = httpx.Timeout(settings.deepseek_timeout_s,
+                                    read=max(settings.deepseek_timeout_s, 300) if official_api else settings.deepseek_timeout_s)
+            with httpx.Client(timeout=timeout) as client:
                 resp = client.post(
                     url,
                     headers={

@@ -113,13 +113,17 @@ def test_empty_start_frame_does_not_reintroduce_actors_from_an_earlier_state(dra
     assert "Benny" not in prompt and "Yellow banana" not in prompt
 
 
-def test_official_director_authors_one_start_state_and_no_parallel_image_story(monkeypatch, draft):
+@pytest.mark.parametrize("timeout_s,read_timeout_s", [(90, 300), (600, 600)])
+def test_official_director_authors_one_start_state_and_no_parallel_image_story(monkeypatch, draft, timeout_s, read_timeout_s):
     requests = []
 
     def respond(request):
         requests.append(request)
+        assert request.extensions["timeout"]["read"] == read_timeout_s
+        assert request.extensions["timeout"]["connect"] == timeout_s
         body = json.loads(request.content)
         schema = body["text"]["format"]["schema"]
+        assert schema["properties"]["visual_style"]["maxLength"] == 160
         shot = schema["$defs"]["Shot"]
         assert "image_prompt" not in shot["properties"]
         assert {"initial_state", "final_state", "camera_setup"} <= set(shot["required"])
@@ -131,7 +135,8 @@ def test_official_director_authors_one_start_state_and_no_parallel_image_story(m
     client_class = httpx.Client
     monkeypatch.setattr(deepseek.httpx, "Client", lambda **kw: client_class(transport=httpx.MockTransport(respond), **kw))
     project, _ = deepseek.generate_scenario_once(
-        settings=V2Settings(deepseek_api_key="test"), idea="Un gag sans paroles.", target_duration_s=2,
+        settings=V2Settings(deepseek_api_key="test", deepseek_timeout_s=timeout_s),
+        idea="Un gag sans paroles.", target_duration_s=2,
     )
     assert len(requests) == 1
     assert project.shots[0].initial_state in project.shots[0].image_prompt
