@@ -436,6 +436,7 @@ def create_app(
                 idea=idea,
                 target_duration_s=target_dur,
                 project_id=project_id,
+                reference_project=existing,
                 transport_fn=app.state.llm_transport,
             )
         except ScenarioGenerationError as exc:
@@ -455,6 +456,18 @@ def create_app(
                 },
             ) from exc
 
+        current = _project_or_404(project_id)
+        if generated.visual_style == current.visual_style:
+            for char in generated.characters:
+                previous = next((c for c in current.characters if c.id == char.id
+                                 and (c.name, c.description) == (char.name, char.description)), None)
+                if previous:
+                    char.image_ref = previous.image_ref
+            for decor in generated.decors:
+                previous = next((d for d in current.decors if d.id == decor.id
+                                 and (d.name, d.description) == (decor.name, decor.description)), None)
+                if previous:
+                    decor.asset_id = previous.asset_id
         saved = app.state.repo.save_project(generated)
         app.state.repo.record_llm_run(
             project_id=project_id,

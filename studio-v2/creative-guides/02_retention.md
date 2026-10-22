@@ -16,7 +16,7 @@ La progression suit souvent **cause → conséquence → complication**, sans im
 ## À éviter
 
 - Deux plans exprimant la même émotion sans nouvelle nuance.
-- Transition pure (« il marche vers la porte ») sans fonction narrative.
+- Plan consacré uniquement à un trajet sans fonction narrative. Intégrer les transitions physiques nécessaires dans les prises où elles se produisent : supprimer un temps mort ne doit pas supprimer la cause d'un changement de position ou d'état.
 - Dialogue qui répète ou résume le plan précédent.
 - Ralentissement artificiel visant seulement à atteindre une durée cible.
 

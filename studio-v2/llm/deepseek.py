@@ -133,6 +133,7 @@ def generate_scenario_once(
     idea: str,
     target_duration_s: float = 15.0,
     project_id: str | None = None,
+    reference_project: Project | None = None,
     transport_fn: Callable[[dict], dict] | None = None,
 ) -> tuple[Project, dict]:
     """Effectue UN SEUL appel DeepSeek et valide la réponse avec Pydantic V2."""
@@ -156,6 +157,18 @@ def generate_scenario_once(
         f"sans assimiler un rythme rapide à davantage de générations. "
         f"Garde chaque description concise pour que chaque prompt LTX reste sous {MAX_LTX_PROMPT_WORDS} mots."
     )
+    if reference_project and (reference_project.characters or reference_project.decors or reference_project.visual_style):
+        user_message += (
+            "\n\nRÉFÉRENCES DU PROJET : reprends à l'identique les identifiants, apparences, voix, décors et style "
+            "qui restent pertinents. Les changements explicitement demandés dans le nouveau brief priment. "
+            "Ces références fixes ne dictent ni l'histoire ni les actions.\n"
+            + json.dumps({
+                "visual_style": reference_project.visual_style,
+                "characters": [c.model_dump(include={"id", "name", "description", "voice_hint"})
+                               for c in reference_project.characters],
+                "decors": [d.model_dump(include={"id", "name", "description"}) for d in reference_project.decors],
+            }, ensure_ascii=False)
+        )
 
     official_api = settings.deepseek_base_url.rstrip("/").endswith("api.deepseek.com")
     schema = ScenarioDraft.model_json_schema()
@@ -193,7 +206,7 @@ def generate_scenario_once(
     }
     if official_api:
         request_body["thinking"] = {"type": "enabled"}
-        request_body["reasoning_effort"] = "low"
+        request_body["reasoning_effort"] = "high"
         request_body["max_tokens"] = 65536  # Budget partagé entre préparation et storyboard complet.
 
     if transport_fn is not None:
@@ -206,7 +219,7 @@ def generate_scenario_once(
             http_body = {
                 "model": request_body["model"],
                 "input": request_body["messages"],
-                "reasoning": {"effort": "low"},
+                "reasoning": {"effort": request_body["reasoning_effort"]},
                 "max_output_tokens": request_body["max_tokens"],
                 "text": {"format": {"type": "json_schema", "name": "studio_director_v2", "schema": schema}},
             }

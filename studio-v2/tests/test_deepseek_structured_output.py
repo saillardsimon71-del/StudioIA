@@ -31,7 +31,7 @@ def test_official_request_enforces_the_director_schema_before_local_validation(m
         calls.append(request)
         assert str(request.url) == "https://api.deepseek.com/responses"
         body = json.loads(request.content)
-        assert body["reasoning"] == {"effort": "low"}
+        assert body["reasoning"] == {"effort": "high"}
         assert body["max_output_tokens"] == 65536
         assert "MISE EN SCÈNE" in body["input"][0]["content"]
         assert body["text"]["format"]["type"] == "json_schema"

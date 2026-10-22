@@ -80,9 +80,14 @@ def test_http_single_call_preserves_brief_and_json_roundtrip(monkeypatch, draft,
     monkeypatch.setattr(ds.httpx, "Client", lambda **kwargs: client_class(
         transport=httpx.MockTransport(respond), **kwargs,
     ))
+    references = Project(id="references", idea="Autre épisode.", **draft)
+    references.visual_style = "Naturalistic cinematic realism"
+    references.characters[0].image_ref = "PRIVATE_PORTRAIT.png"
+    references.shots[0].action = "OLD_STORY_MUST_NOT_BE_SENT"
+    references.shots[0].rendered_video_ref = "PRIVATE_RENDER.mp4"
     project, meta = ds.generate_scenario_once(
         settings=V2Settings(deepseek_api_key="test"), idea=idea,
-        target_duration_s=9, project_id="identity-test",
+        target_duration_s=9, project_id="identity-test", reference_project=references,
     )
 
     assert len(requests) == 1
@@ -91,10 +96,17 @@ def test_http_single_call_preserves_brief_and_json_roundtrip(monkeypatch, draft,
     assert request.url.path == "/responses"
     body = json.loads(request.content)
     assert body["text"]["format"]["type"] == "json_schema"
-    assert body["reasoning"] == {"effort": "low"}
+    assert body["reasoning"] == {"effort": "high"}
     assert body["max_output_tokens"] == 65536
     assert len(body["input"]) == 2
     assert idea in body["input"][1]["content"]
+    context = json.loads(body["input"][1]["content"].splitlines()[-1])
+    assert context["visual_style"] == references.visual_style
+    assert context["characters"][0]["description"] == references.characters[0].description
+    assert "shots" not in context
+    assert "PRIVATE_PORTRAIT" not in json.dumps(body)
+    assert "PRIVATE_RENDER" not in json.dumps(body)
+    assert "OLD_STORY_MUST_NOT_BE_SENT" not in json.dumps(body)
     if name != "El Diablo":
         assert "El Diablo" not in body["input"][0]["content"]
     guides, revision = ds.load_creative_guides()
