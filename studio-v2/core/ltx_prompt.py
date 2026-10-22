@@ -98,7 +98,6 @@ def compile_shot_prompt(project: Project, shot: Shot) -> str:
     has_visual_ref = bool(shot.image_ref or shot.continue_from_previous)
 
     speaking_ids = [line.speaker_id for line in shot.dialogue if line.delivery == "on_screen"]
-    audio_only_ids = {line.speaker_id for line in shot.dialogue if line.delivery != "on_screen"}
     mentioned_ids: list[str] = []
     haystack = f"{shot.action} {shot.initial_state} {shot.final_state}".casefold()
     for char in project.characters:
@@ -107,9 +106,7 @@ def compile_shot_prompt(project: Project, shot: Shot) -> str:
             or re.search(r"\b(?:" + re.escape(char.id) + "|" + re.escape(char.name) + r")\b", haystack, re.I)
         ):
             mentioned_ids.append(char.id)
-    cast_ids = list(dict.fromkeys(mentioned_ids or [
-        c.id for c in project.characters if c.id not in audio_only_ids
-    ][:2]))
+    cast_ids = list(dict.fromkeys(mentioned_ids))
 
     parts: list[str] = []
     if has_visual_ref:
@@ -155,9 +152,10 @@ def compile_shot_prompt(project: Project, shot: Shot) -> str:
                 announced.add(line.speaker_id)
             else:
                 parts.append(f'{speaker_name} {verb}: "{spoken}"')
-        parts.append("Only the named on-screen speaker lip-syncs; other characters may react silently.")
+        if cast_ids:
+            parts.append("Only the named on-screen speaker lip-syncs; other characters may react silently.")
     else:
-        parts.append("Characters stay silent with expressive physical reactions.")
+        parts.append("Characters stay silent with expressive physical reactions." if cast_ids else "No spoken dialogue.")
 
     if shot.final_state:
         parts.append(_clean_sentence(f"End state: {shot.final_state}"))

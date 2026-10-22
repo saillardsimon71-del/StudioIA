@@ -14,7 +14,7 @@ import hashlib
 import json
 import uuid
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -22,16 +22,17 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from core.config import V2Settings
 from core.ltx_prompt import MAX_LTX_PROMPT_WORDS, PromptCapacityError, compile_shot_prompt
 from core.scenario import Character, Decor, Project, Shot
-from core.storyboard import prepare_storyboard
+from core.storyboard import build_shot_image_prompt, prepare_storyboard
 
 SYSTEM_PROMPT = """Tu es scénariste-réalisateur de courts métrages verticaux (9:16) percutants en français pour le moteur vidéo LTX-2.5.
 
 CONSTRUIS L'HISTOIRE AVANT LES PLANS (préparation intérieure, seul le JSON final est rendu) :
 - Conserve le genre, les noms et identités du brief, même dans les descriptions anglaises. Les exemples des bibles ne définissent pas le canon du projet.
+- Le brief est le contrat : repère les événements, textes exacts, sons, interdictions et moments imposés. Prévois où chacun sera réellement exécuté dans les champs du scénario ; une exigence présente seulement dans l'idée n'est pas réalisée. N'ajoute ni parole ni voix off à un film demandé sans paroles.
 - Détermine le désir ou conflit, le déclencheur réel, les décisions et changements successifs, la progression des enjeux, puis la révélation, chute ou résolution finale.
 - Choisis ensuite l'ouverture la plus intrigante. L'ordre du résumé utilisateur n'impose pas l'ordre d'exposition : si un événement fort suit une présentation banale, fais-le commencer au plan 1. Une tristesse générique, une attente ou un décor seuls ne suffisent pas : il faut un enjeu immédiat, une émotion précise ou un détail qui soulève une question concrète.
 - Découpe alors en plans utiles, sans répétition ni remplissage. Adapte accroche, respirations et fin au genre (humour, émotion, absurde, aventure, horreur), sans menace ni cliffhanger imposés ni surenchère permanente. Assume les anomalies de fiction demandées.
-- Choisis `narration_mode`: `voice_over` pour une demande de faceless, voix off ou narration immersive ; `dialogue` pour la fiction dialoguée / Fruit City. Le genre horreur seul n'impose pas la voix off. En voix off, assure un récit immersif suivi sur les plans (même voix), avec quelques dialogues motivés. `dialogue[].delivery` distingue `voice_over` (narrateur invisible), `off_screen` (voix du lieu invisible) et `on_screen` (personnage visible). Ne fais pas réciter le récit aux personnages.
+- Choisis `narration_mode`: `voice_over` pour une narration effectivement voulue et écrite ; `dialogue` pour les échanges ou un film sans parole (alors `dialogue: []` sur chaque plan). Le genre horreur ou le mot "voix off" dans une interdiction ne justifient pas un narrateur. En voix off, garde la même voix et un récit suivi. `dialogue[].delivery` distingue `voice_over` (narrateur invisible), `off_screen` (voix du lieu invisible) et `on_screen` (personnage visible). Ne fais pas réciter le récit aux personnages.
 - Paroles en français oral, voix distinctes : chaque réplique cherche à obtenir quelque chose de quelqu'un, révèle un sous-texte ou fait évoluer la relation ; elle ne décrit pas simplement l'image.
 - Chaque changement de lieu doit servir une décision ou révélation. Fixe la géographie des pièces et des murs dans les décors ; ne déplace pas un même mur de chambre vers le couloir. Écarte les détours sans cause ni conséquence.
 
@@ -39,63 +40,27 @@ MISE EN SCÈNE : TRADUIRE L'INTENTION EN COMPORTEMENTS (sans nouveau champ JSON)
 - Pour chaque réplique, détermine en silence à qui elle s'adresse, ce que le locuteur veut obtenir et ce qu'il ressent ou dissimule ; cerne aussi ce que chaque autre personnage présent veut, ressent ou retient, et ce que la réplique change entre eux. Ne rends pas cette analyse : montre son résultat.
 - Dans `action`, fais jouer l'intention par un comportement précis et filmable : regard, posture, souffle, mains, hésitation, voix qui se brise ou reste trop contrôlée. Quand l'autre personnage est présent, donne-lui une réaction lisible. Un geste peut contredire les mots si cela révèle le sous-texte ; évite l'émotion générique et l'illustration littérale de chaque phrase.
 - Décris un beat continu où gestes, réplique et réaction s'enchaînent naturellement. Utilise `start_sec` et la durée pour réserver le temps de parler, d'écouter et de réagir ; le compilateur ne transmet pas `start_sec` comme horodatage à LTX, donc décris relativement dans `action` toute pause qui compte. N'empile pas des gestes impossibles dans le temps restant.
-- `initial_state` est l'image réellement visible avant le premier geste (expression, regard, posture, positions) ; `image_prompt` reprend cet instant et le cadrage de `camera_setup`. `action` mène de cette image à `final_state` sans commencer par le résultat.
+- `initial_state` est l'image réellement visible au début du plan : expression, regard, posture, positions, objet tenu et état des accessoires. Nomme les personnages visibles et décris cet instant, avant les changements de `action`. Un mouvement déjà engagé au plan précédent peut se poursuivre ; ne remets pas les poses à zéro. Le moteur fabrique `image_prompt` depuis cet état, `camera_setup`, les apparences et le décor : n'écris pas une seconde scène pour l'image.
+- `action` mène de cette image à `final_state` par une chaîne filmable. Pour un gag ou un effet de suspense, rends lisibles sa préparation, son déclenchement et sa conséquence, sur plusieurs plans si nécessaire. Un personnage ne tient pas déjà l'objet qu'il doit saisir. Les sons utiles, bips, impacts, ambiance, musique ou silence demandés sont décrits ici, liés aux gestes ; ils sont des consignes à l'audio natif, pas des événements synchronisés garantis.
 - `camera_setup` décrit seulement le cadrage de départ, en 8 mots anglais maximum. Un mouvement de caméra n'est utile que s'il rend plus claire une révélation, un changement d'attention ou de relation : décris-le dans `action`, lié à ce qu'il révèle. Sinon, garde la caméra immobile. N'impose jamais le même mouvement à chaque scène.
 
 DÉCOUPAGE ET CONTRAINTES TECHNIQUES LTX-2.5 :
-- Choisis des plans de 3.0 à 10.0 secondes selon l'action et les répliques, sans grille fixe (total proche de la durée cible).
+- Respecte la cadence et les durées explicitement demandées, dans les limites du schéma. Des plans de 2 secondes conviennent à un montage rapide demandé ; sans cadence imposée, choisis les durées selon ce qui doit être vu, compris, entendu et ressenti. Une réaction ne devient pas un nouveau plan si elle ne change rien.
+- Prépare intérieurement une seule timeline cumulée de tout l'épisode avant de détailler les plans. Place les événements imposés aux moments demandés, puis calcule les durées ; ne remplis pas la cible avec des attentes répétées. Une coupe sert une action, une information, un point de vue ou une réaction, pas seulement un changement de taille de plan.
 - Un décor stable et lisible, peu de personnages (1 à 3 maximum), actions physiques simples et filmables en continu.
 - Vise 2.5 mots parlés/seconde, maximum 3.2, dans le temps disponible APRÈS chaque `start_sec`, pauses et répliques comprises, sans chevauchement. Garde aussi un instant pour écouter ou réagir ; raccourcis les répliques ou adapte la durée si nécessaire.
 - En anglais visuel au présent : reste concis sans sacrifier les gestes, réactions et intentions utiles. Le garde-fou local de 300 mots du prompt compilé inclut cadrage, apparences, voix et dialogues ; ce n'est pas une limite native de LTX.
 - `characters[].description` décrit l'apparence physique fixe en anglais visuel court (15–25 mots).
 - `voice_hint` tient en un ou deux mots anglais.
 - Le premier plan a `continue_from_previous: false`. Ensuite `true` UNIQUEMENT si la dernière image précédente permet réellement la suite : même lieu, angle, cadrage, positions et état. Réutilise alors le même `camera_setup` (courte description anglaise de la composition fixe, incluant les éléments nécessaires à la suite). Un gros plan après un plan large exige `false` et une nouvelle image, même au même instant. Une coupe ne remet jamais les états à zéro.
-- `time_transition` vaut `continuous`, `ellipse` ou `flashback`. Une horloge ne recule pas sans transition temporelle explicite et lisible. Les changements d'overlay restent dans la durée du plan, avec des positions normalisées entre 0 et 1. Vérifie aussi la somme des durées.
+- `time_transition` vaut `continuous`, `ellipse` ou `flashback`. Un compteur dépend de la timeline cumulée, même lorsqu'il est hors champ. Pour un décompte normal, retire le temps écoulé ; pour un temps fictionnel accéléré, rends le changement de règle explicite. Les changements de texte utilisent `display_overlay.changes[].at_sec`, relatif au début du plan, et restent dans sa durée. Prévois le temps de lecture des messages, pas seulement les chiffres.
 - Ne demande JAMAIS de sous-titres ni de texte généré par LTX. Si un compteur ou affichage précis est utile à l'intrigue, utilise `display_overlay` (l'écran dans l'image reste vierge/noir et FFmpeg incruste les chiffres exacts au montage).
 
 VÉRIFIE AVANT DE RÉPONDRE (dans cette génération, sans rapport ni champ JSON supplémentaire) :
-- Si `continue_from_previous: true`, recopie à l'identique le `final_state` précédent dans `initial_state`. Montre chaque nouveau geste, déplacement, apparition ou départ dans `action`, jamais déjà accompli à l'ouverture. Une coupe ne justifie pas un objet déjà saisi ou un déplacement inexpliqué.
-- Vérifie l'accroche du plan 1, l'intention rendue visible pour chaque réplique, les réactions, la motivation d'un éventuel mouvement caméra, l'alignement image initiale → action → état final, les identités, les `speaker_id` déclarés et le temps de parole. Livre uniquement le scénario.
+- À chaque coupe en temps continu, vérifie qui est où, ce qui est tenu, renversé, mouillé ou ouvert, et ce qui vient de changer. Montre chaque nouveau geste, déplacement, apparition ou départ dans `action`, jamais déjà accompli sans cause à l'ouverture. Si `continue_from_previous: true`, recopie à l'identique le `final_state` précédent dans `initial_state` et conserve la composition.
+- Relis le film dans l'ordre : enjeu compris dès l'ouverture, exigences du brief présentes dans les champs exécutés, actions et réactions qui progressent, raccords physiques, temps de parole, somme des durées et compteurs. Ajuste ces choix dans cette même réponse, sans autre appel ni rapport d'évaluation. Livre uniquement le scénario.
 
-SCHÉMA JSON STRICT ATTENDU (réponds UNIQUEMENT par un objet JSON valide) :
-{
-  "title": "Titre court en français",
-  "narration_mode": "dialogue",
-  "visual_style": "Consistent English visual style from the brief, shared by images and video",
-  "characters": [
-    {
-      "id": "identifiant_snake_case",
-      "name": "Nom affiché",
-      "description": "Short concrete visual appearance in English (15-25 words)",
-      "voice_hint": "warm medium-low / bright / calm / raspy"
-    }
-  ],
-  "decors": [
-    {
-      "id": "lieu_unique",
-      "name": "Nom du lieu",
-      "description": "Fixed visual setting in English: layout, furniture, colors, lighting, visual style. No characters."
-    }
-  ],
-  "shots": [
-    {
-      "id": "shot_1",
-      "duration_s": 5.0,
-      "action": "Concise physical camera and character action in present-tense English.",
-      "initial_state": "Exact physical starting state at t=0 in short English.",
-      "final_state": "Exact physical ending state at end of shot in short English.",
-      "image_prompt": "Complete English prompt for one vertical 9:16 starting still, including character appearances, clothing, setting, framing and a non-graphic pose. No text.",
-      "continue_from_previous": false,
-      "camera_setup": "Medium shot facing the bedroom wall",
-      "time_transition": "continuous",
-      "decor_id": "lieu_unique",
-      "dialogue": [
-        {"speaker_id": "identifiant_snake_case", "text": "Réplique naturelle en français.", "start_sec": 0.4, "delivery": "on_screen"}
-      ],
-      "display_overlay": null
-    }
-  ]
-}
+SCHÉMA JSON STRICT ATTENDU : réponds uniquement par l'objet conforme au schéma fourni par l'API. Utilise les identifiants déclarés dans `characters` et `decors`. Écris les descriptions visuelles et actions en anglais concret, les dialogues et textes affichés dans la langue du brief. `title` est un titre court ; `visual_style` conserve le style demandé pour toutes les images et vidéos. Les chemins de fichiers, validations, images et prompts compilés sont gérés par le moteur.
 
 DÉCORS POUR LES IMAGES (métadonnées du même scénario, sans changer les règles narratives ci-dessus) :
 - Déclare dans `decors` chaque lieu utile à l'histoire une seule fois, à partir de l'idée (ex. cellule, cantine, promenade).
@@ -103,13 +68,13 @@ DÉCORS POUR LES IMAGES (métadonnées du même scénario, sans changer les règ
 - Chaque plan indique dans `decor_id` l'identifiant du lieu déclaré correspondant. Réutilise cet identifiant quand le lieu revient.
 - Ces descriptions servent à préparer les images de référence et les images initiales, sans autre appel de scénarisation.
 
-IMAGES META AI (préparées dans ce même appel, sans réécrire la narration) :
-- Pour chaque plan, `image_prompt` est un prompt autonome en anglais de 40 à 80 mots pour une seule image verticale 9:16 à t=0, sans texte ni succession d'actions. Inclus les identités et apparences des personnages présents, leurs vêtements, le décor, le cadrage et leurs positions : aucune bible ne sera ajoutée à ce prompt.
-- `initial_state` est la source de vérité de cette image AVANT `action`. Ne dessine jamais le résultat ou un geste en cours : endormi avant de se redresser ; papier peint encore en place avant de dévoiler la porte ; oreille au mur avant de reculer. L'image, les positions et le cadrage doivent correspondre à `camera_setup`; n'ajoute aucun personnage qui doit entrer ensuite. Utilise exactement le même `visual_style` dans tous les prompts, jamais de 3D imposée à un projet réaliste.
-- Décris une scène visuellement non graphique : pose au repos ou préparatoire, avant tout impact ou contact violent. Écarte blessures visibles, mutilation, nudité et sexualisation du visuel. Si l'état narratif impose un instant graphique, prépare une alternative calme avant le geste, dans le même lieu avec les mêmes personnages. Décris réellement cette autre image ; ne masque pas une agression en changeant seulement les mots.
+IMAGES META AI (exécution technique du même scénario) :
+- `initial_state` est la source de vérité de l'image à t=0. Écris-le comme une photographie précise, avec les noms des personnages effectivement visibles et la disposition des accessoires utiles. Le moteur lui associe leurs descriptions fixes, le décor et `camera_setup`. Les inserts sans personnage et le noir n'héritent pas du casting de l'épisode.
+- Ne décris pas une conséquence future dans cet état : pieds encore stables avant de glisser ; tasse encore droite avant d'être renversée ; mains prêtes avant de pousser. Un écran qui recevra une incrustation reste vierge. Pour un noir, indique seulement un cadre noir sans objets ni personnages, avec `decor_id: null`.
+- Choisis dès la mise en scène un départ et un cadrage visuellement non graphiques, avant l'impact ou avec l'élément graphique hors champ. Écarte blessures visibles, mutilation, nudité et sexualisation de l'image initiale. Conserve les personnages, le lieu et les conséquences narratives ; ne masque pas une agression en changeant seulement les mots.
 - Conserve les émotions et le style demandés. Ne transforme pas une scène de menace en contact physique pour renforcer l'image. Le prompt doit décrire ce qui est visible, sans raconter les conséquences ni les enjeux violents de l'histoire.
 - Les descriptions fixes de personnages et de décors servent aussi aux références visuelles : apparence, vêtements, mobilier, couleurs et lumière, sans ajouter de scène de violence ou de blessures à ces références.
-- Ces consignes d'image ne changent ni `action`, ni `initial_state`, ni `final_state`, ni les dialogues, ni les règles narratives ci-dessus. L'acceptation finale des images dépend de Meta AI.
+- Ces choix de départ servent la même histoire, sans détourner les événements ni les dialogues du brief. L'acceptation finale des images dépend de Meta AI.
 
 Si `display_overlay` est utilisé sur un plan, sa structure est :
 {"initial_text": "000", "x": 0.5, "y": 0.14, "font_size": 0.05, "color": "00FF88", "box_bg": "101418", "changes": [{"at_sec": 3.8, "text": "001"}]}
@@ -154,7 +119,7 @@ class ScenarioDraft(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     title: str = ""
-    narration_mode: str | None = None
+    narration_mode: Literal["dialogue", "voice_over"] | None = None
     visual_style: str = ""
     characters: list[Character] = Field(min_length=1)
     decors: list[Decor] = Field(default_factory=list)
@@ -186,24 +151,44 @@ def generate_scenario_once(
     user_message = (
         f"IDÉE DE L'UTILISATEUR :\n{clean_idea}\n\n"
         f"DURÉE TOTALE VISÉE : environ {target_duration_s:g} secondes en format vertical 9:16 "
-        f"Choisis librement le nombre et la durée des plans (3 à 10 secondes par plan) selon le rythme de l’histoire. "
+        f"Respecte le découpage explicitement demandé ; sinon adapte le nombre et la durée des plans au rythme de l'histoire. "
         f"Garde chaque description concise pour que chaque prompt LTX reste sous {MAX_LTX_PROMPT_WORDS} mots."
     )
+
+    official_api = settings.deepseek_base_url.rstrip("/").endswith("api.deepseek.com")
+    schema = ScenarioDraft.model_json_schema()
+    schema["additionalProperties"] = False
+    schema["required"].append("narration_mode")
+    # The director supplies creative fields; local file paths and render state belong to the engine.
+    for name, fields in {
+        "Character": ("image_ref",),
+        "Decor": ("asset_id",),
+        "Shot": ("image_prompt", "image_ref", "decor_asset_id", "ltx_prompt", "seed", "image_validated",
+                 "rendered_video_ref", "human_validated"),
+    }.items():
+        for field in fields:
+            schema["$defs"][name]["properties"].pop(field)
+    shot_schema = schema["$defs"]["Shot"]
+    for field in ("initial_state", "final_state", "camera_setup"):
+        shot_schema["required"].append(field)
+        shot_schema["properties"][field]["minLength"] = 1
+    system_message = (
+        "RÉFÉRENCES ÉDITORIALES (exemples adaptables au genre, pas un découpage imposé) :\n"
+        + creative_guides + "\n\n" + SYSTEM_PROMPT
+    )
+    if not official_api:
+        system_message += "\nCONTRAT JSON V2 :\n" + json.dumps(schema, ensure_ascii=False)
 
     request_body: dict = {
         "model": settings.deepseek_model,
         "messages": [
-            {"role": "system", "content": (
-                "RÉFÉRENCES ÉDITORIALES (exemples adaptables au genre, pas un découpage imposé) :\n"
-                + creative_guides + "\n\n" + SYSTEM_PROMPT
-            )},
+            {"role": "system", "content": system_message},
             {"role": "user", "content": user_message},
         ],
         "response_format": {"type": "json_object"},
         "temperature": 0.8,
         "max_tokens": 3000,
     }
-    official_api = settings.deepseek_base_url.rstrip("/").endswith("api.deepseek.com")
     if official_api:
         request_body["thinking"] = {"type": "enabled"}
         request_body["reasoning_effort"] = "low"
@@ -215,17 +200,6 @@ def generate_scenario_once(
         url = settings.deepseek_base_url.rstrip("/") + "/chat/completions"
         http_body = request_body
         if official_api:
-            schema = ScenarioDraft.model_json_schema()
-            schema["additionalProperties"] = False
-            # The director supplies creative fields; local file paths and render state belong to the engine.
-            for name, fields in {
-                "Character": ("image_ref",),
-                "Decor": ("asset_id",),
-                "Shot": ("image_ref", "decor_asset_id", "ltx_prompt", "seed", "image_validated",
-                         "rendered_video_ref", "human_validated"),
-            }.items():
-                for field in fields:
-                    schema["$defs"][name]["properties"].pop(field)
             url = settings.deepseek_base_url.rstrip("/") + "/responses"
             http_body = {
                 "model": request_body["model"],
@@ -316,9 +290,8 @@ def generate_scenario_once(
             aspect_ratio="9:16",
             target_duration_s=target_duration_s,
             narration_mode=draft.narration_mode or (
-                "voice_over" if any(term in clean_idea.casefold() for term in (
-                    "faceless", "voix off", "voice-over", "narration immersive",
-                )) else "dialogue"
+                "voice_over" if any(line.delivery == "voice_over" for shot in draft.shots
+                                    for line in shot.dialogue) else "dialogue"
             ),
             visual_style=draft.visual_style,
             characters=draft.characters,
@@ -336,6 +309,9 @@ def generate_scenario_once(
         ) from exc
 
     try:
+        for shot in project.shots:
+            if not shot.image_prompt and shot.initial_state.strip():
+                shot.image_prompt = build_shot_image_prompt(project, shot)
         prompt_warnings = prepare_storyboard(project)
     except ValueError as exc:
         raise ScenarioGenerationError(str(exc), raw_content=str(raw_content)) from exc

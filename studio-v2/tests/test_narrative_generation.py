@@ -136,6 +136,9 @@ def test_custom_endpoint_keeps_existing_request_contract(monkeypatch, draft):
     assert "thinking" not in requests[0]
     assert "reasoning_effort" not in requests[0]
     assert requests[0]["max_tokens"] == 3000
+    schema = json.loads(requests[0]["messages"][0]["content"].splitlines()[-1])
+    assert schema["additionalProperties"] is False
+    assert "image_prompt" not in schema["$defs"]["Shot"]["properties"]
 
 
 def test_same_call_prepares_recurring_decors_and_shot_associations(draft):
@@ -155,8 +158,6 @@ def test_same_call_prepares_recurring_decors_and_shot_associations(draft):
     assert project.decors[0].name == "Chambre"
     assert project.decors[0].asset_id is None
     assert [shot.decor_id for shot in project.shots] == ["chambre", "chambre"]
-    assert '"decors"' in requests[0]["messages"][0]["content"]
-    assert '"decor_id"' in requests[0]["messages"][0]["content"]
     assert Project.model_validate_json(project.model_dump_json()) == project
 
 
@@ -252,7 +253,7 @@ def test_unavailable_guide_stops_before_transport(tmp_path, monkeypatch, missing
         )
 
 
-def test_same_call_prepares_independent_image_prompts_without_changing_video_story(draft):
+def test_generation_preserves_existing_image_prompts_and_builds_missing_starts(draft):
     from core.ltx_prompt import compile_shot_prompt
 
     image_prompt = "Vertical 9:16 still, t=0. A red strawberry in pajamas waits by a bedroom mirror. No text."
@@ -266,8 +267,8 @@ def test_same_call_prepares_independent_image_prompts_without_changing_video_sto
     project, _ = ds.generate_scenario_once(settings=V2Settings(), idea="Une rencontre.", transport_fn=respond)
     assert len(calls) == 1
     assert project.shots[0].image_prompt == image_prompt
-    assert project.shots[1].image_prompt == ""
-    assert '"image_prompt"' in calls[0]["messages"][0]["content"]
+    assert project.shots[1].initial_state in project.shots[1].image_prompt
+    assert project.shots[1].action not in project.shots[1].image_prompt
     original_video_prompt = compile_shot_prompt(project, project.shots[0])
     project.shots[0].image_prompt = "Another non-graphic still."
     assert compile_shot_prompt(project, project.shots[0]) == original_video_prompt

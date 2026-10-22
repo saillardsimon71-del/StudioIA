@@ -23,6 +23,8 @@ Pour chaque réplique, comprendre sans l'expliquer au spectateur : à qui le loc
 
 Faire de `initial_state` l'image exacte avant le premier changement ; laisser `action` dérouler les gestes et les répliques dans un ordre réalisable ; finir sur le vrai `final_state`. Garder une place pour les silences et les réactions dans la durée. `camera_setup` fixe le cadrage de départ, repris par l'image initiale. Un mouvement de caméra ne sert la scène que s'il révèle quelque chose ou accompagne un changement d'attention ou de relation ; une caméra immobile peut être plus juste.
 
+La coupe change le point de vue, pas les faits. Conserver les positions et l'état des accessoires d'un plan à l'autre, même avec une nouvelle image : quelqu'un encore dans un bol doit en sortir avant d'être placé derrière, un personnage qui perd l'équilibre doit se rétablir avant de préparer un saut. L'état initial ne raconte ni la suite du geste ni la chute du gag. Ces exemples décrivent une continuité à respecter, pas des actions à imposer aux histoires.
+
 **Contre-exemples (des contrastes, pas des recettes à recopier) :**
 - Faible : « Je vais très bien. » Elle a l'air triste. Mieux : elle recouvre la lettre humide d'une main, force un sourire, puis regarde la pluie ; son ami cesse d'avancer la main. Les mots n'expliquent pas l'image, ils la contredisent.
 - Faible : « Je peux y aller seul. » Il marche vers la sortie. Mieux : il tend la clé d'une main tremblante ; son amie saisit sa manche plutôt que la clé, et il se retourne. Un lent rapprochement peut servir ce retournement, mais n'est pas obligatoire.
