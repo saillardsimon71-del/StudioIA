@@ -24,7 +24,9 @@ La progression suit souvent **cause → conséquence → complication**, sans im
 
 ## Adapter à Studio IA V2 / LTX-2.5
 
-Respecter d'abord le rythme demandé par l'utilisateur, dans les limites du schéma V2 ; sinon adapter le **nombre et la durée des plans** à l'histoire. Préparer la timeline complète avant de détailler les prises : durée cumulée, événements attendus, temps de lecture et de parole. Un compteur continue d'évoluer hors champ ; ses valeurs au retour découlent du temps écoulé ou d'une rupture temporelle explicitement mise en scène. Le garde-fou du prompt compilé est fourni par le moteur, sans seconde limite éditoriale contradictoire.
+Chaque plan est une génération vidéo distincte. Pour 60 secondes, viser généralement **6 à 8 prises cohérentes**, sauf nombre explicitement imposé par l'utilisateur. Regrouper les gestes, les répliques et les réactions qui peuvent se jouer dans une même prise ; garder les inserts courts lorsqu'ils apportent une information indispensable. Le dynamisme ne nécessite pas une génération toutes les deux secondes. Ce repère de production ne remplace pas le choix narratif du Director et ne garantit pas des coupes internes précises dans un clip LTX.
+
+Préparer la timeline complète avant de détailler les prises : durée cumulée, événements attendus, temps de lecture et de parole. Un compteur continue d'évoluer hors champ ; ses valeurs au retour découlent du temps écoulé ou d'une rupture temporelle explicitement mise en scène. Le garde-fou du prompt compilé est fourni par le moteur, sans seconde limite éditoriale contradictoire.
 
 Faire sentir les liens entre les plans : une tentative provoque la complication suivante, un gag prépare son effet avant de le déclencher, une réaction change l'attente. Garder un silence lorsqu'il fait évoluer la relation ou la tension ; ne pas prolonger un insert ou répéter une peur pour remplir la durée. Une coupe rapide doit laisser le geste et sa conséquence compréhensibles.
 
