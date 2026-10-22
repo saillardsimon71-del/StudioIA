@@ -35,6 +35,10 @@ Interface : **`http://127.0.0.1:8270`**. Si le port est deja occupe, le lancemen
 - **Tesseract OCR** (contrôle des sous-titres parasites) : `winget install UB-Mannheim.TesseractOCR` (si absent, V2 signale proprement un avertissement de revue humaine sans bloquer).
 - **Modal GPU** : authentification Modal existante (`modal token info`, app `studio-ia-ltx`, fonction `render_clip`).
 
+L'API officielle DeepSeek utilise `/responses` avec une sortie `json_schema` issue des modèles Pydantic V2, sans champs de fichiers ni d'états de rendu. La validation locale reste active et aucun échec ne déclenche de seconde requête. Les URL personnalisées conservent leur contrat Chat Completions.
+
+Les futures réponses de scénario rejetées sont conservées intégralement dans `llm_runs.raw_content` pour un diagnostic local. La migration ajoute cette colonne sans modifier l'historique existant ; les anciens extraits tronqués ne permettent pas de reconstituer les réponses passées.
+
 ---
 
 ## Tests automatisés (sans GPU)

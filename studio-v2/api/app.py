@@ -444,12 +444,13 @@ def create_app(
                 model=app.state.settings.deepseek_model,
                 status="failed",
                 error_message=str(exc),
+                raw_content=exc.raw_content or None,
             )
             raise HTTPException(
                 422,
                 {
                     "message": str(exc),
-                    "raw_excerpt": exc.raw_content,
+                    "raw_excerpt": exc.raw_content[:2000],
                     "hint": "Aucune relance automatique n'a été effectuée. Ajustez l'idée ou demandez explicitement une nouvelle génération.",
                 },
             ) from exc

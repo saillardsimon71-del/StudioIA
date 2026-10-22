@@ -68,11 +68,12 @@ def test_http_single_call_preserves_brief_and_json_roundtrip(monkeypatch, draft,
     def respond(request):
         requests.append(request)
         return httpx.Response(200, json={
-            "choices": [{"message": {
-                "reasoning_content": "Préparation interne distincte du scénario.",
-                "content": json.dumps(draft),
-            }}],
-            "usage": {"prompt_tokens": 100, "completion_tokens": 200},
+            "status": "completed",
+            "output": [
+                {"type": "reasoning", "content": [{"type": "reasoning_text", "text": "Préparation interne distincte du scénario."}]},
+                {"type": "message", "content": [{"type": "output_text", "text": json.dumps(draft)}]},
+            ],
+            "usage": {"input_tokens": 100, "output_tokens": 200},
         })
 
     client_class = httpx.Client
@@ -87,17 +88,17 @@ def test_http_single_call_preserves_brief_and_json_roundtrip(monkeypatch, draft,
     assert len(requests) == 1
     request = requests[0]
     assert request.method == "POST"
+    assert request.url.path == "/responses"
     body = json.loads(request.content)
-    assert body["response_format"] == {"type": "json_object"}
-    assert body["thinking"] == {"type": "enabled"}
-    assert body["reasoning_effort"] == "low"
-    assert body["max_tokens"] == 16384
-    assert len(body["messages"]) == 2
-    assert idea in body["messages"][1]["content"]
+    assert body["text"]["format"]["type"] == "json_schema"
+    assert body["reasoning"] == {"effort": "low"}
+    assert body["max_output_tokens"] == 16384
+    assert len(body["input"]) == 2
+    assert idea in body["input"][1]["content"]
     if name != "El Diablo":
-        assert "El Diablo" not in body["messages"][0]["content"]
+        assert "El Diablo" not in body["input"][0]["content"]
     guides, revision = ds.load_creative_guides()
-    system = body["messages"][0]["content"]
+    system = body["input"][0]["content"]
     assert guides in system
     assert system.index(guides) < system.index(ds.SYSTEM_PROMPT)
     assert system.endswith(ds.SYSTEM_PROMPT)
@@ -114,16 +115,22 @@ def test_http_single_call_preserves_brief_and_json_roundtrip(monkeypatch, draft,
     assert meta["warnings"] == []
 
 
-def test_custom_endpoint_keeps_existing_request_contract(draft):
+def test_custom_endpoint_keeps_existing_request_contract(monkeypatch, draft):
     requests = []
 
-    def respond(body):
+    def respond(request):
+        assert str(request.url) == "https://llm.example.test/v1/chat/completions"
+        body = json.loads(request.content)
         requests.append(body)
-        return {"choices": [{"message": {"content": json.dumps(draft)}}]}
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(draft)}}]})
 
+    client_class = httpx.Client
+    monkeypatch.setattr(ds.httpx, "Client", lambda **kwargs: client_class(
+        transport=httpx.MockTransport(respond), **kwargs,
+    ))
     ds.generate_scenario_once(
-        settings=V2Settings(deepseek_base_url="https://llm.example.test/v1"),
-        idea="Une rencontre.", transport_fn=respond,
+        settings=V2Settings(deepseek_base_url="https://llm.example.test/v1", deepseek_api_key="test"),
+        idea="Une rencontre.",
     )
     assert len(requests) == 1
     assert "thinking" not in requests[0]
@@ -210,10 +217,11 @@ def test_http_errors_never_trigger_rewrite_or_retry(monkeypatch, draft, failure)
         if failure == "http":
             return httpx.Response(503, text="Unavailable")
         content = "{" if failure == "json" else json.dumps(draft)
-        return httpx.Response(200, json={"choices": [{
-            "finish_reason": "length" if failure == "length" else "stop",
-            "message": {"content": content},
-        }]})
+        return httpx.Response(200, json={
+            "status": "incomplete" if failure == "length" else "completed",
+            "incomplete_details": {"reason": "max_output_tokens"} if failure == "length" else None,
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": content}]}],
+        })
 
     client_class = httpx.Client
     monkeypatch.setattr(ds.httpx, "Client", lambda **kwargs: client_class(

@@ -203,7 +203,8 @@ def generate_scenario_once(
         "temperature": 0.8,
         "max_tokens": 3000,
     }
-    if settings.deepseek_base_url.rstrip("/").endswith("api.deepseek.com"):
+    official_api = settings.deepseek_base_url.rstrip("/").endswith("api.deepseek.com")
+    if official_api:
         request_body["thinking"] = {"type": "enabled"}
         request_body["reasoning_effort"] = "low"
         request_body["max_tokens"] = 16384  # Préparation intérieure et JSON dans la même réponse.
@@ -212,6 +213,27 @@ def generate_scenario_once(
         api_response = transport_fn(request_body)
     else:
         url = settings.deepseek_base_url.rstrip("/") + "/chat/completions"
+        http_body = request_body
+        if official_api:
+            schema = ScenarioDraft.model_json_schema()
+            schema["additionalProperties"] = False
+            # The director supplies creative fields; local file paths and render state belong to the engine.
+            for name, fields in {
+                "Character": ("image_ref",),
+                "Decor": ("asset_id",),
+                "Shot": ("image_ref", "decor_asset_id", "ltx_prompt", "seed", "image_validated",
+                         "rendered_video_ref", "human_validated"),
+            }.items():
+                for field in fields:
+                    schema["$defs"][name]["properties"].pop(field)
+            url = settings.deepseek_base_url.rstrip("/") + "/responses"
+            http_body = {
+                "model": request_body["model"],
+                "input": request_body["messages"],
+                "reasoning": {"effort": "low"},
+                "max_output_tokens": request_body["max_tokens"],
+                "text": {"format": {"type": "json_schema", "name": "studio_director_v2", "schema": schema}},
+            }
         try:
             with httpx.Client(timeout=settings.deepseek_timeout_s) as client:
                 resp = client.post(
@@ -220,7 +242,7 @@ def generate_scenario_once(
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
                     },
-                    json=request_body,
+                    json=http_body,
                 )
         except httpx.HTTPError as exc:
             raise ScenarioGenerationError(
@@ -236,6 +258,27 @@ def generate_scenario_once(
             api_response = resp.json()
         except ValueError as exc:
             raise ScenarioGenerationError("DeepSeek a renvoyé une réponse HTTP non JSON.") from exc
+        if official_api:
+            if not isinstance(api_response, dict):
+                raise ScenarioGenerationError("Réponse structurée DeepSeek inattendue : objet JSON requis.")
+            content = "".join(
+                part.get("text", "")
+                for item in (api_response.get("output") or []) if item.get("type") == "message"
+                for part in (item.get("content") or []) if part.get("type") == "output_text"
+            )
+            status = api_response.get("status")
+            if status != "completed":
+                reason = (api_response.get("incomplete_details") or {}).get("reason")
+                detail = (api_response.get("error") or {}).get("message") or reason or status
+                label = "tronquée" if reason == "max_output_tokens" else "incomplète ou échouée"
+                raise ScenarioGenerationError(f"Réponse DeepSeek {label} : {detail}.", raw_content=content)
+            usage = api_response.get("usage") or {}
+            api_response = {
+                "model": api_response.get("model"),
+                "choices": [{"message": {"content": content}}],
+                "usage": {"prompt_tokens": usage.get("input_tokens", 0),
+                          "completion_tokens": usage.get("output_tokens", 0)},
+            }
 
     try:
         choice = api_response["choices"][0]
@@ -253,7 +296,7 @@ def generate_scenario_once(
         raise ScenarioGenerationError(
             "Réponse DeepSeek tronquée : plafond de tokens atteint, préparation intérieure "
             "comprise. Aucune relance automatique n'a été effectuée.",
-            raw_content=str(raw_content)[:2000],
+            raw_content=str(raw_content),
         )
 
     try:
@@ -261,7 +304,7 @@ def generate_scenario_once(
     except json.JSONDecodeError as exc:
         raise ScenarioGenerationError(
             f"DeepSeek n'a pas renvoyé un JSON valide ({exc.msg}, ligne {exc.lineno}).",
-            raw_content=str(raw_content)[:2000],
+            raw_content=str(raw_content),
         ) from exc
 
     try:
@@ -289,13 +332,13 @@ def generate_scenario_once(
         )
         raise ScenarioGenerationError(
             f"Scénario DeepSeek invalide selon le schéma V2 : {formatted}",
-            raw_content=str(raw_content)[:2000],
+            raw_content=str(raw_content),
         ) from exc
 
     try:
         prompt_warnings = prepare_storyboard(project)
     except ValueError as exc:
-        raise ScenarioGenerationError(str(exc), raw_content=str(raw_content)[:2000]) from exc
+        raise ScenarioGenerationError(str(exc), raw_content=str(raw_content)) from exc
     for shot in project.shots:
         try:
             shot.ltx_prompt = compile_shot_prompt(project, shot)

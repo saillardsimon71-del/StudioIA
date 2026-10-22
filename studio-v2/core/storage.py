@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS llm_runs (
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     estimated_cost_eur REAL,
     error_message TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    raw_content TEXT
 );
 
 CREATE TABLE IF NOT EXISTS render_jobs (
@@ -119,6 +120,8 @@ class StudioRepository:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(SCHEMA_SQL)
+            if "raw_content" not in {row["name"] for row in conn.execute("PRAGMA table_info(llm_runs)")}:
+                conn.execute("ALTER TABLE llm_runs ADD COLUMN raw_content TEXT")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), timeout=30)
@@ -428,6 +431,7 @@ class StudioRepository:
         completion_tokens: int = 0,
         estimated_cost_eur: float | None = None,
         error_message: str | None = None,
+        raw_content: str | None = None,
     ) -> dict:
         rid = f"llm-{uuid.uuid4().hex[:10]}"
         now = utc_now()
@@ -436,8 +440,8 @@ class StudioRepository:
                 """
                 INSERT INTO llm_runs
                 (id, project_id, model, status, prompt_tokens, completion_tokens,
-                 estimated_cost_eur, error_message, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 estimated_cost_eur, error_message, created_at, raw_content)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rid,
@@ -449,6 +453,7 @@ class StudioRepository:
                     estimated_cost_eur,
                     error_message,
                     now,
+                    raw_content,
                 ),
             )
         return {
