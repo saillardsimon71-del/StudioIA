@@ -58,6 +58,14 @@ class Decor(BaseModel):
     description: str = Field(min_length=1, max_length=2000)
     asset_id: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_empty_decor_flag(cls, value):
+        # Decor references are already generated as empty locations.
+        if isinstance(value, dict) and value.get("no_characters") is True:
+            return {key: item for key, item in value.items() if key != "no_characters"}
+        return value
+
 
 class DisplayChange(BaseModel):
     """Changement horodaté d'une zone d'affichage fixe ajoutée au montage FFmpeg."""

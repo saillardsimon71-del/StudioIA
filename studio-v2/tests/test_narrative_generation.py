@@ -153,6 +153,46 @@ def test_same_call_prepares_recurring_decors_and_shot_associations(draft):
     assert Project.model_validate_json(project.model_dump_json()) == project
 
 
+def test_redundant_empty_decor_flag_preserves_the_scenario(draft):
+    description = "Stylized bedroom, blue walls, warm bedside lighting."
+    draft["decors"] = [
+        {"id": "chambre", "name": "Chambre", "description": description, "no_characters": True},
+        {"id": "couloir", "name": "Couloir", "description": "Narrow hallway with oak doors.", "no_characters": True},
+    ]
+    for shot in draft["shots"]:
+        shot["decor_id"] = "chambre"
+    calls = []
+
+    def respond(body):
+        calls.append(body)
+        return {"choices": [{"message": {"content": json.dumps(draft)}}]}
+
+    project, _ = ds.generate_scenario_once(
+        settings=V2Settings(), idea="Un pacte dans une chambre.", transport_fn=respond,
+    )
+    assert len(calls) == 1
+    assert project.decors[0].model_dump() == {
+        "id": "chambre", "name": "Chambre", "description": description, "asset_id": None,
+    }
+    assert len(project.decors) == 2
+    assert [shot.decor_id for shot in project.shots] == ["chambre", "chambre"]
+    assert [shot.action for shot in project.shots] == [shot["action"] for shot in draft["shots"]]
+    assert Project.model_validate_json(project.model_dump_json()) == project
+    assert all(decor["no_characters"] is True for decor in draft["decors"])
+
+
+@pytest.mark.parametrize("extra", [
+    {"no_characters": False}, {"no_characters": "yes"}, {"unknown_creative_field": "keep this"},
+])
+def test_ambiguous_decor_fields_are_not_silently_discarded(draft, extra):
+    draft["decors"] = [{"id": "chambre", "name": "Chambre", "description": "Blue walls.", **extra}]
+    with pytest.raises(ds.ScenarioGenerationError, match="decors.0"):
+        ds.generate_scenario_once(
+            settings=V2Settings(), idea="Un pacte dans une chambre.",
+            transport_fn=lambda body: {"choices": [{"message": {"content": json.dumps(draft)}}]},
+        )
+
+
 @pytest.mark.parametrize("failure", ["json", "schema", "speaker", "timing", "length", "http", "timeout"])
 def test_http_errors_never_trigger_rewrite_or_retry(monkeypatch, draft, failure):
     requests = []
