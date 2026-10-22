@@ -73,6 +73,8 @@ def write_fixed_overlay_ass(
         for change in overlay.changes:
             if change.at_sec <= start_t + 1e-6:
                 val = change.text
+        if not val:
+            continue
         safe_val = str(val).replace("{", "").replace("}", "")
         lines.append(
             f"Dialogue: 0,{_ass_timestamp(start_t)},{_ass_timestamp(end_t)},FixedZone,,0,0,0,,"

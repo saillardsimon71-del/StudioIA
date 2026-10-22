@@ -65,7 +65,7 @@ class DisplayChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     at_sec: float = Field(gt=0.0, allow_inf_nan=False)
-    text: str = Field(min_length=1, max_length=80)
+    text: str = Field(max_length=80)
 
 
 class DisplayOverlay(BaseModel):
@@ -77,7 +77,7 @@ class DisplayOverlay(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    initial_text: str = Field(min_length=1, max_length=80)
+    initial_text: str = Field(max_length=80)
     x: float = Field(default=0.5, ge=0.0, le=1.0, allow_inf_nan=False)
     y: float = Field(default=0.14, ge=0.0, le=1.0, allow_inf_nan=False)
     font_size: float = Field(default=0.05, ge=0.015, le=0.18, allow_inf_nan=False)

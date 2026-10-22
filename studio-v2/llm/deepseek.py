@@ -113,6 +113,7 @@ IMAGES META AI (préparées dans ce même appel, sans réécrire la narration) :
 
 Si `display_overlay` est utilisé sur un plan, sa structure est :
 {"initial_text": "000", "x": 0.5, "y": 0.14, "font_size": 0.05, "color": "00FF88", "box_bg": "101418", "changes": [{"at_sec": 3.8, "text": "001"}]}
+`initial_text` et `changes[].text` acceptent une chaîne vide pour ne rien afficher pendant cet intervalle (apparition retardée ou disparition). Utilise `display_overlay: null` si aucune incrustation n'est prévue sur le plan. Chaque texte est limité à 80 caractères.
 """
 
 
