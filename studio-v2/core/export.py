@@ -17,6 +17,7 @@ import uuid
 from pathlib import Path
 
 from core.config import V2Settings
+from core.countdown import countdown_overlays
 from core.scenario import DisplayOverlay, Project, Shot
 from qc.media import PROCESS_FLAGS, ffmpeg_exe, inspect_media
 from qc.runner import run_export_qc
@@ -126,13 +127,26 @@ def export_project_mp4(
     destination.parent.mkdir(parents=True, exist_ok=True)
     ffmpeg = ffmpeg_exe()
 
+    # Use measured clip lengths for countdown ticks so the ASS timeline follows
+    # the actual concatenated video, including fractional clip boundaries.
+    probes = [
+        inspect_media(Path(shot.rendered_video_ref).resolve())  # type: ignore[arg-type]
+        for shot in project.shots
+    ]
+    timed_overlays = countdown_overlays(project, [probe["duration_s"] for probe in probes])
+    effective_shots = project.shots
+    if timed_overlays is not None:
+        effective_shots = [
+            shot.model_copy(update={"display_overlay": overlay})
+            for shot, overlay in zip(project.shots, timed_overlays)
+        ]
+
     with tempfile.TemporaryDirectory(prefix="studio-v2-export-", dir=str(destination.parent)) as tmp:
         work = Path(tmp)
         segment_names: list[str] = []
 
-        for idx, shot in enumerate(project.shots):
+        for idx, (shot, probe) in enumerate(zip(effective_shots, probes)):
             src = Path(shot.rendered_video_ref).resolve()  # type: ignore[arg-type]
-            probe = inspect_media(src)
             clip_dur = probe["duration_s"]
 
             vf_parts = [
@@ -233,5 +247,5 @@ def export_project_mp4(
         )
         assembled.replace(destination)
 
-    qc_report = run_export_qc(destination, project.shots, settings, expected_size=size)
+    qc_report = run_export_qc(destination, effective_shots, settings, expected_size=size)
     return destination, qc_report

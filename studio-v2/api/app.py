@@ -172,6 +172,8 @@ def create_app(
     app.state.llm_transport = llm_transport
     app.state.modal_runner = modal_runner
     render_lock = threading.Lock()
+    app.state.metaai_generation_lock = threading.Lock()
+    app.state.metaai_seen_conversation_ids = set()
 
     def _source_hash() -> str:
         digest = hashlib.sha256()
@@ -485,6 +487,19 @@ def create_app(
     def list_assets(kind: str | None = None) -> list[dict]:
         return app.state.repo.list_assets(kind=kind)
 
+    @app.get("/api/assets/audit")
+    def audit_asset_references() -> dict:
+        """Read-only inventory; nothing is classified or removed automatically."""
+        return app.state.repo.audit_asset_references()
+
+    @app.delete("/api/assets/{asset_id}")
+    def remove_asset_reference(asset_id: str) -> dict:
+        """Retire exactly one explicitly selected library reference, keeping its file."""
+        result = app.state.repo.remove_asset_reference(asset_id)
+        if not result["deleted"]:
+            raise HTTPException(404, "Asset introuvable.")
+        return result
+
     @app.post("/api/assets/generate")
     def generate_library_asset(req: GenerateImageRequest) -> dict:
         """Generate an image through a separately hosted metaai-api instance."""
@@ -497,25 +512,79 @@ def create_app(
         headers = {"Content-Type": "application/json"}
         if cfg.metaai_api_key:
             headers["Authorization"] = f"Bearer {cfg.metaai_api_key}"
+        request_id = uuid.uuid4().hex
+        conversation_id = ""
         try:
-            with httpx.Client(timeout=cfg.metaai_timeout_s, follow_redirects=True) as client:
-                response = client.post(f"{base_url}/image", json={"prompt": req.prompt}, headers=headers)
-                response.raise_for_status()
-                payload = response.json()
-                urls = payload.get("image_urls") or payload.get("images") or []
-                if isinstance(urls, str):
-                    urls = [urls]
-                if not payload.get("success", True) or not urls:
-                    raise ValueError("Le service n'a renvoyé aucune image.")
-                image_url = str(urls[0])
-                parsed = urlparse(image_url)
-                if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                    raise ValueError("URL d'image renvoyée invalide.")
-                image_response = client.get(image_url)
-                image_response.raise_for_status()
-                raw = image_response.content
-                if not raw or len(raw) > 25 * 1024 * 1024:
-                    raise ValueError("Image vide ou supérieure à la limite de 25 Mo.")
+            with app.state.metaai_generation_lock:
+                with httpx.Client(timeout=cfg.metaai_timeout_s, follow_redirects=False) as client:
+                    response = client.post(
+                        f"{base_url}/image",
+                        json={
+                            "prompt": req.prompt,
+                            "orientation": "VERTICAL",
+                            "new_conversation": True,
+                            "num_images": 1,
+                            "request_id": request_id,
+                        },
+                        headers=headers,
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    if not isinstance(payload, dict):
+                        raise ValueError("Réponse du service Meta AI invalide.")
+                    error_summary = " ".join(
+                        str(payload.get(field) or "") for field in ("errors", "error", "detail", "message")
+                    ).casefold()
+                    graph_schema_error = bool(payload.get("errors")) or any(
+                        token in error_summary
+                        for token in (
+                            "graphql_validation_failed", "rewriteoptionsinput",
+                            "attachmentinput", "sendmessagestream",
+                        )
+                    )
+                    if graph_schema_error:
+                        raise HTTPException(
+                            502,
+                            "Le service Meta AI renvoie des erreurs GraphQL. Mettez à jour "
+                            "metaai-api vers sa version navigateur (metaai-sdk 5.3.0 ou plus récent).",
+                        )
+                    if payload.get("success") is not True:
+                        raise ValueError("Le service Meta AI n'a pas confirmé la génération.")
+                    if payload.get("request_id") != request_id or payload.get("prompt") != req.prompt:
+                        raise ValueError("La réponse Meta AI ne correspond pas à cette requête.")
+                    conversation_id = payload.get("conversation_id")
+                    if not isinstance(conversation_id, str) or not conversation_id.strip():
+                        raise ValueError("La conversation Meta AI n'est pas confirmée.")
+                    if conversation_id in app.state.metaai_seen_conversation_ids:
+                        raise ValueError("Le service Meta AI a réutilisé une conversation précédente.")
+                    urls = payload.get("image_urls")
+                    if not isinstance(urls, list) or not urls or len(urls) > 4:
+                        raise ValueError("La réponse Meta AI ne contient pas une liste d'images attribuables.")
+                    urls = list(dict.fromkeys(str(url) for url in urls))
+                    for candidate in urls:
+                        parsed_candidate = urlparse(candidate)
+                        host = (parsed_candidate.hostname or "").casefold()
+                        trusted_meta_cdn = (
+                            host.endswith(".fbcdn.net")
+                            and (host.startswith("scontent.") or host.startswith("video."))
+                        ) or host == "metaaiusercontent.com" or host.endswith(".metaaiusercontent.com")
+                        if parsed_candidate.scheme != "https" or not trusted_meta_cdn:
+                            raise ValueError("L'origine d'une image Meta AI n'est pas sûre.")
+                    image_url = urls[0]
+                    image_response = client.get(image_url)
+                    image_response.raise_for_status()
+                    final_url = urlparse(str(getattr(image_response, "url", image_url)))
+                    final_host = (final_url.hostname or "").casefold()
+                    final_trusted = (
+                        final_host.endswith(".fbcdn.net")
+                        and (final_host.startswith("scontent.") or final_host.startswith("video."))
+                    ) or final_host == "metaaiusercontent.com" or final_host.endswith(".metaaiusercontent.com")
+                    if final_url.scheme != "https" or not final_trusted:
+                        raise ValueError("Le téléchargement de l'image a quitté le CDN Meta autorisé.")
+                    raw = image_response.content
+                    if not raw or len(raw) > 25 * 1024 * 1024:
+                        raise ValueError("Image vide ou supérieure à la limite de 25 Mo.")
+                    app.state.metaai_seen_conversation_ids.add(conversation_id)
         except httpx.HTTPStatusError as exc:
             messages = {
                 401: "Meta AI demande une reconnexion. Verifiez la session et la cle du service local.",
@@ -551,7 +620,7 @@ def create_app(
         except (OSError, ValueError, UnidentifiedImageError) as exc:
             target.unlink(missing_ok=True)
             raise HTTPException(502, "Meta AI a renvoyé un fichier image invalide ou non pris en charge.") from exc
-        return app.state.repo.add_asset(
+        asset = app.state.repo.add_asset(
             kind=req.kind,
             name=req.name.strip() or "Image Meta AI",
             description=req.description.strip() or req.prompt,
@@ -559,6 +628,15 @@ def create_app(
             width=width,
             height=height,
         )
+        return {
+            **asset,
+            "metaai_generation": {
+                "request_id": request_id,
+                "conversation_id": conversation_id,
+                "prompt": req.prompt,
+                "attribution": "fresh_assistant_response",
+            },
+        }
 
     @app.post("/api/assets/generate-decor")
     def generate_decor(req: GenerateDecorRequest) -> dict:

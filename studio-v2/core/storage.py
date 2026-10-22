@@ -253,6 +253,109 @@ class StudioRepository:
             ).fetchone()
         return dict(row) if row else None
 
+    def audit_asset_references(self) -> dict:
+        """Read-only inventory of every library entry and project image reference."""
+        with self._connect() as conn:
+            asset_rows = conn.execute("SELECT * FROM library_assets ORDER BY created_at DESC").fetchall()
+            project_rows = conn.execute("SELECT id, title, data_json FROM projects ORDER BY title, id").fetchall()
+        assets = [dict(row) for row in asset_rows]
+        by_path = {str(Path(asset["file_path"]).resolve()): asset["id"] for asset in assets}
+        by_id = {asset["id"]: asset for asset in assets}
+        refs_by_asset: dict[str, list[dict]] = {asset["id"]: [] for asset in assets}
+        unregistered = []
+
+        def add_ref(asset_id: str | None, item: dict) -> None:
+            if asset_id and asset_id in refs_by_asset:
+                refs_by_asset[asset_id].append(item)
+            elif item.get("file_path") or item.get("entity_type") == "decor":
+                unregistered.append(item)
+
+        for row in project_rows:
+            project = Project.model_validate_json(row["data_json"])
+            project_title = project.title or row["title"] or project.id
+            for char in project.characters:
+                if char.image_ref:
+                    resolved = str(Path(char.image_ref).resolve())
+                    add_ref(by_path.get(resolved), {
+                        "project_id": project.id, "project_title": project_title,
+                        "entity_type": "character", "entity_id": char.id,
+                        "entity_name": char.name, "file_path": char.image_ref,
+                    })
+            for decor in project.decors:
+                if decor.asset_id:
+                    add_ref(decor.asset_id, {
+                        "project_id": project.id, "project_title": project_title,
+                        "entity_type": "decor", "entity_id": decor.id,
+                        "entity_name": decor.name,
+                        "file_path": by_id.get(decor.asset_id, {}).get("file_path"),
+                    })
+            for shot in project.shots:
+                if shot.decor_asset_id:
+                    add_ref(shot.decor_asset_id, {
+                        "project_id": project.id, "project_title": project_title,
+                        "entity_type": "shot_decor", "entity_id": shot.id,
+                        "entity_name": shot.id,
+                        "file_path": by_id.get(shot.decor_asset_id, {}).get("file_path"),
+                    })
+                if shot.image_ref:
+                    resolved = str(Path(shot.image_ref).resolve())
+                    add_ref(by_path.get(resolved), {
+                        "project_id": project.id, "project_title": project_title,
+                        "entity_type": "shot", "entity_id": shot.id,
+                        "entity_name": shot.id, "file_path": shot.image_ref,
+                        "image_validated": shot.image_validated,
+                    })
+
+        for asset in assets:
+            asset["file_exists"] = Path(asset["file_path"]).is_file()
+            asset["references"] = refs_by_asset[asset["id"]]
+        return {"assets": assets, "unregistered_references": unregistered}
+
+    def remove_asset_reference(self, asset_id: str) -> dict:
+        """Retire one library record and unlink its references; retain the image file."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM library_assets WHERE id = ?", (asset_id,)).fetchone()
+            if row is None:
+                return {"deleted": False, "detached_references": 0, "file_preserved": False}
+            asset = dict(row)
+            target_path = str(Path(asset["file_path"]).resolve())
+            project_rows = conn.execute("SELECT id, data_json FROM projects").fetchall()
+            detached = 0
+            for project_row in project_rows:
+                project = Project.model_validate_json(project_row["data_json"])
+                changed = False
+                for char in project.characters:
+                    if char.image_ref and str(Path(char.image_ref).resolve()) == target_path:
+                        char.image_ref = None
+                        detached += 1
+                        changed = True
+                for decor in project.decors:
+                    if decor.asset_id == asset_id:
+                        decor.asset_id = None
+                        detached += 1
+                        changed = True
+                for shot in project.shots:
+                    if shot.decor_asset_id == asset_id:
+                        shot.decor_asset_id = None
+                        detached += 1
+                        changed = True
+                    if shot.image_ref and str(Path(shot.image_ref).resolve()) == target_path:
+                        shot.image_ref = None
+                        shot.image_validated = False
+                        detached += 1
+                        changed = True
+                if changed:
+                    conn.execute(
+                        "UPDATE projects SET data_json = ?, updated_at = ? WHERE id = ?",
+                        (project.model_dump_json(), utc_now(), project.id),
+                    )
+            conn.execute("DELETE FROM library_assets WHERE id = ?", (asset_id,))
+        return {
+            "deleted": True,
+            "detached_references": detached,
+            "file_preserved": Path(asset["file_path"]).is_file(),
+        }
+
     # ── Prises GPU / Imports & Coûts réels ───────────────────────────────────
 
     def pending_render(self) -> dict | None:
