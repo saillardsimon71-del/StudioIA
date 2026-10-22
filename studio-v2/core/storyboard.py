@@ -28,8 +28,11 @@ def image_state_conflict(project: Project, shot: Shot) -> bool:
     if any(re.search(start, initial) and re.search(end, image) and not re.search(end, initial)
            for start, end in transitions):
         return True
+    image_state = image
+    for char in project.characters:
+        image_state = image_state.replace(f"{char.name}: {char.description}".lower(), "")
     for result in (r"crack spreading", r"peels?\b|revealing\b|uncovering\b", r"jolts?\b|scrambles?\b"):
-        if re.search(result, image) and not re.search(result, initial):
+        if re.search(result, image_state) and not re.search(result, initial):
             return True
     for char in project.characters:
         name = r"\b(?:" + re.escape(char.name) + "|" + re.escape(char.id) + r")\b"

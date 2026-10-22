@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT))
 from core.config import V2Settings
 from core.ltx_prompt import compile_shot_prompt
 from core.scenario import Project
-from core.storyboard import build_shot_image_prompt
+from core.storyboard import build_shot_image_prompt, prepare_storyboard
 from llm import deepseek
 
 
@@ -97,6 +97,15 @@ def test_later_camera_reveal_is_not_used_as_the_starting_image_composition(draft
     assert "Medium shot, cup left, Benny right" in prompt
     assert "extreme close-up" not in prompt
     assert "inside the bowl" not in prompt
+
+
+def test_fixed_banana_peel_description_is_not_a_future_peeling_action(draft):
+    draft["characters"][0]["description"] = "Small yellow banana with expressive eyes and a glossy peel."
+    project = Project(id="banana-appearance", idea="Benny fait tomber une tasse.", target_duration_s=2, **draft)
+    shot = project.shots[0]
+    shot.image_prompt = build_shot_image_prompt(project, shot)
+    assert "glossy peel" in shot.image_prompt
+    assert prepare_storyboard(project) == []
 
 
 def test_empty_start_frame_does_not_reintroduce_actors_from_an_earlier_state(draft):
