@@ -94,6 +94,7 @@ def test_metaai_api_key_is_sent_only_as_bearer_header(tmp_path, monkeypatch):
     with TestClient(app) as client:
         response = client.post("/api/assets/generate", json={"prompt": "a red fox"})
         assert response.status_code == 200, response.text
+        assert observed["json"] == {"prompt": "a red fox", "orientation": "VERTICAL"}
         assert observed["headers"]["Authorization"] == "Bearer server-secret"
         public_settings = client.get("/api/settings").json()
         assert public_settings["metaai_api_key_configured"] is True
@@ -107,6 +108,71 @@ def test_metaai_generate_rejects_invalid_kind_without_calling_service(tmp_path):
     with TestClient(app) as client:
         response = client.post("/api/assets/generate", json={"prompt": "anything", "kind": "video"})
     assert response.status_code == 400
+
+
+def test_metaai_http_200_without_image_is_not_accepted_as_success(tmp_path, monkeypatch):
+    class EmptyImageService(_MetaAIService):
+        def post(self, url, **kwargs):
+            return _Response(payload={"success": True, "image_urls": []})
+
+    monkeypatch.setattr("api.app.httpx.Client", EmptyImageService)
+    app = create_app(settings=V2Settings(data_dir=tmp_path / "data"))
+    with TestClient(app) as client:
+        response = client.post("/api/assets/generate", json={"prompt": "A lighthouse"})
+        assert response.status_code == 502
+        assert "image" in response.json()["detail"].lower()
+        assert client.get("/api/assets").json() == []
+
+
+def test_metaai_http_200_graphql_validation_errors_are_reported_as_service_incompatibility(
+    tmp_path, monkeypatch,
+):
+    responses = [
+        {"errors": [{"message": "Unknown type RewriteOptionsInput"}]},
+        {"success": False, "error": "GRAPHQL_VALIDATION_FAILED: Cannot query field sendMessageStream"},
+    ]
+
+    class GraphQLErrorService(_MetaAIService):
+        def post(self, url, **kwargs):
+            return _Response(payload=responses.pop(0))
+
+    monkeypatch.setattr("api.app.httpx.Client", GraphQLErrorService)
+    app = create_app(settings=V2Settings(data_dir=tmp_path / "data"))
+    with TestClient(app) as client:
+        for _ in range(2):
+            response = client.post("/api/assets/generate", json={"prompt": "A lighthouse"})
+            assert response.status_code == 502
+            assert "GraphQL" in response.json()["detail"]
+            assert "5.3.0" in response.json()["detail"]
+            assert "Unknown type RewriteOptionsInput" not in response.text
+            assert "Cannot query field sendMessageStream" not in response.text
+        assert client.get("/api/assets").json() == []
+
+
+def test_metaai_network_unavailable_is_retryable_and_does_not_save_an_asset(tmp_path, monkeypatch):
+    class UnavailableService(_MetaAIService):
+        def post(self, url, **kwargs):
+            raise httpx.ConnectError("connection refused", request=httpx.Request("POST", url))
+
+    monkeypatch.setattr("api.app.httpx.Client", UnavailableService)
+    app = create_app(settings=V2Settings(data_dir=tmp_path / "data"))
+    with TestClient(app) as client:
+        response = client.post("/api/assets/generate", json={"prompt": "A lighthouse"})
+        assert response.status_code == 503
+        assert client.get("/api/assets").json() == []
+
+
+def test_metaai_image_download_network_failure_is_retryable(tmp_path, monkeypatch):
+    class BrokenDownloadService(_MetaAIService):
+        def get(self, url):
+            raise httpx.ReadTimeout("download timed out", request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("api.app.httpx.Client", BrokenDownloadService)
+    app = create_app(settings=V2Settings(data_dir=tmp_path / "data"))
+    with TestClient(app) as client:
+        response = client.post("/api/assets/generate", json={"prompt": "A lighthouse"})
+        assert response.status_code == 503
+        assert client.get("/api/assets").json() == []
 
 
 def _shot_project():

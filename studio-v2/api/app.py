@@ -499,9 +499,33 @@ def create_app(
             headers["Authorization"] = f"Bearer {cfg.metaai_api_key}"
         try:
             with httpx.Client(timeout=cfg.metaai_timeout_s, follow_redirects=True) as client:
-                response = client.post(f"{base_url}/image", json={"prompt": req.prompt}, headers=headers)
+                response = client.post(
+                    f"{base_url}/image",
+                    json={"prompt": req.prompt, "orientation": "VERTICAL"},
+                    headers=headers,
+                )
                 response.raise_for_status()
                 payload = response.json()
+                if not isinstance(payload, dict):
+                    raise ValueError("Réponse du service Meta AI invalide.")
+                error_summary = " ".join(
+                    str(payload.get(field) or "") for field in ("errors", "error", "detail", "message")
+                ).casefold()
+                graph_schema_error = bool(payload.get("errors")) or any(
+                    token in error_summary
+                    for token in (
+                        "graphql_validation_failed", "rewriteoptionsinput",
+                        "attachmentinput", "sendmessagestream",
+                    )
+                )
+                if graph_schema_error:
+                    raise HTTPException(
+                        502,
+                        "Le service Meta AI renvoie des erreurs GraphQL. Mettez à jour "
+                        "metaai-api vers sa version navigateur (metaai-sdk 5.3.0 ou plus récent).",
+                    )
+                if payload.get("success") is False:
+                    raise HTTPException(502, "Le service Meta AI a échoué sans produire d'image.")
                 urls = payload.get("image_urls") or payload.get("images") or []
                 if isinstance(urls, str):
                     urls = [urls]
